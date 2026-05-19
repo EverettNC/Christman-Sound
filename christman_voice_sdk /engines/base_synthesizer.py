@@ -11,10 +11,10 @@ Sovereign implementation: Zero reliance on bloated external audio libraries (lib
 
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, List
-import numpy as np
+import numpy as np # pyright: ignore[reportMissingImports]
 from pathlib import Path
 from dataclasses import dataclass
-from scipy import signal
+from scipy import signal # pyright: ignore[reportMissingImports]
 
 from .logger import get_logger
 
@@ -34,7 +34,7 @@ class SynthesisResult:
     
     def save(self, path: Path):
         """Save audio to file."""
-        import soundfile as sf
+        import soundfile as sf # pyright: ignore[reportMissingImports]
         sf.write(str(path), self.audio, self.sample_rate)
 
 
@@ -51,7 +51,7 @@ class BaseSynthesizer(ABC):
         logger.info(f"{self.__class__.__name__} initialized on {self.device}")
     
     def _setup_device(self, device: str) -> str:
-        import torch
+        import torch # pyright: ignore[reportMissingImports]
         if device == "auto":
             if torch.backends.mps.is_available(): return "mps"
             elif torch.cuda.is_available(): return "cuda"

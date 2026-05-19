@@ -16,7 +16,7 @@ from typing import Optional, Dict, List
 import time
 
 from engines.xtts_engine import XTTSEngine
-from tiers.shorty_emotion import ShortyEmotionDetector
+from timbre.shorty_emotion import ShortyEmotionDetector
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -149,7 +149,7 @@ class ShortyVoiceEngineV2:
         text: str,
         emotion_params: Optional[Dict] = None,
         **kwargs
-    ) -> "SynthesisResult":
+    ) -> "SynthesisResult": # pyright: ignore[reportUndefinedVariable]
         """Compat method for VoiceSDK."""
         # Extract emotion if passed in params, otherwise default
         emotion = "neutral"

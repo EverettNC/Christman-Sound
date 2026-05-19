@@ -547,7 +547,7 @@ class ToneScoreEngine:
         """
         try:
             # We use the native C function we mapped in the module header
-            return get_pitch_contour_native(y, sr)
+            return get_pitch_contour_native(y, sr) # pyright: ignore[reportUndefinedVariable] # type: ignore
         except Exception as exc:
             logger.warning("Native pitch extraction failed: %s", exc)
             return np.zeros(len(y), dtype=np.float32)
@@ -559,7 +559,7 @@ class ToneScoreEngine:
         """
         try:
             # Get pitch contour natively if not provided
-            p = pitch if pitch is not None else get_pitch_contour_native(y, sr)
+            p = pitch if pitch is not None else get_pitch_contour_native(y, sr) # pyright: ignore[reportUndefinedVariable]
             
             # Filter unvoiced frames (pitch > 0)
             p = p[p > 0]
@@ -737,18 +737,18 @@ class ToneScoreEngine:
             logger.warning("Valence failed: %s", exc)
             return 50.0
 
-   def _compute_dominance(self, y: np.ndarray, sr: int, pitch: np.ndarray = None) -> float:
+    def _compute_dominance(self, y: np.ndarray, sr: int, pitch: np.ndarray = None) -> float:
         """
         Compute dominance (0-100) using native numpy and Christman DSP.
         Bypassing librosa entirely.
         """
         try:
             # 1. Native Energy (RMS)
-            rms = get_rms_contour(y)
+            rms = get_rms_contour(y) # type: ignore
             energy_score = np.mean(rms) * 100.0
             
             # 2. Native Pitch Range
-            p = pitch if pitch is not None else get_pitch_contour_native(y, sr)
+            p = pitch if pitch is not None else get_pitch_contour_native(y, sr) # type: ignore
             pv = p[p > 0]
             p_range = float(np.max(pv) - np.min(pv)) if len(pv) > 0 else 0.0
             range_score = min(100.0, (p_range / 150.0) * 100.0)

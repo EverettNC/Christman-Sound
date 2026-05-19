@@ -6,9 +6,9 @@ Supports voice cloning from short audio samples.
 Integrates with ICanHearYou emotion system.
 """
 
-import torch
-import torchaudio
-import numpy as np
+import torch # pyright: ignore[reportMissingImports]
+import torchaudio # pyright: ignore[reportMissingImports]
+import numpy as np # pyright: ignore[reportMissingImports]
 from pathlib import Path
 from typing import Optional, Dict
 import time
@@ -60,7 +60,7 @@ class XTTSEngine(BaseSynthesizer):
             return
 
         try:
-            from TTS.api import TTS
+            from TTS.api import TTS # pyright: ignore[reportMissingImports]
 
             logger.info(f"Loading XTTS model: {self.model_name}")
 

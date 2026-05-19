@@ -1,8 +1,8 @@
 """
-BROCKSTON Music Production Studio
+CHRISTMAN Music Production Studio
 ============================
 
-BROCKSTON's complete music production capabilities including:
+CHRISTMAN's complete music production capabilities including:
 - Audio mixing and mastering
 - Beat production and sequencing
 - Sound design and synthesis
@@ -19,12 +19,12 @@ import random
 logger = logging.getLogger(__name__)
 
 
-class BrockstonMusicStudio:
+class ChristmanMusicStudio:
     """
-    BROCKSTON's music production studio - professional audio creation
+    CHRISTMAN's music production studio - professional audio creation
     """
 
-    def __init__(self, studio_path: str = "./brockston_memory/studio"):
+    def __init__(self, studio_path: str = "./christman_memory/studio"):
         self.studio_path = studio_path
         os.makedirs(studio_path, exist_ok=True)
 
@@ -378,23 +378,23 @@ class BrockstonMusicStudio:
 
 
 # Global studio instance
-brockston_studio = None
+christman_studio = None
 
 
-def initialize_brockston_studio():
-    """Initialize BROCKSTON's music production studio"""
-    global brockston_studio
-    brockston_studio = BrockstonMusicStudio()
-    logger.info("🎛️ BROCKSTON's music production studio is online!")
-    return brockston_studio
+def initialize_christman_studio():
+    """Initialize CHRISTMAN's music production studio"""
+    global christman_studio
+    christman_studio = ChristmanMusicStudio()
+    logger.info("🎛️ CHRISTMAN's music production studio is online!")
+    return christman_studio
 
 
 def create_beat(name: str, style: str = "electronic") -> Dict:
-    """BROCKSTON creates a beat"""
-    if brockston_studio is None:
-        initialize_brockston_studio()
+    """CHRISTMAN creates a beat"""
+    if christman_studio is None:
+        initialize_christman_studio()
 
-    project = brockston_studio.create_project(name, tempo=120)
+    project = christman_studio.create_project(name, tempo=120)
 
     # Different beat patterns for different styles
     patterns = {
@@ -402,19 +402,19 @@ def create_beat(name: str, style: str = "electronic") -> Dict:
         "hip_hop": [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0],
         "house": [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
         "funk": [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0],
-    }
+    } # <--- Closing brace added here
 
     pattern = patterns.get(style, patterns["electronic"])
-    brockston_studio.program_beat("Drums", pattern, bars=4)
+    christman_studio.program_beat("Drums", pattern, bars=4)
 
-    return brockston_studio.mix_project(f"{name}_{style}_beat")
+    return christman_studio.mix_project(f"{name}_{style}_beat")
 
 
 if __name__ == "__main__":
-    # Test BROCKSTON's production studio
-    studio = initialize_brockston_studio()
+    # Test CHRISTMAN's production studio
+    studio = initialize_christman_studio()
 
-    print("🎛️ Testing BROCKSTON's Music Production Studio...")
+    print("🎛️ Testing CHRISTMAN's Music Production Studio...")
 
     # Create a project
     project = studio.create_project("Test Track", tempo=125)
@@ -438,4 +438,4 @@ if __name__ == "__main__":
     stats = studio.get_studio_stats()
     print(f"Studio stats: {stats}")
 
-    print("🎵 BROCKSTON's production studio is fully operational!")
+    print("🎵 CHRISTMAN's production studio is fully operational!") 

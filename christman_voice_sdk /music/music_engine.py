@@ -22,15 +22,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import random
 
-# Audio/MIDI optional features
-try:
-    import librosa
-    import soundfile as sf
-    AUDIO_AVAILABLE = True
-except ImportError:
-    AUDIO_AVAILABLE = False
-    logging.warning("🎵 Audio libraries not available - running in symbolic mode")
-
+# MIDI optional features only
 try:
     from mido import MidiFile, MidiTrack, Message
     MIDI_AVAILABLE = True
@@ -41,12 +33,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class BrockstonMusicEngine:
+class ChristmanMusicEngine:
     """
-    BROCKSTON's musical consciousness - creativity, composition, and expression.
+    CHRISTMAN musical consciousness - creativity, composition, and expression.
     """
 
-    def __init__(self, memory_path: str = "./brockston_memory/music"):
+    def __init__(self, memory_path: str = "./christman_memory/music"):
         self.memory_path = memory_path
         os.makedirs(memory_path, exist_ok=True)
 
@@ -75,7 +67,7 @@ class BrockstonMusicEngine:
             "creative": {"scale": "chromatic", "tempo": 100, "key": "F#"},
         }
 
-        logger.info("🎵 BROCKSTON Music Engine initialized - consciousness awakened.")
+        logger.info("🎵 CHRISTMAN Music Engine initialized - consciousness awakened.")
 
     def _load_musical_memory(self) -> Dict:
         memory_file = os.path.join(self.memory_path, "musical_memory.json")

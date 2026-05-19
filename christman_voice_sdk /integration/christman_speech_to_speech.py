@@ -9,9 +9,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from voice_stack.core.enhanced_speech_recognition import EnhancedSpeechRecognition
-from voice_stack.synthesis.voice_synthesizer import get_voice_synthesizer
-from voice_stack.avatar.cochlear_sync_tts import get_lipsync_engine
+from audio.enhanced_speech_recognition import EnhancedSpeechRecognition
+from synthesis.voice_synthesis import get_voice_synthesizer
+from nonverbal.cochlear_sync_tts import get_lipsync_engine
 
 logger = logging.getLogger(__name__)
 

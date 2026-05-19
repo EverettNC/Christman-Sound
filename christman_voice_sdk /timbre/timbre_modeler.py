@@ -12,8 +12,8 @@ import torch
 import ctypes
 from dataclasses import dataclass
 
-from .logger import get_logger
-from .audio_processor import AudioSegment
+from timbre.logger import get_logger
+from audio.audio_processor import AudioSegment
 
 logger = get_logger(__name__)
 

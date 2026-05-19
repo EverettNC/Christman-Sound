@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from logger import get_logger
-from config import Tier
+from audio.config import Tier
 
 logger = get_logger(__name__)
 

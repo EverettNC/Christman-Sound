@@ -1,5 +1,5 @@
-import torch
-from torch import nn
+import torch # pyright: ignore[reportMissingImports]
+from torch import nn # pyright: ignore[reportMissingImports]
 
 
 class Conv2d(nn.Module):

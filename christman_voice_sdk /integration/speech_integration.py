@@ -64,7 +64,7 @@ class SpeechIntegration:
         """Initialize speech recognition components"""
         # Try to load the real speech recognition engine
         try:
-            from real_speech_recognition import get_speech_recognition_engine
+            from audio.real_speech_recognition import get_speech_recognition_engine
 
             self.speech_engine = get_speech_recognition_engine()
             logger.info("Real speech recognition engine loaded")
@@ -73,7 +73,7 @@ class SpeechIntegration:
 
         # Try to load enhanced speech recognition
         try:
-            from attached_assets.enhanced_speech_recognition import (
+            from audio.enhanced_speech_recognition import (
                 EnhancedSpeechRecognition,
             )
 

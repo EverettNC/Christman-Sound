@@ -6,14 +6,14 @@ from typing import Any, Dict, List, Optional, Sequence
 import tempfile
 import time
 
-from audio_processor import AudioProcessor
-from phoneme_labeler import PhonemeLabeler
-from voicepack import VoicepackBuilder, VoicepackMetadata
-from timbre_modeler import TimbreModeler, VoiceProfile
-from emotion_embedder import EmotionEmbedder
-from gpt_sovits_engine import GPTSoVITSEngine
-from tone_engine import ToneScoreEngine
-from config import Config, Tier, get_config
+from audio.audio_processor import AudioProcessor
+from synthesis.phoneme_labeler import PhonemeLabeler
+from timbre.voicepack import VoicepackBuilder, VoicepackMetadata
+from timbre.timbre_modeler import TimbreModeler, VoiceProfile
+from tone.emotion_embedder import EmotionEmbedder
+from engines.gpt_sovits_engine import GPTSoVITSEngine
+from tone.tonescore_engine import ToneScoreEngine
+from audio.config import Config, Tier, get_config
 from logger import get_logger
 
 logger = get_logger(__name__)

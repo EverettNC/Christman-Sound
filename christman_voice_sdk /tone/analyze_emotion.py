@@ -1,8 +1,9 @@
 import json
 import re
+from typing import List, Dict, Optional
 
-# Basic keywords mapped to emotions
-tags_map = {
+# Emotional keyword mapping (The "General Intelligence" layer)
+TAGS_MAP = {
     "love": "emotional",
     "angry": "frustration",
     "sad": "loss",
@@ -18,43 +19,34 @@ tags_map = {
     "voice": "identity",
 }
 
-MEMORY_PATH = "derek_memory.json"
+class EmotionalTagger:
+    """
+    A sovereign emotional analysis engine for any Christman AI family member.
+    """
+    def __init__(self, memory_path: str):
+        self.memory_path = memory_path
+        # Compile patterns once on initialization
+        self.patterns = {word: re.compile(rf"\b{word}\b", re.IGNORECASE) for word in TAGS_MAP}
 
+    def tag_emotions(self) -> List[Dict]:
+        """Loads, tags, and saves memory for the calling instance."""
+        try:
+            with open(self.memory_path, "r") as f:
+                memory = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Memory access error at {self.memory_path}: {e}")
+            return []
 
-def tag_emotions():
-    try:
-        with open(MEMORY_PATH, "r") as f:
-            memory = json.load(f)
-    except FileNotFoundError:
-        return []
+        for entry in memory:
+            combined = f"{entry.get('input', '')} {entry.get('response', '')}"
+            tags = {TAGS_MAP[word] for word, pattern in self.patterns.items() if pattern.search(combined)}
+            entry["tags"] = list(tags)
 
-    updated = []
-    for entry in memory:
-        combined = f"{entry['input']} {entry['response']}".lower()
-        tags = set()
-        for word, emotion in tags_map.items():
-            if re.search(rf"\\b{word}\\b", combined):
-                tags.add(emotion)
-        entry["tags"] = list(tags)
-        updated.append(entry)
+        with open(self.memory_path, "w") as f:
+            json.dump(memory, f, indent=2)
 
-    with open(MEMORY_PATH, "w") as f:
-        json.dump(updated, f, indent=2)
+        return memory
 
-    return updated
-
-
-if __name__ == "__main__":
-    result = tag_emotions()
-    print(f"Tagged {len(result)} memories with emotional context.")
-
-
-# ==============================================================================
-# © 2025 Everett Nathaniel Christman
-# The Christman AI Project — Luma Cognify AI
-# All rights reserved. Unauthorized use, replication, or derivative training
-# of this material is prohibited.
-#
-# Core Directive: "How can I help you love yourself more?"
-# Autonomy & Alignment Protocol v3.0
-# ==============================================================================
+# Usage for any family member:
+# tagger = EmotionalTagger("./derek_memory/memory.json")
+# tagger.tag_emotions()

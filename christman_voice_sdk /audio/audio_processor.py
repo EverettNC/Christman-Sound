@@ -5,11 +5,11 @@ Handles noise reduction, audio segmentation, and quality analysis.
 Sovereign implementation: Zero reliance on bloated external audio libraries (librosa).
 """
 
-import numpy as np
-import soundfile as sf
-from scipy import signal
+import numpy as np # pyright: ignore[reportMissingImports]
+import soundfile as sf # pyright: ignore[reportMissingImports]
+from scipy import signal # pyright: ignore[reportMissingImports]
 try:
-    import noisereduce as nr
+    import noisereduce as nr # pyright: ignore[reportMissingImports]
 except ImportError:
     nr = None
 from pathlib import Path
@@ -17,7 +17,7 @@ from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 
 from .config import Config, Tier, get_config
-from .logger import get_logger
+from timbre.logger import get_logger
 
 logger = get_logger(__name__)
 

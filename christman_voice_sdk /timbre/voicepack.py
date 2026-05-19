@@ -17,8 +17,8 @@ from datetime import datetime
 import hashlib
 import numpy as np
 
-from .timbre_modeler import VoiceProfile
-from .emotion_embedder import EmotionEmbedding, EmotionalState
+from timbre.timbre_modeler import VoiceProfile
+from tone.emotion_embedder import EmotionEmbedding, EmotionalState
 from .logger import get_logger
 
 logger = get_logger(__name__)

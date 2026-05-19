@@ -77,7 +77,7 @@ class EnhancedSpeechRecognition:
         os.makedirs(self.audio_cache_dir, exist_ok=True)
 
         try:
-            from sound_recognition_service import SoundRecognitionService
+            from audio.sound_recognition_service import SoundRecognitionService
 
             self.sound_service: Optional[Any] = SoundRecognitionService()
             self.logger.info("Sound recognition service loaded")

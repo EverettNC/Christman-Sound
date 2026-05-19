@@ -25,7 +25,7 @@ DEPENDENCIES:
 """
 
 import asyncio
-import websockets
+import websockets # pyright: ignore[reportMissingImports]
 import json
 import numpy as np
 import sounddevice as sd
