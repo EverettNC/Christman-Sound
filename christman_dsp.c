@@ -95,4 +95,56 @@ void christman_yin(const float* audio, size_t length, int sample_rate, float thr
     free(yin_buffer);
 }
 
+// Add this to christman_dsp.c
 
+// Bare-metal Linear Predictive Coding (LPC) using Levinson-Durbin recursion
+void christman_lpc(const float* audio, size_t length, int order, float* out_a) {
+    if (length == 0 || order <= 0) {
+        out_a[0] = 1.0f;
+        for (int i = 1; i <= order; i++) out_a[i] = 0.0f;
+        return;
+    }
+
+    // 1. Calculate Autocorrelation
+    float* r = (float*)malloc((order + 1) * sizeof(float));
+    if (!r) return;
+    
+    for (int lag = 0; lag <= order; lag++) {
+        r[lag] = 0.0f;
+        for (size_t i = 0; i < length - lag; i++) {
+            r[lag] += audio[i] * audio[i + lag];
+        }
+    }
+
+    // 2. Levinson-Durbin Recursion
+    out_a[0] = 1.0f; // a[0] is always 1.0
+    if (r[0] == 0.0f) {
+        for (int i = 1; i <= order; i++) out_a[i] = 0.0f;
+        free(r);
+        return;
+    }
+
+    float error = r[0];
+    float* k = (float*)malloc((order + 1) * sizeof(float));
+    if (!k) { free(r); return; }
+
+    for (int i = 1; i <= order; i++) {
+        float sum = 0.0f;
+        for (int j = 1; j < i; j++) {
+            sum += out_a[j] * r[i - j];
+        }
+        k[i] = (r[i] - sum) / error;
+        out_a[i] = k[i];
+
+        // Update previous coefficients
+        for (int j = 1; j <= i / 2; j++) {
+            float temp = out_a[j] - k[i] * out_a[i - j];
+            out_a[i - j] -= k[i] * out_a[j];
+            out_a[j] = temp;
+        }
+        error *= (1.0f - k[i] * k[i]);
+    }
+
+    free(k);
+    free(r);
+}
