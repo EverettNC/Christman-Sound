@@ -5,11 +5,12 @@ Distinguishes AGGRESSIVE from INCISIVE in written communication.
 
 AGGRESSIVE = attacking, overwhelming, defensive response
 INCISIVE = surgical, precise, respectful fear + locked attention
+
+Completely sovereign logic layer. No external dependencies.
 """
 
 from typing import Dict, List
 import re
-
 
 def classify_written_tone(text: str) -> Dict:
     """
@@ -188,3 +189,11 @@ if __name__ == "__main__":
     breakdown = analyze_tone_breakdown(AGGRESSIVE_EXAMPLE)
     for key, value in breakdown.items():
         print(f"{key:25s}: {value}")
+
+# ==============================================================================
+# Patent Pending — TCAP-2026-001 / TCAP-2026-002
+# © 2026 Everett Nathaniel Christman & Misty Gail Christman
+# The Christman AI Project — Luma Cognify AI
+# Truth. Dignity. Protection. Transparency. No Erasure.
+# Nothing Vital Lives Below Root.
+# ==============================================================================

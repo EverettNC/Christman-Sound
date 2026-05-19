@@ -10,6 +10,8 @@ Layer 3: Paralinguistics
 Layer 4: Discrete Emotions
 Layer 5: ToneScore (0-100 composite)
 
+Completely sovereign architecture. Zero reliance on bloated external audio libraries like librosa.
+
 Patent Pending TCAP-2026-001 / TCAP-2026-002
 © 2026 Everett Nathaniel Christman & Misty Gail Christman
 The Christman AI Project — Luma Cognify AI
@@ -21,8 +23,11 @@ import logging
 import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from pathlib import Path
+import ctypes
 
 import numpy as np
+from scipy.io import wavfile
 
 warnings.filterwarnings("ignore")
 
@@ -34,18 +39,60 @@ except ImportError:
     _torch_ok = False
 
 try:
-    import librosa
-    _librosa_ok = True
-except ImportError:
-    _librosa_ok = False
-
-try:
     from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2Processor
     _transformers_ok = True
 except ImportError:
     _transformers_ok = False
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Bare-Metal DSP Engine Hook
+# =============================================================================
+DSP_LIB_PATH = Path(__file__).parent.parent / "christman_dsp.so"
+
+try:
+    _dsp_engine = ctypes.CDLL(str(DSP_LIB_PATH))
+    _dsp_engine.christman_yin.argtypes = [
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_size_t, ctypes.c_int, ctypes.c_float, ctypes.POINTER(ctypes.c_float)
+    ]
+    _dsp_ok = True
+    logger.info("Christman DSP Engine online in MultiLayerToneAnalyzer.")
+except Exception as e:
+    _dsp_ok = False
+    logger.error(f"Christman DSP Engine failed to load: {e}")
+
+def get_pitch_contour_native(audio_array: np.ndarray, sample_rate: int = 16000, threshold: float = 0.1) -> np.ndarray:
+    if not _dsp_ok: return np.array([])
+    frame_length = 2048
+    hop_length = 512
+    if len(audio_array) < frame_length: return np.array([])
+    num_frames = 1 + (len(audio_array) - frame_length) // hop_length
+    pitches = np.zeros(num_frames, dtype=np.float32)
+    out_pitch = ctypes.c_float()
+    for i in range(num_frames):
+        start = i * hop_length
+        frame = np.ascontiguousarray(audio_array[start:start + frame_length], dtype=np.float32)
+        _dsp_engine.christman_yin(frame, len(frame), sample_rate, threshold, ctypes.byref(out_pitch))
+        pitches[i] = out_pitch.value
+    return pitches
+
+def get_rms_contour(y: np.ndarray) -> np.ndarray:
+    frame_length = 2048
+    hop_length = 512
+    pad_width = frame_length // 2
+    y_padded = np.pad(y, pad_width, mode='reflect')
+    num_frames = 1 + (len(y_padded) - frame_length) // hop_length
+    if num_frames < 1: return np.array([0.0], dtype=np.float32)
+    amplitude = np.zeros(num_frames, dtype=np.float32)
+    for i in range(num_frames):
+        start = i * hop_length
+        frame = y_padded[start:start + frame_length]
+        amplitude[i] = np.sqrt(np.mean(frame**2))
+    return amplitude
+# =============================================================================
 
 
 @dataclass
@@ -99,10 +146,17 @@ class MultiLayerToneAnalyzer:
             self._load_emotion_model(emotion_model)
 
     def analyze_complete(self, audio_path: str) -> Dict[str, Any]:
-        if not _librosa_ok:
-            return {"error": "librosa not installed"}
-        logger.info("Analyzing tone for: %s", audio_path)
-        audio, sample_rate = librosa.load(audio_path, sr=16000)
+        logger.info("Analyzing tone natively for: %s", audio_path)
+        
+        try:
+            sample_rate, audio_raw = wavfile.read(audio_path)
+            if audio_raw.dtype == np.int16:
+                audio = audio_raw.astype(np.float32) / 32768.0
+            else:
+                audio = audio_raw.astype(np.float32)
+        except Exception as e:
+            return {"error": f"Failed to load audio: {e}"}
+
         pitch = self._extract_pitch(audio, sample_rate)
         jitter = self._compute_jitter(audio, sample_rate, pitch)
         shimmer = self._compute_shimmer(audio)
@@ -175,7 +229,7 @@ class MultiLayerToneAnalyzer:
 
     def _extract_pitch(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
         try:
-            return librosa.yin(audio, fmin=50, fmax=400, sr=sample_rate)
+            return get_pitch_contour_native(audio, sample_rate)
         except Exception as exc:
             logger.warning("Pitch extraction failed: %s", exc)
             return np.zeros(len(audio), dtype=float)
@@ -194,7 +248,7 @@ class MultiLayerToneAnalyzer:
 
     def _compute_shimmer(self, audio: np.ndarray) -> float:
         try:
-            amplitude = librosa.feature.rms(y=audio)[0]
+            amplitude = get_rms_contour(audio)
             if len(amplitude) < 2:
                 return 0.0
             amplitude_mean = float(np.mean(amplitude))
@@ -207,24 +261,29 @@ class MultiLayerToneAnalyzer:
 
     def _harmonic_noise_ratio(self, audio: np.ndarray) -> float:
         try:
-            harmonic, percussive = librosa.effects.hpss(audio)
-            harmonic_power = float(np.mean(harmonic ** 2))
-            noise_power = float(np.mean(percussive ** 2))
-            if noise_power <= 0:
-                return 30.0
-            if harmonic_power <= 0:
-                return 0.0
-            return float(10.0 * np.log10(harmonic_power / noise_power))
+            S = np.abs(np.fft.rfft(audio))
+            median_S = np.median(S)
+            peaks = S[S > median_S * 2]
+            harmonic_power = float(np.sum(peaks ** 2)) + 1e-9
+            total_power = float(np.sum(S ** 2)) + 1e-9
+            noise_power = total_power - harmonic_power
+            if noise_power <= 0: return 30.0
+            if harmonic_power <= 0: return 0.0
+            return float(max(0.0, min(30.0, 10.0 * np.log10(harmonic_power / noise_power))))
         except Exception as exc:
             logger.warning("HNR computation failed: %s", exc)
             return 15.0
 
     def _compute_arousal(self, audio: np.ndarray, sample_rate: int, jitter: float, pitch: np.ndarray) -> float:
         try:
-            rms = librosa.feature.rms(y=audio)[0]
+            rms = get_rms_contour(audio)
             energy = min(100.0, float(np.mean(rms) * 1000.0))
-            onset_envelope = librosa.onset.onset_strength(y=audio, sr=sample_rate)
-            tempo = float(librosa.beat.tempo(onset_envelope=onset_envelope, sr=sample_rate)[0])
+            if len(rms) > 2:
+                peaks = np.where((rms[1:-1] > rms[:-2]) & (rms[1:-1] > rms[2:]))[0]
+                fps = sample_rate / 512.0
+                tempo = float((fps / np.mean(np.diff(peaks))) * 60.0 if len(peaks) > 1 else 120.0)
+            else:
+                tempo = 120.0
             tempo_score = min(100.0, (tempo / 180.0) * 100.0)
             pitch_values = pitch[pitch > 0]
             pitch_score = (min(100.0, (float(np.mean(pitch_values)) / 250.0) * 100.0) if len(pitch_values) > 0 else 50.0)
@@ -235,26 +294,35 @@ class MultiLayerToneAnalyzer:
 
     def _compute_valence(self, audio: np.ndarray, sample_rate: int, hnr: float) -> float:
         try:
-            centroid = librosa.feature.spectral_centroid(y=audio, sr=sample_rate)[0]
-            brightness = min(100.0, (float(np.mean(centroid)) / 3000.0) * 100.0)
+            S = np.abs(np.fft.rfft(audio))
+            freqs = np.fft.rfftfreq(len(audio), 1/sample_rate)
+            sum_S = np.sum(S)
+            brightness = float(np.sum(freqs * S) / sum_S if sum_S > 0 else 0.0)
+            brightness_score = min(100.0, (brightness / 3000.0) * 100.0)
             hnr_score = min(100.0, max(0.0, (hnr + 10.0) * 3.33))
-            zcr = librosa.feature.zero_crossing_rate(audio)[0]
-            smoothness = max(0.0, 100.0 - (float(np.mean(zcr)) * 200.0))
-            return min(100.0, max(0.0, 0.40 * brightness + 0.40 * hnr_score + 0.20 * smoothness))
+            zcr_mean = np.mean(np.abs(np.diff(np.signbit(audio))))
+            smoothness = max(0.0, 100.0 - (float(zcr_mean) * 200.0))
+            return min(100.0, max(0.0, 0.40 * brightness_score + 0.40 * hnr_score + 0.20 * smoothness))
         except Exception as exc:
             logger.warning("Valence computation failed: %s", exc)
             return 50.0
 
     def _compute_dominance(self, audio: np.ndarray, sample_rate: int, pitch: Optional[np.ndarray] = None) -> float:
         try:
-            rms = librosa.feature.rms(y=audio)[0]
+            rms = get_rms_contour(audio)
             energy = min(100.0, float(np.mean(rms) * 1000.0))
             pitch_values = pitch if pitch is not None else self._extract_pitch(audio, sample_rate)
             pitch_values = pitch_values[pitch_values > 0]
             pitch_range = (float(np.max(pitch_values) - np.min(pitch_values)) if len(pitch_values) > 0 else 0.0)
             range_score = min(100.0, (pitch_range / 150.0) * 100.0)
-            rolloff = librosa.feature.spectral_rolloff(y=audio, sr=sample_rate)[0]
-            rolloff_score = min(100.0, (float(np.mean(rolloff)) / 4000.0) * 100.0)
+            
+            S = np.abs(np.fft.rfft(audio))
+            cumsum = np.cumsum(S)
+            if cumsum[-1] > 0:
+                rolloff = np.fft.rfftfreq(len(audio), 1/sample_rate)[np.searchsorted(cumsum, 0.85 * cumsum[-1])]
+            else:
+                rolloff = 0.0
+            rolloff_score = min(100.0, (float(rolloff) / 4000.0) * 100.0)
             return min(100.0, max(0.0, 0.40 * energy + 0.30 * range_score + 0.30 * rolloff_score))
         except Exception as exc:
             logger.warning("Dominance computation failed: %s", exc)
@@ -316,4 +384,5 @@ __all__ = ["ToneAnalysisResult", "ToneScoreCalculator", "MultiLayerToneAnalyzer"
 # Patent Pending TCAP-2026-001 / TCAP-2026-002
 # The Christman AI Project — Luma Cognify AI
 # "How can we help you love yourself more?"
+# Nothing Vital Lives Below Root.
 # ==============================================================================

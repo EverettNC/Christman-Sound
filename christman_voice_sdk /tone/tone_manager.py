@@ -1,9 +1,21 @@
-"""Tone and empathy management helpers."""
+"""
+Tone and Empathy Management Helpers - Christman AI
+
+Applies communication adjustments after tone has been interpreted.
+This layer manages delivery: pacing, warmth, structure, mirroring,
+and response framing.
+
+Completely sovereign logic layer. No external dependencies.
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Optional
+
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 try:
     from emotion_service import emotion_service
@@ -276,7 +288,9 @@ __all__ = [
 
 
 # ==============================================================================
-# Patent Pending
-# Christman-AI Family
-# Shared-neutral implementation for internal system use.
+# Patent Pending — TCAP-2026-001 / TCAP-2026-002
+# © 2026 Everett Nathaniel Christman & Misty Gail Christman
+# The Christman AI Project — Luma Cognify AI
+# Truth. Dignity. Protection. Transparency. No Erasure.
+# Nothing Vital Lives Below Root.
 # ==============================================================================
