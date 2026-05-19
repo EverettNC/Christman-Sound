@@ -104,12 +104,19 @@ except ImportError:
     _pygame_ok = False
     logging.warning("[SDK] pygame not installed — playback disabled")
 
+# ── Native Engine Verification ────────────────────────────────────────────────
+# Rule 6: Fail loud. If the native engine is missing, 
+# the entire acoustic layer must report failure.
+
 try:
-    import librosa
-    _librosa_ok = True
-except ImportError:
-    _librosa_ok = False
-    logging.warning("[SDK] librosa not installed — ToneScore™ analysis disabled")
+    # Verify the existence of the Christman DSP bridge
+    if not DSP_LIB_PATH.exists():
+        raise FileNotFoundError(f"Native engine not found at {DSP_LIB_PATH}")
+    _dsp_ok = True
+    logging.info("[SDK] ToneScore™ analysis via Christman Native DSP is ONLINE.")
+except Exception as e:
+    _dsp_ok = False
+    logging.error(f"[SDK] CRITICAL: ToneScore™ analysis disabled — {e}")
 
 try:
     import torch
@@ -533,22 +540,40 @@ class ToneScoreEngine:
             "takotsubo": None,
         }
 
-    def _extract_pitch(self, y: Any, sr: int) -> Any:
+    def _extract_pitch(self, y: np.ndarray, sr: int) -> np.ndarray:
+        """
+        Extract pitch using the native Christman DSP YIN algorithm.
+        Bypassing librosa.yin.
+        """
         try:
-            return librosa.yin(y, fmin=50, fmax=400, sr=sr)
+            # We use the native C function we mapped in the module header
+            return get_pitch_contour_native(y, sr)
         except Exception as exc:
-            logger.warning("Pitch extraction failed: %s", exc)
-            return np.zeros(len(y)) if _numpy_ok else []
+            logger.warning("Native pitch extraction failed: %s", exc)
+            return np.zeros(len(y), dtype=np.float32)
 
-    def _compute_jitter(self, y: Any, sr: int, pitch: Any = None) -> float:
+    def _compute_jitter(self, y: np.ndarray, sr: int, pitch: np.ndarray = None) -> float:
+        """
+        Compute jitter natively using the pitch contour.
+        Bypassing librosa dependency.
+        """
         try:
-            p = pitch if pitch is not None else librosa.yin(y, fmin=50, fmax=400, sr=sr)
+            # Get pitch contour natively if not provided
+            p = pitch if pitch is not None else get_pitch_contour_native(y, sr)
+            
+            # Filter unvoiced frames (pitch > 0)
             p = p[p > 0]
+            
             if len(p) < 2:
                 return 0.0
-            periods      = 1.0 / p
+                
+            # Period-to-period variation calculation
+            periods = 1.0 / p
             period_diffs = np.abs(np.diff(periods))
+            
+            # Jitter = mean of differences / mean of periods
             return min(1.0, float(np.mean(period_diffs) / np.mean(periods)) * 10.0)
+            
         except Exception as exc:
             logger.warning("Jitter failed: %s", exc)
             return 0.0
@@ -592,57 +617,156 @@ class ToneScoreEngine:
             logger.warning("Shimmer failed: %s", exc)
             return 0.0
 
-    def _harmonic_noise_ratio(self, y: Any) -> float:
+    def _harmonic_noise_ratio(self, y: np.ndarray) -> float:
+        """
+        Compute HNR natively using autocorrelation.
+        Bypassing librosa.effects.hpss entirely.
+        """
         try:
-            h, p     = librosa.effects.hpss(y)
-            h_power  = float(np.mean(h ** 2))
-            n_power  = float(np.mean(p ** 2))
-            if n_power <= 0:
-                return 30.0
-            return float(10.0 * np.log10(h_power / n_power))
+            # 1. Native Autocorrelation
+            # The autocorrelation of a signal shows periodicity (harmonics) 
+            # at the lag where the signal correlates with itself.
+            corr = np.correlate(y, y, mode='full')
+            corr = corr[len(corr)//2:] # Take the second half
+            
+            # The first peak after lag 0 is the fundamental period.
+            # We look for the first local maximum after the initial drop.
+            # This represents the energy of the harmonic part of the signal.
+            
+            # Find the first peak after the initial descent
+            diff = np.diff(corr)
+            start_search = np.where(diff > 0)[0]
+            if len(start_search) == 0:
+                return 15.0 # Fallback for unclear signals
+                
+            first_peak_idx = start_search[0]
+            harmonic_energy = corr[first_peak_idx]
+            total_energy = corr[0]
+            
+            # Noise energy is the difference between total and harmonic energy
+            noise_energy = total_energy - harmonic_energy
+            
+            if noise_energy <= 0:
+                return 30.0 # Clear, harmonic-dominant signal
+            
+            # HNR = 10 * log10(harmonic / noise)
+            hnr = 10.0 * np.log10(harmonic_energy / noise_energy)
+            
+            return float(np.clip(hnr, 0.0, 30.0))
+            
         except Exception as exc:
             logger.warning("HNR failed: %s", exc)
             return 15.0
 
-    def _compute_arousal(self, y: Any, sr: int, jitter: float, pitch: Any) -> float:
+    def _compute_arousal(self, y: np.ndarray, sr: int, jitter: float, pitch: np.ndarray) -> float:
+        """
+        Compute arousal (0-100) using native numpy.
+        Bypassing librosa feature extraction and beat tracking.
+        """
         try:
-            energy       = float(np.mean(librosa.feature.rms(y=y)[0])) * 100.0
-            onset_env    = librosa.onset.onset_strength(y=y, sr=sr)
-            tempo        = float(librosa.beat.tempo(onset_envelope=onset_env, sr=sr)[0])
-            tempo_score  = min(100.0, (tempo / 180.0) * 100.0)
-            pitch_vals   = pitch[pitch > 0]
-            pitch_score  = min(100.0, (float(np.mean(pitch_vals)) / 250.0) * 100.0) if len(pitch_vals) > 0 else 50.0
+            # 1. Native Energy (RMS)
+            rms_frames = get_rms_contour(y)
+            energy = float(np.mean(rms_frames)) * 400.0  # Normalized to your scale
+            
+            # 2. Native Tempo Approximation (Energy Peak Tracking)
+            # We track the distance between energy peaks to approximate BPM
+            if len(rms_frames) > 5:
+                # Find local peaks in the energy envelope
+                peaks = np.where((rms_frames[1:-1] > rms_frames[:-2]) & 
+                                 (rms_frames[1:-1] > rms_frames[2:]))[0]
+                if len(peaks) > 2:
+                    # frames_per_second = sr / hop_length
+                    fps = sr / 512.0
+                    avg_peak_dist = np.mean(np.diff(peaks))
+                    tempo = (fps / avg_peak_dist) * 60.0
+                else:
+                    tempo = 120.0 # Default fallback
+            else:
+                tempo = 120.0
+            
+            tempo_score = min(100.0, (tempo / 180.0) * 100.0)
+            
+            # 3. Native Pitch Score
+            pitch_vals = pitch[pitch > 0]
+            pitch_score = min(100.0, (float(np.mean(pitch_vals)) / 250.0) * 100.0) if len(pitch_vals) > 0 else 50.0
+            
+            # 4. Jitter (Already computed natively)
             jitter_score = jitter * 100.0
-            return min(100.0, max(0.0,
-                0.30 * energy + 0.30 * tempo_score +
-                0.25 * pitch_score + 0.15 * jitter_score
+            
+            # Weighted Composite
+            return min(100.0, max(0.0, 
+                0.30 * energy + 
+                0.30 * tempo_score + 
+                0.25 * pitch_score + 
+                0.15 * jitter_score
             ))
+            
         except Exception as exc:
             logger.warning("Arousal failed: %s", exc)
             return 50.0
 
-    def _compute_valence(self, y: Any, sr: int, hnr: float) -> float:
+    def _compute_valence(self, y: np.ndarray, sr: int, hnr: float) -> float:
+        """
+        Compute valence (0-100) using native FFT and signal processing.
+        Bypassing librosa entirely.
+        """
         try:
-            centroid   = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
-            brightness = min(100.0, (float(np.mean(centroid)) / 3000.0) * 100.0)
-            hnr_score  = min(100.0, max(0.0, (hnr + 10.0) * 3.33))
-            zcr        = librosa.feature.zero_crossing_rate(y)[0]
-            smoothness = max(0.0, 100.0 - (float(np.mean(zcr)) * 200.0))
-            return min(100.0, max(0.0, 0.40*brightness + 0.40*hnr_score + 0.20*smoothness))
+            # 1. Native Spectral Centroid (Brightness)
+            # Perform FFT to get frequency components
+            S = np.abs(np.fft.rfft(y))
+            freqs = np.fft.rfftfreq(len(y), 1/sr)
+            
+            # Weighted average of frequencies (Centroid)
+            sum_S = np.sum(S)
+            brightness = float(np.sum(freqs * S) / sum_S) if sum_S > 0 else 0.0
+            brightness_score = min(100.0, (brightness / 3000.0) * 100.0)
+
+            # 2. HNR (Harmonic-Noise Ratio)
+            # Already calculated natively via the HNR helper in our previous step
+            hnr_score = min(100.0, max(0.0, (hnr + 10.0) * 3.33))
+
+            # 3. Native Zero Crossing Rate (Smoothness)
+            # Count how often the signal crosses zero
+            zcr_mean = np.mean(np.abs(np.diff(np.signbit(y))))
+            smoothness_score = max(0.0, 100.0 - (float(zcr_mean) * 200.0))
+
+            # Composite Valence
+            return min(100.0, max(0.0, 0.40 * brightness_score + 0.40 * hnr_score + 0.20 * smoothness_score))
+
         except Exception as exc:
             logger.warning("Valence failed: %s", exc)
             return 50.0
 
-    def _compute_dominance(self, y: Any, sr: int, pitch: Any = None) -> float:
+   def _compute_dominance(self, y: np.ndarray, sr: int, pitch: np.ndarray = None) -> float:
+        """
+        Compute dominance (0-100) using native numpy and Christman DSP.
+        Bypassing librosa entirely.
+        """
         try:
-            energy    = float(np.mean(librosa.feature.rms(y=y)[0])) * 100.0
-            p         = pitch if pitch is not None else librosa.yin(y, fmin=50, fmax=400, sr=sr)
-            pv        = p[p > 0]
-            p_range   = float(np.max(pv) - np.min(pv)) if len(pv) > 0 else 0.0
+            # 1. Native Energy (RMS)
+            rms = get_rms_contour(y)
+            energy_score = np.mean(rms) * 100.0
+            
+            # 2. Native Pitch Range
+            p = pitch if pitch is not None else get_pitch_contour_native(y, sr)
+            pv = p[p > 0]
+            p_range = float(np.max(pv) - np.min(pv)) if len(pv) > 0 else 0.0
             range_score = min(100.0, (p_range / 150.0) * 100.0)
-            rolloff   = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
-            rolloff_score = min(100.0, (float(np.mean(rolloff)) / 4000.0) * 100.0)
-            return min(100.0, max(0.0, 0.40*energy + 0.30*range_score + 0.30*rolloff_score))
+            
+            # 3. Native Spectral Rolloff (85% energy threshold)
+            S = np.abs(np.fft.rfft(y))
+            cumsum = np.cumsum(S)
+            if cumsum[-1] > 0:
+                # Find frequency index where 85% of energy is below
+                rolloff_idx = np.searchsorted(cumsum, 0.85 * cumsum[-1])
+                freqs = np.fft.rfftfreq(len(y), 1/sr)
+                rolloff = freqs[rolloff_idx]
+            else:
+                rolloff = 0.0
+            rolloff_score = min(100.0, (float(rolloff) / 4000.0) * 100.0)
+            
+            return min(100.0, max(0.0, 0.40 * energy_score + 0.30 * range_score + 0.30 * rolloff_score))
+            
         except Exception as exc:
             logger.warning("Dominance failed: %s", exc)
             return 50.0
