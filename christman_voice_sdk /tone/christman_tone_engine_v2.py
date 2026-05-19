@@ -3,11 +3,16 @@
 # Architecture: Multi-layer tone detection (Raw Audio -> Quantified Emotion)
 
 import torch
-import librosa
 import numpy as np
 import hashlib
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForSequenceClassification
+from scipy.io import wavfile
+import numpy as np
 
+sr, y = wavfile.read(wav_path)
+# Ensure it's float32 between -1.0 and 1.0 like librosa expects
+if y.dtype == np.int16:
+    y = y.astype(np.float32) / 32768.0
 class ChristmanToneEngine:
     def __init__(self, model_name="superb/wav2vec2-base-superb-er"):
         print(f"[SYSTEM] Initializing Christman Tone Engine: {model_name}")

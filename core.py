@@ -51,6 +51,34 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+import ctypes
+from pathlib import Path
+import numpy as np
+
+# Proximity: The engine lives shoulder-to-shoulder with the code that thinks with it.
+DSP_LIB_PATH = Path(__file__).parent / "christman_dsp.so"
+
+try:
+    _dsp_engine = ctypes.CDLL(str(DSP_LIB_PATH))
+    
+    # Map the RMS function
+    _dsp_engine.christman_rms.argtypes = [
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_float)
+    ]
+    
+    # Map the ZCR function
+    _dsp_engine.christman_zcr.argtypes = [
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_float)
+    ]
+    _dsp_ok = True
+    logger.info("Christman DSP Engine online. Bypassing external acoustic dependencies.")
+except Exception as e:
+    _dsp_ok = False
+    logger.warning(f"Christman DSP Engine failed to load: {e}")
 
 # ── Dependency guards ─────────────────────────────────────────────────────────
 # Rule 6: Fail loud. Every missing dependency logged immediately on import.
@@ -341,8 +369,8 @@ class ToneScoreEngine:
             emotion_intensity, tone_score, interpretation, response_mode,
             physiological, takotsubo (if triggered)
         """
-        if not _librosa_ok:
-            logger.error("[SDK] librosa required for ToneScore™ — returning neutral")
+        if not _dsp_ok:
+            logger.error("[SDK] Native DSP engine required for ToneScore™ — returning neutral")
             return self._neutral_result()
 
         if not Path(audio_path).exists():
@@ -350,8 +378,14 @@ class ToneScoreEngine:
             return self._neutral_result()
 
         try:
-            logger.info("ToneScore™ analyzing: %s", audio_path)
-            y, sr = librosa.load(audio_path, sr=16000)
+            logger.info("ToneScore™ analyzing (Native): %s", audio_path)
+            sr, y_raw = wavfile.read(audio_path)
+            
+            # Ensure the audio is float32 between -1.0 and 1.0 for the DSP engine
+            if y_raw.dtype == np.int16:
+                y = y_raw.astype(np.float32) / 32768.0
+            else:
+                y = y_raw.astype(np.float32)
 
             # Layer 1 — Physiological
             pitch    = self._extract_pitch(y, sr)
@@ -521,11 +555,39 @@ class ToneScoreEngine:
 
     def _compute_shimmer(self, y: Any) -> float:
         try:
-            amplitude = librosa.feature.rms(y=y)[0]
-            if len(amplitude) < 2:
+            if len(y) == 0:
                 return 0.0
+
+            # 1. Native Framing (Replacing librosa.feature.rms)
+            # Standard window parameters: 2048 samples per frame, sliding by 512
+            frame_length = 2048
+            hop_length = 512
+            
+            # Pad the audio so the frames align perfectly with the edges
+            pad_width = frame_length // 2
+            y_padded = np.pad(y, pad_width, mode='reflect')
+            
+            num_frames = 1 + (len(y_padded) - frame_length) // hop_length
+            
+            if num_frames < 2:
+                return 0.0
+                
+            # 2. Bare-metal RMS loop over the frames
+            amplitude = np.zeros(num_frames, dtype=np.float32)
+            for i in range(num_frames):
+                start = i * hop_length
+                frame = y_padded[start:start + frame_length]
+                amplitude[i] = np.sqrt(np.mean(frame**2))
+
+            # 3. The original Shimmer math
             amp_diffs = np.abs(np.diff(amplitude))
-            return min(1.0, float(np.mean(amp_diffs) / np.mean(amplitude)) * 5.0)
+            mean_amp = float(np.mean(amplitude))
+            
+            if mean_amp == 0.0:
+                return 0.0
+                
+            return min(1.0, float(np.mean(amp_diffs) / mean_amp) * 5.0)
+            
         except Exception as exc:
             logger.warning("Shimmer failed: %s", exc)
             return 0.0

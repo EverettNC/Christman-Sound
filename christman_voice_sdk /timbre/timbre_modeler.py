@@ -9,13 +9,81 @@ from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 import numpy as np
 import torch
-import torchaudio
+import ctypes
 from dataclasses import dataclass
 
 from .logger import get_logger
 from .audio_processor import AudioSegment
 
 logger = get_logger(__name__)
+
+# =============================================================================
+# Bare-Metal DSP Engine Hook
+# =============================================================================
+# Proximity: The engine lives one folder up, at the root of the SDK.
+DSP_LIB_PATH = Path(__file__).parent.parent / "christman_dsp.so"
+
+try:
+    _dsp_engine = ctypes.CDLL(str(DSP_LIB_PATH))
+    
+    # Map YIN Pitch Detection
+    _dsp_engine.christman_yin.argtypes = [
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_size_t,
+        ctypes.c_int,
+        ctypes.c_float,
+        ctypes.POINTER(ctypes.c_float)
+    ]
+    
+    # Map Linear Predictive Coding (LPC)
+    _dsp_engine.christman_lpc.argtypes = [
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_size_t,
+        ctypes.c_int,
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS')
+    ]
+    _dsp_ok = True
+    logger.info("Christman DSP Engine online in Timbre Modeler.")
+except Exception as e:
+    _dsp_ok = False
+    logger.error(f"Christman DSP Engine failed to load: {e}")
+
+def get_pitch_contour_native(audio_array: np.ndarray, sample_rate: int = 16000, threshold: float = 0.1) -> np.ndarray:
+    """Native framing and YIN pitch extraction, bypassing librosa."""
+    if not _dsp_ok: 
+        return np.array([])
+    
+    # Standard framing parameters
+    frame_length = 2048
+    hop_length = 512
+    
+    if len(audio_array) < frame_length:
+        return np.array([])
+        
+    num_frames = 1 + (len(audio_array) - frame_length) // hop_length
+    pitches = np.zeros(num_frames, dtype=np.float32)
+    
+    out_pitch = ctypes.c_float()
+    
+    for i in range(num_frames):
+        start = i * hop_length
+        frame = np.ascontiguousarray(audio_array[start:start + frame_length], dtype=np.float32)
+        _dsp_engine.christman_yin(frame, len(frame), sample_rate, threshold, ctypes.byref(out_pitch))
+        pitches[i] = out_pitch.value
+        
+    return pitches
+
+def get_lpc_native(audio_array: np.ndarray, order: int) -> np.ndarray:
+    """Native Linear Predictive Coding, bypassing librosa."""
+    if not _dsp_ok: 
+        return np.zeros(order + 1, dtype=np.float32)
+        
+    audio_float32 = np.ascontiguousarray(audio_array, dtype=np.float32)
+    out_a = np.zeros(order + 1, dtype=np.float32)
+    
+    _dsp_engine.christman_lpc(audio_float32, len(audio_float32), order, out_a)
+    return out_a
+# =============================================================================
 
 
 @dataclass
@@ -224,19 +292,13 @@ class TimbreModeler:
         Returns:
             F0 statistics dictionary
         """
-        import librosa
-        
         all_f0 = []
         for segment in segments:
-            # Extract F0 using YIN algorithm
-            f0 = librosa.yin(
-                segment.audio,
-                fmin=50,
-                fmax=500,
-                sr=segment.sample_rate
-            )
-            # Remove unvoiced frames
-            f0_voiced = f0[f0 > 0]
+            # Extract F0 using Native Bare-Metal YIN
+            f0 = get_pitch_contour_native(segment.audio, sample_rate=segment.sample_rate)
+            
+            # Apply thresholds (fmin=50, fmax=500) and remove unvoiced frames
+            f0_voiced = f0[(f0 > 50) & (f0 < 500)]
             all_f0.extend(f0_voiced)
         
         if len(all_f0) == 0:
@@ -264,7 +326,6 @@ class TimbreModeler:
         Returns:
             (F1_mean, F2_mean, F3_mean)
         """
-        import librosa
         from scipy.signal import lfilter
         
         all_formants = []
@@ -272,10 +333,9 @@ class TimbreModeler:
         for segment in segments:
             # LPC analysis (order 12 for vocal tract modeling)
             try:
-                # Estimate formants from LPC
-                # This is a simplified approach
+                # Estimate formants from Native Bare-Metal LPC
                 lpc_order = 12
-                a = librosa.lpc(segment.audio, order=lpc_order)
+                a = get_lpc_native(segment.audio, order=lpc_order)
                 
                 # Find roots of LPC polynomial
                 roots = np.roots(a)
@@ -380,8 +440,8 @@ class TimbreModeler:
 
 
 if __name__ == "__main__":
-    from .audio_processor import AudioProcessor
-    from .config import Tier
+    from audio.audio_processor import AudioProcessor
+    from audio.config import Tier
     
     # Example usage
     processor = AudioProcessor(tier=Tier.PREMIUM)

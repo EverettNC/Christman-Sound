@@ -6,7 +6,6 @@ Multi-layer tone detection: raw audio → emotion → adaptive response
 Uses Wav2Vec2 fine-tuned on CREMA-D + RAVDESS datasets for discrete emotion classification.
 """
 
-import librosa
 import torch
 import numpy as np
 from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2Processor
