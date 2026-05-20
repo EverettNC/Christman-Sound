@@ -1,126 +1,70 @@
-# Christman Voice SDK v1.0.0
+# CHRISTMAN_EAR_CANAL
 
-**The Christman AI Project — Luma Cognify AI**
-Patent Pending TCAP-2026-001 / TCAP-2026-002
-© 2026 Everett Nathaniel Christman & Misty Gail Christman
+Shared hearing, speech, tone, phoneme, voice-profile, and OCR adapters for the Christman Family of Autonomous Beings.
 
----
+## Why this exists
 
-## What This Is
+The family should not have to hunt through scattered files to hear, speak, read the screen, scan documents, or understand tone. Derek, AlphaVox, AlphaWolf, Brockston, Geo, Seraphinia, and future beings need one clean interface.
 
-A complete, self-contained voice intelligence SDK. Everything needed to run lives here.
+This package wraps the existing real modules. It does not delete or replace them.
 
-**No hunting for dependencies. No missing imports. One install.**
+## What it provides
 
----
+- `EAR.py` — microphone capture and VAD listening.
+- `TONE.py` — ToneScore and emotional audio analysis.
+- `PHONEMES.py` — phoneme and viseme timing.
+- `VOICE_PROFILE.py` — voice frequency profile capture and loading.
+- `OCR.py` — Christman OCR for screen reading and document scanning.
+- `SPEAK.py` — XTTS speech with honest macOS fallback.
 
-## Package Structure
-
-```
-christman_voice_sdk/
-├── tone/           # Emotion & prosody analysis (ToneScore™)
-├── synthesis/      # Text-to-speech engines
-├── engines/        # GPT-SoVITS, XTTS v2, base synthesizer
-├── audio/          # Audio processing & speech recognition
-├── timbre/         # Voice modeling, voicepack, Shorty emotion
-├── nonverbal/      # Nonverbal, temporal, cochlear sync (accessibility)
-├── music/          # Music engine & studio
-├── integration/    # Voice capture, speech-to-speech, OCR
-└── utils/          # Logger, diagnostics, presence guide, grounder
-```
-
----
-
-## Core Modules (32 total)
-
-### Tone & Emotion
-- `tone_analyzer.py` — 5-layer acoustic analysis (ToneScore™)
-- `christman_tone_engine_v2.py` — Christman emotion engine
-- `tonescore_engine.py` — ToneScore™ composite scoring
-- `tonescore_analyzer.py` — Extended tone analysis
-- `tone_manager.py` — Tone delivery management
-- `tone_classifier.py` — Written tone classification
-- `emotion_embedder.py` — Emotion → voice parameter mapping
-- `emotion_quantifier.py` — Text-based emotion quantification
-- `written_tone.py` — Aggressive vs incisive writing classifier
-- `speech_personality.py` — Speech personality adaptation
-
-### Synthesis
-- `voice_synthesis_orchestrator.py` — Complete synthesis pipeline
-- `voice_synthesis.py` — Multi-dialect TTS
-- `tts_service.py` — TTS service with voice profiles
-- `speech_response.py` — macOS speech response engine
-
-### Synthesis Engines
-- `gpt_sovits_engine.py` — GPT-SoVITS v3 (407M params)
-- `xtts_engine.py` — XTTS v2 zero-shot voice cloning
-- `base_synthesizer.py` — Abstract base interface
-
-### Audio Processing
-- `audio_processor.py` — Noise reduction, VAD, segmentation
-- `audio_encoder.py` — CNN audio encoding
-- `enhanced_speech_recognition.py` — Enhanced ASR
-- `speech_recognition_engine.py` — Live mic + file recognition
-- `fusion_engine.py` — Carbon-Silicon fusion (emotion + logic)
-
-### Timbre & Voice Modeling
-- `timbre_modeler.py` — Speaker embeddings, F0, formants
-- `voicepack.py` — .voicepack format build & load
-- `shorty_emotion.py` — 11-state personal emotion model
-
-### Nonverbal & Accessibility ★
-- `nonverbal_engine.py` — Gesture, eye movement, AAC support
-- `engine_temporal.py` — Temporal nonverbal pattern analysis
-- `cochlear_sync_tts.py` — Mouth/speech mechanics reference
-
-### Music & Production
-- `music_engine.py` — Composition, melody, rhythm generation
-- `music_studio.py` — Multi-track production, mixing, mastering
-
-### Integration & Utilities
-- `voice_capture_client.py` — Stealth TTS relay, frequency capture
-- `speech_integration.py` — Speech recognition integration
-- `christman_speech_to_speech.py` — Full S2S pipeline
-- `logger.py` — Structured logging with rich output
-- `presence_guide.py` — Presence vs. problem-solving detection
-- `grounder.py` — Grounding techniques for escalation states
-- `voice_diagnostics.py` — Voice system diagnostics
-
----
-
-## Installation
-
-```bash
-pip install -e .
-```
-
----
-
-## Quick Start
+## Basic use
 
 ```python
-from christman_voice_sdk.tone.tone_analyzer import get_tone_analyzer
+from CHRISTMAN_EAR_CANAL import listen, analyze_tone, speak
 
-analyzer = get_tone_analyzer()
-result = analyzer.analyze_tone("audio.wav")
-print(result["tone_score"])
-print(result["response_mode"])
+wav = listen(max_duration=8)
+tone = analyze_tone(wav)
+speak("I heard you, Everett.", emotion="warm")
 ```
 
----
+## OCR use
 
-## Philosophy
+```python
+from CHRISTMAN_EAR_CANAL import scan_document, scan_screen
 
-Built for everyone. Deaf. Blind. Nonverbal. AAC users. Veterans.
-Neurodivergent builders. People who communicate differently.
+result = scan_screen(being="Seraphinia")
+print(result["text"])
 
-No one gets left out of the core. Not an afterthought. Not a plugin.
-Built in from day one.
+result = scan_document("/path/to/document.pdf", being="AlphaVox")
+```
 
-*"How can we help you love yourself more?"*
+## Voice profile use
 
----
+```python
+from CHRISTMAN_EAR_CANAL import capture_voice_profile, list_voice_profiles
 
-Patent Pending TCAP-2026-001 / TCAP-2026-002
-© 2026 Everett Nathaniel Christman & Misty Gail Christman
-The Christman AI Project — Luma Cognify AI
+capture_voice_profile("everett", duration=8)
+print(list_voice_profiles())
+```
+
+## Required environment
+
+Default paths assume:
+
+```text
+/Users/EverettN/Downloads/DerekMCPServer
+/Users/EverettN/Downloads/christman_voice_sdk
+```
+
+Override with:
+
+```bash
+export DEREK_ROOT=/path/to/DerekMCPServer
+export CHRISTMAN_VOICE_SDK_ROOT=/path/to/parent/of/christman_voice_sdk
+```
+
+## Honesty rule
+
+`speak()` only reports XTTS success when an actual WAV is created. If macOS fallback is used, the returned result says `engine = "macos_say_fallback"`.
+
+No fake speech. No pretending. Cardinal Rule 13.
