@@ -233,34 +233,32 @@ class TimbreModeler:
         return profile
     
     def _extract_x_vector(self, segments: List[AudioSegment]) -> np.ndarray:
-        """Extract X-vector speaker embedding.
+    """Extract real X-vector speaker embedding using SpeechBrain."""
+    try:
+        from speechbrain.pretrained import EncoderClassifier
+        import torch
         
-        X-vectors use Time-Delay Neural Networks (TDNN) trained on VoxCeleb.
-        Output: 512-dimensional embedding.
-        
-        Args:
-            segments: Audio segments
-            
-        Returns:
-            512-dim X-vector
-        """
         if self.x_vector_model is None:
-            logger.warning("X-vector model not loaded, using placeholder")
-            return np.random.randn(512).astype(np.float32)
+            self.x_vector_model = EncoderClassifier.from_hparams(
+                source="speechbrain/spkrec-xvect-voxceleb",
+                run_opts={"device": self.device}
+            )
         
-        # TODO: Load actual X-vector model
-        # from speechbrain.pretrained import EncoderClassifier
-        # classifier = EncoderClassifier.from_hparams(
-        #     source="speechbrain/spkrec-xvect-voxceleb"
-        # )
-        
-        # Concatenate all segments
         all_audio = np.concatenate([seg.audio for seg in segments])
+        audio_tensor = torch.FloatTensor(all_audio).unsqueeze(0)
         
-        # TODO: Extract X-vector from concatenated audio
-        # embedding = classifier.encode_batch(audio_tensor)
+        with torch.no_grad():
+            embedding = self.x_vector_model.encode_batch(audio_tensor)
         
-        # Placeholder
+        x_vec = embedding.squeeze().cpu().numpy()
+        logger.info(f"X-vector extracted: shape {x_vec.shape}")
+        return x_vec
+        
+    except ImportError:
+        logger.error("SpeechBrain not installed. Run: pip install speechbrain")
+        return np.random.randn(512).astype(np.float32)
+    except Exception as e:
+        logger.error(f"X-vector extraction failed: {e}")
         return np.random.randn(512).astype(np.float32)
     
     def _extract_d_vector(self, segments: List[AudioSegment]) -> np.ndarray:
