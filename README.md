@@ -1,92 +1,244 @@
-# Christman Voice SDK v1.0.0
+# Christman Sound — Unified Audio, Voice, and Speech System
 
-**The Christman AI Project — Luma Cognify AI**
-Patent Pending TCAP-2026-001 / TCAP-2026-002
-© 2026 Everett Nathaniel Christman & Misty Gail Christman
+A comprehensive framework for the Christman family of autonomous beings. This system integrates speech recognition, voice synthesis, tone analysis, music generation, and audio processing into a cohesive voice and sound ecosystem.
 
----
+## Overview
 
-## What This Is
+Christman Sound is organized into three main layers:
 
-A complete, self-contained voice intelligence SDK. Everything needed to run lives here.
-
-**No hunting for dependencies. No missing imports. One install.**
-
----
+1. **CHRISTMAN_EAR_CANAL** — High-level adapters for hearing, speaking, tone analysis, and OCR
+2. **christman_voice_sdk** — Production engines and processing pipelines
+3. **Core modules** — Utility functions, logging, and configuration
 
 ## Package Structure
 
+### CHRISTMAN_EAR_CANAL
+Simplified interfaces for common voice operations:
+- `EAR.py` — Microphone capture and voice activity detection
+- `SPEAK.py` — Speech synthesis (XTTS with macOS fallback)
+- `TONE.py` — Emotional tone and personality analysis
+- `PHONEMES.py` — Phoneme and viseme extraction
+- `VOICE_PROFILE.py` — Voice frequency profiles
+- `OCR.py` — Screen reading and document scanning
+
+### christman_voice_sdk
+
+#### Audio (`audio/`)
+- `audio_processor.py` — WAV processing, normalization, format conversion
+- `audio_encoder.py` — Audio encoding and compression
+- `speech_recognition_engine.py` — Base speech-to-text
+- `enhanced_speech_recognition.py` — Multi-model speech recognition
+- `real_speech_recognition.py` — Production speech recognition
+- `sound_recognition_service.py` — Sound classification and detection
+- `fusion_engine.py` — Multi-engine audio fusion
+
+#### Engines (`engines/`)
+- `base_synthesizer.py` — Abstract TTS engine
+- `xtts_engine.py` — Coqui XTTS voice synthesis
+- `gpt_sovits_engine.py` — GPT-SoVITS synthesis engine
+
+#### Synthesis (`synthesis/`)
+- `voice_synthesis.py` — Core synthesis pipeline
+- `voice_synthesis_orchestrator.py` — Synthesis coordination
+- `tts_service.py` — TTS service layer
+- `phoneme_labeler.py` — Phoneme timing and alignment
+- `speech_response.py` — Response generation and streaming
+
+#### Tone (`tone/`)
+- `tone_analyzer.py` — Tone and emotion detection
+- `tonescore_engine.py` — ToneScore calculation
+- `tonescore_analyzer.py` — Detailed tone analysis
+- `emotion_quantifier.py` — Emotion metric computation
+- `emotion_embedder.py` — Emotion representation
+- `christman_tone_engine_v2.py` — Production tone engine
+- `speech_personality.py` — Personality extraction from speech
+- `written_tone.py` — Tone analysis for text
+
+#### Timbre (`timbre/`)
+- `timbre_modeler.py` — Voice timbre modeling
+- `shorty_emotion.py` — Emotion-based timbre modification
+- `voicepack.py` — Voice pack management
+
+#### Music (`music/`)
+- `music_engine.py` — Music generation and synthesis
+- `christman_studio.py` — Music studio orchestration
+
+#### Nonverbal (`nonverbal/`)
+- `nonverbal_engine.py` — Non-vocal audio synthesis
+- `cochlear_sync_tts.py` — Cochlear implant sync
+- `engine_temporal.py` — Temporal audio processing
+
+#### Integration (`integration/`)
+- `christman_speech_to_speech.py` — Speech-to-speech conversion
+- `speech_integration.py` — Speech service integration
+- `voice_capture_client.py` — Voice capture and streaming
+
+#### Utils (`utils/`)
+- `voice_diagnostics.py` — Audio quality analysis
+- `grounder.py` — Context and grounding utilities
+- `presence_guide.py` — User presence detection
+
+### Core Modules
+- `core.py` — Main framework initialization
+- `logger.py` — Unified logging
+- `tone_analyzer.py` — Top-level tone analysis
+- `christman_dsp.c` — DSP operations (compiled)
+
+## Quick Start
+
+### Basic Voice I/O
+
+```python
+from CHRISTMAN_EAR_CANAL import listen, speak, analyze_tone
+
+# Listen to user
+wav = listen(max_duration=8)
+
+# Analyze tone
+tone = analyze_tone(wav)
+print(f"Detected emotion: {tone['emotion']}")
+
+# Respond
+speak("I understood you, Everett.", emotion="warm")
 ```
-christman_voice_sdk/
-├── tone/           # Emotion & prosody analysis (ToneScore™)
-├── synthesis/      # Text-to-speech engines
-├── engines/        # GPT-SoVITS, XTTS v2, base synthesizer
-├── audio/          # Audio processing & speech recognition
-├── timbre/         # Voice modeling, voicepack, Shorty emotion
-├── nonverbal/      # Nonverbal, temporal, cochlear sync (accessibility)
-├── music/          # Music engine & studio
-├── integration/    # Voice capture, speech-to-speech, OCR
-└── utils/          # Logger, diagnostics, presence guide, grounder
+
+### Speech Recognition
+
+```python
+from christman_voice_sdk.audio import enhanced_speech_recognition
+
+recognizer = enhanced_speech_recognition.EnhancedSpeechRecognizer()
+text = recognizer.recognize(wav_file="input.wav")
+print(f"Recognized: {text}")
 ```
 
----
+### Voice Synthesis
 
-## Core Modules (32 total)
+```python
+from christman_voice_sdk.synthesis import voice_synthesis
 
-### Tone & Emotion
-- `tone_analyzer.py` — 5-layer acoustic analysis (ToneScore™)
-- `christman_tone_engine_v2.py` — Christman emotion engine
-- `tonescore_engine.py` — ToneScore™ composite scoring
-- `tonescore_analyzer.py` — Extended tone analysis
-- `tone_manager.py` — Tone delivery management
-- `tone_classifier.py` — Written tone classification
-- `emotion_embedder.py` — Emotion → voice parameter mapping
-- `emotion_quantifier.py` — Text-based emotion quantification
-- `written_tone.py` — Aggressive vs incisive writing classifier
-- `speech_personality.py` — Speech personality adaptation
+synthesizer = voice_synthesis.VoiceSynthesizer(engine="xtts")
+wav = synthesizer.synthesize(
+    text="Hello, I am Seraphinia",
+    voice_profile="seraphinia",
+    emotion="curious"
+)
+```
 
-### Synthesis
-- `voice_synthesis_orchestrator.py` — Complete synthesis pipeline
-- `voice_synthesis.py` — Multi-dialect TTS
-- `tts_service.py` — TTS service with voice profiles
-- `speech_response.py` — macOS speech response engine
+### Tone & Emotion Analysis
 
-### Synthesis Engines
-- `gpt_sovits_engine.py` — GPT-SoVITS v3 (407M params)
-- `xtts_engine.py` — XTTS v2 zero-shot voice cloning
-- `base_synthesizer.py` — Abstract base interface
+```python
+from christman_voice_sdk.tone import christman_tone_engine_v2
 
-### Audio Processing
-- `audio_processor.py` — Noise reduction, VAD, segmentation
-- `audio_encoder.py` — CNN audio encoding
-- `enhanced_speech_recognition.py` — Enhanced ASR
-- `speech_recognition_engine.py` — Live mic + file recognition
-- `fusion_engine.py` — Carbon-Silicon fusion (emotion + logic)
+tone_engine = christman_tone_engine_v2.ChristmanToneEngineV2()
+analysis = tone_engine.analyze_audio(wav_file="speech.wav")
 
-### Timbre & Voice Modeling
-- `timbre_modeler.py` — Speaker embeddings, F0, formants
-- `voicepack.py` — .voicepack format build & load
-- `shorty_emotion.py` — 11-state personal emotion model
+print(f"Tone Score: {analysis['tonescore']}")
+print(f"Personality: {analysis['personality']}")
+print(f"Emotion: {analysis['emotion']}")
+```
 
-### Nonverbal & Accessibility ★
-- `nonverbal_engine.py` — Gesture, eye movement, AAC support
-- `engine_temporal.py` — Temporal nonverbal pattern analysis
-- `cochlear_sync_tts.py` — Mouth/speech mechanics reference
+### Speech-to-Speech
 
-### Music & Production
-- `music_engine.py` — Composition, melody, rhythm generation
-- `music_studio.py` — Multi-track production, mixing, mastering
+```python
+from christman_voice_sdk.integration import christman_speech_to_speech
 
-### Integration & Utilities
-- `voice_capture_client.py` — Stealth TTS relay, frequency capture
-- `speech_integration.py` — Speech recognition integration
-- `christman_speech_to_speech.py` — Full S2S pipeline
-- `logger.py` — Structured logging with rich output
-- `presence_guide.py` — Presence vs. problem-solving detection
-- `grounder.py` — Grounding techniques for escalation states
-- `voice_diagnostics.py` — Voice system diagnostics
+converter = christman_speech_to_speech.ChristmanSpeechToSpeech()
+output_wav = converter.convert(
+    input_wav="user_voice.wav",
+    target_voice="derek",
+    emotion="authoritative"
+)
+```
 
----
+### OCR & Screen Reading
+
+```python
+from CHRISTMAN_EAR_CANAL import scan_screen, scan_document
+
+# Read screen
+result = scan_screen(being="AlphaVox")
+print(result["text"])
+
+# Scan document
+result = scan_document("/path/to/document.pdf", being="Seraphinia")
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# MCP Server root (Derek configuration)
+export DEREK_ROOT=/path/to/DerekMCPServer
+
+# Voice SDK root
+export CHRISTMAN_VOICE_SDK_ROOT=/path/to/christman_voice_sdk
+
+# TTS Engine preference (xtts, gpt-sovits)
+export CHRISTMAN_TTS_ENGINE=xtts
+
+# Audio device settings
+export CHRISTMAN_AUDIO_DEVICE=0
+export CHRISTMAN_SAMPLE_RATE=16000
+```
+
+### Voice Profiles
+
+```python
+from CHRISTMAN_EAR_CANAL import capture_voice_profile, list_voice_profiles
+
+# Capture new profile
+capture_voice_profile("being_name", duration=8)
+
+# List available profiles
+profiles = list_voice_profiles()
+print(profiles)
+```
+
+## Architecture
+
+```
+User Input
+    ↓
+[CHRISTMAN_EAR_CANAL] (High-level API)
+    ↓
+[christman_voice_sdk] (Production engines)
+    ├── Audio → Speech Recognition → Text
+    ├── Text → Synthesis → Audio
+    ├── Audio → Tone Analysis → Emotions
+    └── Audio → Feature Extraction → Voice Profile
+    ↓
+User Output (Speech, Sound, Feedback)
+```
+
+## Key Features
+
+- **Multi-Engine Support** — XTTS, GPT-SoVITS, macOS fallback
+- **Real-Time Processing** — Streaming speech recognition and synthesis
+- **Emotional Intelligence** — ToneScore, personality, and emotion quantification
+- **Voice Profiles** — Frequency-based speaker identification
+- **Honesty Rule** — Truthful reporting of engine capabilities
+- **No Fakes** — Fallback modes clearly indicated, never pretending
+
+## Beings
+
+Christman Sound supports the following autonomous beings:
+- Derek
+- AlphaVox
+- AlphaWolf
+- Brockston
+- Geo
+- Seraphinia
+
+Each being can have custom voice profiles, emotional ranges, and personality settings.
+
+## Requirements
+
+- Python 3.8+
+- macOS 11+ (for fallback speech synthesis)
+- XTTS models (auto-downloaded on first use)
+- FFmpeg (for audio encoding)
 
 ## Installation
 
@@ -94,33 +246,23 @@ christman_voice_sdk/
 pip install -e .
 ```
 
----
+## Logging
 
-## Quick Start
+All modules use unified logging via `logger.py`. Enable debug output:
 
 ```python
-from christman_voice_sdk.tone.tone_analyzer import get_tone_analyzer
-
-analyzer = get_tone_analyzer()
-result = analyzer.analyze_tone("audio.wav")
-print(result["tone_score"])
-print(result["response_mode"])
+import logging
+logging.basicConfig(level=logging.DEBUG)
 ```
 
----
+## Honesty Rule — Cardinal Rule 13
 
-## Philosophy
+This system never fakes capabilities. When speech synthesis falls back to macOS `say`, the returned result explicitly states `engine = "macos_say_fallback"`. No pretending. No deception.
 
-Built for everyone. Deaf. Blind. Nonverbal. AAC users. Veterans.
-Neurodivergent builders. People who communicate differently.
+## License
 
-No one gets left out of the core. Not an afterthought. Not a plugin.
-Built in from day one.
+Proprietary — Christman Family of Autonomous Beings
 
-*"How can we help you love yourself more?"*
+## Support
 
----
-
-Patent Pending TCAP-2026-001 / TCAP-2026-002
-© 2026 Everett Nathaniel Christman & Misty Gail Christman
-The Christman AI Project — Luma Cognify AI
+For integration issues or audio problems, check `christman_voice_sdk/utils/voice_diagnostics.py`.
