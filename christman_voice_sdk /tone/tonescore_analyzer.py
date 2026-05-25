@@ -8,7 +8,6 @@ Layer 3: Paralinguistics (sighs, grunts, throat-clearing)
 Layer 4: Discrete Emotions (anger, joy, sadness, fear)
 Layer 5: ToneScore™ (composite 0-100)
 
-Completely sovereign architecture. Zero reliance on bloated external audio libraries like librosa.
 Used by: Giuseppe, Inferno, AlphaVox, Sierra
 """
 

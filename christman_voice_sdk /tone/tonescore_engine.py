@@ -4,7 +4,6 @@ ToneScore™ Engine - Production Implementation
 Multi-layer tone detection: raw audio → emotion → adaptive response
 
 Uses Wav2Vec2 fine-tuned on CREMA-D + RAVDESS datasets for discrete emotion classification.
-Completely sovereign architecture. Zero reliance on bloated external audio libraries.
 """
 
 import torch
