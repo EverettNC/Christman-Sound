@@ -199,7 +199,6 @@ PIP_MAP = {
     "newspaper":"newspaper4k","autopep8":"autopep8","jsonschema":"jsonschema",
     "cryptography":"cryptography","paramiko":"paramiko","docker":"docker",
     "kubernetes":"kubernetes","aioschedule":"aioschedule","tiktoken":"tiktoken",
-    "parselmouth":"praat-parselmouth","torchaudio":"torchaudio",
     "requests":"requests","pyttsx3":"pyttsx3","deepgram":"deepgram-sdk",
     "pyperclip":"pyperclip","rich":"rich","typer":"typer","click":"click",
 }

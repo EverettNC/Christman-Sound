@@ -21,6 +21,5 @@ setup(
         "flask",
         "fastapi",
         "rich",
-        "parselmouth",
     ],
 )

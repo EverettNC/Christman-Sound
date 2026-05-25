@@ -136,7 +136,6 @@ PIP_MAP = {
     "kubernetes":        "kubernetes",
     "aioschedule":       "aioschedule",
     "tiktoken":          "tiktoken",
-    "parselmouth":       "praat-parselmouth",
     "torchaudio":        "torchaudio",
     "requests":          "requests",
     "pyttsx3":           "pyttsx3",
