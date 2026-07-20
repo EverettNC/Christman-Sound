@@ -10,6 +10,7 @@ Layer 3: Paralinguistics
 Layer 4: Discrete Emotions
 Layer 5: ToneScore (0-100 composite)
 
+Completely sovereign architecture. Zero reliance on bloated external audio libraries like librosa.
 
 Patent Pending TCAP-2026-001 / TCAP-2026-002
 © 2026 Everett Nathaniel Christman & Misty Gail Christman

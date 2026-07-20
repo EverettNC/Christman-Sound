@@ -3,6 +3,7 @@ CHRISTMAN EMOTION & TONESCORE ENGINE v2.0
 "Nothing Vital Lives Below Root"
 Architecture: Multi-layer tone detection (Raw Audio -> Quantified Emotion)
 
+Sovereign implementation: Bypassing librosa/LLVM for bare-metal DSP.
 """
 
 import torch

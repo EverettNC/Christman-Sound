@@ -6,6 +6,7 @@ Distinguishes AGGRESSIVE from INCISIVE in written communication.
 AGGRESSIVE = attacking, overwhelming, defensive response
 INCISIVE = surgical, precise, respectful fear + locked attention
 
+Completely sovereign logic layer. No external dependencies.
 """
 
 from typing import Dict, List

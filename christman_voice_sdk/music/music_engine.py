@@ -7,6 +7,7 @@ A sovereign symbolic music engine for the Christman AI family.
 - Vocal performance synthesis orchestrator
 - Musical pattern recognition and improvisation
 
+Completely sovereign logic. Zero reliance on external audio compilation.
 
 Patent Pending TCAP-2026-001 / TCAP-2026-002
 © 2026 Everett Nathaniel Christman & Misty Gail Christman
