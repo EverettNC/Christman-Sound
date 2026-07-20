@@ -2,7 +2,6 @@
 Audio Processor Module - Stage 1: Raw Audio Intake
 
 Handles noise reduction, audio segmentation, and quality analysis.
-Sovereign implementation: Zero reliance on bloated external audio libraries (librosa).
 """
 
 import numpy as np # pyright: ignore[reportMissingImports]

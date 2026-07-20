@@ -19,9 +19,9 @@ import numpy as np # pyright: ignore[reportMissingImports]
 import soundfile as sf  # pyright: ignore[reportMissingImports] # uses your existing soundfile dependency
 import torch  # pyright: ignore[reportMissingImports] # kept for future real-model integration
 
-from engines.base_synthesizer import BaseSynthesizer, SynthesisResult
+from base_synthesizer import BaseSynthesizer, SynthesisResult
 from tone.emotion_embedder import EmotionEmbedding
-from engines.logger import get_logger
+from logger import get_logger
 
 logger = get_logger(__name__)
 

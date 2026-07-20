@@ -5,7 +5,6 @@ Applies communication adjustments after tone has been interpreted.
 This layer manages delivery: pacing, warmth, structure, mirroring,
 and response framing.
 
-Completely sovereign logic layer. No external dependencies.
 """
 
 from __future__ import annotations
