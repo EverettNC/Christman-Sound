@@ -1,0 +1,7 @@
+README.md
+setup.py
+christman_voice_sdk.egg-info/PKG-INFO
+christman_voice_sdk.egg-info/SOURCES.txt
+christman_voice_sdk.egg-info/dependency_links.txt
+christman_voice_sdk.egg-info/requires.txt
+christman_voice_sdk.egg-info/top_level.txt
