@@ -4,19 +4,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 import asyncio
+
 from ._paths import ensure_family_paths, require_file
-from audio.config import get_config
+from christman_voice_sdk.audio.config import get_config
 
 
 def _get_ocr_engine(being: str):
     """Factory to get OCR engine with config-based resource limits."""
-    from christman_voice_sdk.integration import ocr_client
     config = get_config()
-    # Inject config settings: num_workers, device acceleration, etc.
-    return ocr_client.ChristmanOCR(
+
+    from christman_ocr_shared import ChristmanOCR
+
+    return ChristmanOCR(
         being_name=being,
         device=config.get("system.device"),
-        workers=config.get("system.num_workers")
+        workers=config.get("system.num_workers"),
     )
 
 
