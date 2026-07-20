@@ -55,6 +55,7 @@ import ctypes
 from pathlib import Path
 import numpy as np
 
+<<<<<<< HEAD
 # ── Logger (before DSP / dependency guards — Rule 6: fail loud with context) ──
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +63,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("christman.sdk")
 
+=======
+>>>>>>> 1da612da70dc5ed45bd4ed2fda872484f08a49d6
 # Proximity: The engine lives shoulder-to-shoulder with the code that thinks with it.
 DSP_LIB_PATH = Path(__file__).parent / "christman_dsp.so"
 
@@ -168,6 +171,18 @@ try:
 except ImportError:
     _result_ok = False
 
+<<<<<<< HEAD
+=======
+# ── Logger ────────────────────────────────────────────────────────────────────
+# Named for the SDK itself, not any individual being. (Fixing the Giuseppe issue.)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] christman.sdk — %(message)s",
+)
+logger = logging.getLogger("christman.sdk")
+
+>>>>>>> 1da612da70dc5ed45bd4ed2fda872484f08a49d6
 # ── Runtime constants (all overridable via env — Rule 12) ─────────────────────
 
 SAMPLE_RATE:     int  = 16_000

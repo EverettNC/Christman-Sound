@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """
 VOICE_PROFILE.py — voice frequency profile capture adapter.
 """
@@ -8,6 +9,15 @@ from typing import Dict, List
 
 from ._paths import ensure_family_paths
 from audio.config import get_config
+=======
+"""VOICE_PROFILE.py — voice frequency profile capture adapter."""
+
+from __future__ import annotations
+from typing import Dict, List
+
+from ._paths import ensure_family_paths
+from christman_voice_sdk.audio.config import get_config
+>>>>>>> 1da612da70dc5ed45bd4ed2fda872484f08a49d6
 
 
 def capture_voice_profile(name: str = "default", duration: int = 8) -> Dict:
@@ -21,7 +31,14 @@ def capture_voice_profile(name: str = "default", duration: int = 8) -> Dict:
         save_profile,
     )
 
+<<<<<<< HEAD
     audio = capture_audio(duration=duration)
+=======
+    audio = capture_audio(
+        duration=duration,
+        sample_rate=config.get("audio.sample_rate"),
+    )
+>>>>>>> 1da612da70dc5ed45bd4ed2fda872484f08a49d6
 
     signature = extract_frequency_signature(audio)
     profile_path = save_profile(name, signature)

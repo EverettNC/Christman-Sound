@@ -28,4 +28,8 @@ __all__ = [
     "scan_document",
     "scan_screen",
     "speak",
+<<<<<<< HEAD
 ]
+=======
+]
+>>>>>>> 1da612da70dc5ed45bd4ed2fda872484f08a49d6
