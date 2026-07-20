@@ -25,14 +25,16 @@ def capture(duration_seconds: float = 6.0, device: Optional[int] = None):
 
 
 def listen(max_duration: float = 10.0, device: Optional[int] = None):
-    """Listen with voice activity detection."""
+    """Listen with voice activity detection.
+
+    Currently aliases to capture_audio until a true VAD listen is restored
+    in voice_capture_client.
+    """
     ensure_family_paths()
     config = get_config()
 
-    from christman_voice_sdk.integration.voice_capture_client import listen as sdk_listen
+    from christman_voice_sdk.integration.voice_capture_client import capture_audio
 
-    return sdk_listen(
-        max_duration=max_duration,
-        device=device,
-        silence_threshold=config.get("audio.silence_threshold_db"),
-    )
+    # Temporary: voice_capture_client does not yet expose a dedicated listen()
+    # with silence_threshold. Use fixed capture for now.
+    return capture_audio(duration=int(max_duration))

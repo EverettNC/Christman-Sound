@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional
+import asyncio
 
 from ._paths import ensure_family_paths, require_file
 from audio.config import get_config
