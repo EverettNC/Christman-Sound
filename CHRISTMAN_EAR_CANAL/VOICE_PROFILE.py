@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 from typing import Dict, List
-from .._paths import ensure_family_paths
+from ._paths import ensure_family_paths
 from audio.config import get_config  # Bringing in the Sovereign Config
+
 
 def capture_voice_profile(name: str = "default", duration: int = 8) -> Dict:
     """Capture and save a real acoustic voice-frequency profile using tier-gated settings."""
@@ -32,11 +33,13 @@ def capture_voice_profile(name: str = "default", duration: int = 8) -> Dict:
         "signature": signature,
     }
 
+
 def load_voice_profile(name: str = "default") -> Dict:
     """Load a saved voice-frequency signature."""
     ensure_family_paths()
     from christman_voice_sdk.integration.voice_capture_client import load_profile
     return load_profile(name)
+
 
 def list_voice_profiles() -> List[str]:
     """List saved voice-frequency profile names."""

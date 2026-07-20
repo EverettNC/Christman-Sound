@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from ._paths import ensure_family_paths, require_file
 from audio.config import get_config # Bringing in Sovereign Config
 
+
 def speak(
     text: str,
     emotion: str = "neutral",
@@ -34,19 +35,19 @@ def speak(
     os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/christman_numba_cache")
 
     try:
-        from christman_voice_sdk import play_audio, resolve_voice_params, synthesize_speech, wait_for_playback
+        from christman_voice_sdk.integration import synthesis_client
 
         # Pull synthesis params from the Config tiers
-        params = resolve_voice_params(
+        params = synthesis_client.resolve_voice_params(
             temperature=config.get("synthesis.temperature", 0.7),
             emotion=emotion,
             top_p=config.get("synthesis.top_p", 0.9)
         )
         
-        wav = synthesize_speech(text, params, str(ref))
+        wav = synthesis_client.synthesize_speech(text, params, str(ref))
         if wav:
-            played = play_audio(wav)
-            wait_for_playback()
+            played = synthesis_client.play_audio(wav)
+            synthesis_client.wait_for_playback()
             return {
                 "status": "spoken",
                 "engine": "christman_voice_sdk_xtts",
