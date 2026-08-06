@@ -9,6 +9,9 @@ from typing import Any, Dict
 
 from ._paths import ensure_family_paths, require_file
 from audio.config import get_config
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def analyze_tone(audio_path: str | Path) -> Dict[str, Any]:
