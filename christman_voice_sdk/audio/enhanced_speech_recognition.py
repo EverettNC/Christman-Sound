@@ -10,17 +10,76 @@
 # ==============================================================================
 
 """
-Enhanced speech recognition.
+Combined speech and non-verbal sound recognition.
 
-Combines:
-- Verbal speech recognition (simulated placeholder).
-- Non-verbal sound pattern recognition via SoundRecognitionService.
+This class coordinates two recognizers. It does not recognize anything itself,
+and it can no longer produce a transcript on its own — which is the entire
+change.
 
-Provides:
-- Integration with the existing sound recognition service.
-- Streaming / continuous listening hooks.
-- Web or external microphone capture integration points.
-- Recognition context tracking (recent phrases, keywords).
+WHAT CHANGED AND WHY
+--------------------
+
+1. It made up what the user said. Two sites, :195 and :256.
+
+       sample_phrases = ["Hello, how are you today?", ...]
+       recognized_text = random.choice(sample_phrases)
+       confidence = 0.7 + (random.random() * 0.25)
+
+   The floor is 0.70. Not once in the lifetime of the process could it emit a
+   value below a plausible threshold, so every downstream confidence gate
+   passed, every time. There was no state meaning "I don't know" — the object
+   was structurally incapable of reporting uncertainty.
+
+   `"source": "simulation"` sat in a metadata dict no caller was required to
+   read, while the callback signature `(text, confidence, metadata)` was
+   identical to a real recognizer's. Nothing downstream could tell.
+
+   Both sites are gone. Recognition is delegated to a real engine, or the
+   result is `unavailable`. Per REMEDIATION Phase 1, an honest error is the
+   floor; delegating to the now-working local engine is the better version of
+   the same requirement.
+
+2. It reported a file it never wrote.
+
+       file_path = os.path.join(self.audio_cache_dir, f"audio_{ts}_{id}.{fmt}")
+       # Placeholder: in a full implementation, audio_data would be written
+       result = {..., "audio_path": file_path}
+
+   Anything logging that path recorded custody of an artifact that does not
+   exist. Caching is now opt-in and, when on, the file is actually written
+   before its path is reported.
+
+3. The listener loop could spin hot.
+
+       while self.is_listening:
+           try:
+               ...
+               self._simulate_speech_recognition()
+               time.sleep(0.1)          # inside the try
+           except Exception as e:
+               self.logger.error(..., exc_info=True)
+
+   `time.sleep` was the last statement in the `try`. Any exception raised
+   before it skipped the sleep entirely, so a repeating fault — a disconnected
+   sound service, say — produced a loop at 100% CPU writing full tracebacks as
+   fast as the logger could accept them. The sleep is now in a `finally`.
+
+4. Callbacks accumulated. `start_listening` appended on every call and
+   `stop_listening` never removed them, so one stop/start cycle delivered every
+   utterance twice, two cycles three times.
+
+5. `os.makedirs(...)` ran in `__init__` on the relative path
+   `static/audio/recognition_cache`, creating directories wherever the process
+   happened to start.
+
+6. `except ImportError` was too narrow — a `SoundRecognitionService()` that
+   raised anything else (no audio device, bad config) escaped the constructor.
+
+7. `set_sensitivity(float("nan"))` returned True. `nan < 0.0` and `nan > 1.0`
+   are both False, so NaN passed validation and then poisoned every interval
+   computed from it.
+
+8. The module-level singleton had no lock.
 """
 
 from __future__ import annotations
@@ -29,43 +88,78 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+import uuid
+from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+from recognition_result import RecognitionResult, RecognitionStatus
+
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
+#: Set to "1" to keep a copy of processed audio on disk. OFF by default: these
+#: are recordings of a user's voice.
+AUDIO_CACHE_ENV = "ALPHAVOX_CACHE_AUDIO"
+
+MAX_RECENT_PHRASES = 5
+LOOP_INTERVAL_SECONDS = 0.1
+
+
+@runtime_checkable
+class SpeechRecognizer(Protocol):
+    """A recognizer that returns a RecognitionResult."""
+
+    def recognize_from_bytes(
+        self, audio_bytes: bytes, sample_rate: int = ..., sample_width: int = ...
+    ) -> RecognitionResult:
+        ...
+
+
+@runtime_checkable
+class SoundPatternService(Protocol):
+    """A non-verbal sound pattern detector."""
+
+    def detect_sound_pattern(self, audio_data: Optional[Any] = ...) -> Optional[Any]:
+        ...
+
+    def classify_sound_intent(self, detection: Optional[Any]) -> Optional[Any]:
+        ...
 
 
 class EnhancedSpeechRecognition:
     """
-    Enhanced speech recognition system that combines verbal speech recognition
-    with non-verbal sound pattern recognition.
+    Coordinates a speech recognizer and a non-verbal sound service.
 
-    This class provides:
-    - Integration with SoundRecognitionService (if available).
-    - Streaming / continuous listening mode.
-    - Callback-based delivery of speech and sound pattern events.
-    - Lightweight recognition context tracking.
+    Owns no recognition logic. With no recognizer attached it reports
+    `unavailable` and returns nothing — it does not fill the gap.
+
+    Speech callbacks receive a single RecognitionResult rather than the old
+    `(text, confidence, metadata)` triple. One object that refuses to hold text
+    on a failure status makes "error arrives shaped like an utterance"
+    impossible rather than merely unlikely.
     """
 
-    def __init__(self) -> None:
-        """Initialize the enhanced speech recognition system."""
-        self.logger = logging.getLogger(__name__)
-        self.logger.info("Initializing EnhancedSpeechRecognition")
+    def __init__(
+        self,
+        recognizer: Optional[SpeechRecognizer] = None,
+        sound_service: Optional[SoundPatternService] = None,
+        language: str = "en-US",
+        sensitivity: float = 0.5,
+    ) -> None:
+        self.logger = logger
+        self._lock = threading.Lock()
 
-        self.is_listening: bool = False
-        self.is_processing: bool = False
-        self.current_audio_data: List[bytes] = []
+        self.recognizer = recognizer
+        self.sound_service = sound_service
 
-        self.speech_callbacks: List[Callable[..., None]] = []
-        self.sound_pattern_callbacks: List[Callable[..., None]] = []
+        self.is_listening = False
+        self.is_processing = False
 
-        self.language: str = "en-US"
-        self.sensitivity: float = 0.5
-        self.silence_threshold: float = 0.1
-        self.min_audio_length: float = 0.5
+        self.language = language
+        self._sensitivity = 0.5
+        self.set_sensitivity(sensitivity)  # validated, not assigned blindly
+
+        self.speech_callbacks: List[Callable[[RecognitionResult], None]] = []
+        self.sound_pattern_callbacks: List[Callable[[Any], None]] = []
 
         self.recognition_context: Dict[str, Any] = {
             "recent_phrases": [],
@@ -73,347 +167,471 @@ class EnhancedSpeechRecognition:
             "active_keywords": [],
         }
 
-        self.audio_cache_dir = os.path.join("static", "audio", "recognition_cache")
-        os.makedirs(self.audio_cache_dir, exist_ok=True)
+        self._thread: Optional[threading.Thread] = None
+        self._audio_cache_dir: Optional[str] = None  # created lazily, if ever
+
+        if recognizer is None:
+            self.logger.warning(
+                "EnhancedSpeechRecognition has no recognizer attached. No "
+                "transcript will be produced. This class does NOT generate "
+                "placeholder text."
+            )
+        if sound_service is None:
+            self.logger.warning("No sound pattern service attached.")
+
+        self.logger.info(
+            "EnhancedSpeechRecognition initialized. recognizer=%s sound_service=%s",
+            type(recognizer).__name__ if recognizer else None,
+            type(sound_service).__name__ if sound_service else None,
+        )
+
+    @property
+    def available(self) -> bool:
+        """True when at least one real recognizer is attached."""
+        return self.recognizer is not None or self.sound_service is not None
+
+    @property
+    def sensitivity(self) -> float:
+        return self._sensitivity
+
+    # -- Audio processing -----------------------------------------------------
+
+    def process_audio_data(
+        self,
+        audio_data: bytes,
+        sample_rate: int = 16000,
+        sample_width: int = 2,
+    ) -> RecognitionResult:
+        """
+        Recognize speech from raw PCM by delegating to the attached recognizer.
+
+        Returns:
+            RecognitionResult. Where the original returned a random phrase with
+            confidence >= 0.70, this returns UNAVAILABLE when no recognizer is
+            attached and ERROR when the recognizer fails. Neither carries text.
+        """
+        if not audio_data:
+            return RecognitionResult.no_speech(source="enhanced", reason="empty_audio")
+
+        if self.recognizer is None:
+            return RecognitionResult.unavailable(
+                "No speech recognizer is attached. Audio was received and not "
+                "transcribed.",
+                source="enhanced",
+                bytes_received=len(audio_data),
+            )
+
+        self.logger.info("Processing %d bytes of audio.", len(audio_data))
+
+        with self._lock:
+            self.is_processing = True
+        try:
+            cached_path = self._cache_audio(audio_data)
+
+            try:
+                result = self.recognizer.recognize_from_bytes(
+                    audio_data, sample_rate=sample_rate, sample_width=sample_width
+                )
+            except Exception as exc:
+                self.logger.error("Recognizer raised: %s", exc, exc_info=True)
+                return RecognitionResult.error(
+                    str(exc), source="enhanced", kind="recognizer_failed"
+                )
+
+            if not isinstance(result, RecognitionResult):
+                self.logger.error(
+                    "Recognizer returned %s, expected RecognitionResult.",
+                    type(result).__name__,
+                )
+                return RecognitionResult.error(
+                    f"Recognizer returned {type(result).__name__}",
+                    source="enhanced",
+                    kind="contract_violation",
+                )
+
+            if cached_path is not None:
+                # Rebuilt rather than mutated: RecognitionResult is frozen, and
+                # a path is only ever attached to a file that now exists.
+                result = RecognitionResult(
+                    status=result.status,
+                    text=result.text,
+                    confidence=result.confidence,
+                    simulated=result.simulated,
+                    source=result.source,
+                    metadata={**result.metadata, "audio_path": cached_path},
+                )
+
+            self._deliver_speech(result)
+            return result
+        finally:
+            with self._lock:
+                self.is_processing = False
+
+    def _cache_audio(self, audio_data: bytes) -> Optional[str]:
+        """
+        Write audio to the cache, if caching is enabled.
+
+        Returns the path only when the bytes actually reached disk. The
+        original built a path string, skipped the write, and returned the path
+        regardless.
+        """
+        if os.getenv(AUDIO_CACHE_ENV, "0") != "1":
+            return None
 
         try:
-            from audio.sound_recognition_service import SoundRecognitionService
+            if self._audio_cache_dir is None:
+                base = os.getenv(
+                    "ALPHAVOX_AUDIO_CACHE_DIR",
+                    os.path.join(os.path.expanduser("~"), ".alphavox", "audio_cache"),
+                )
+                os.makedirs(base, mode=0o700, exist_ok=True)
+                self._audio_cache_dir = base
 
-            self.sound_service: Optional[Any] = SoundRecognitionService()
-            self.logger.info("Sound recognition service loaded")
-        except ImportError:
-            self.sound_service = None
-            self.logger.warning("Sound recognition service not available")
+            path = os.path.join(
+                self._audio_cache_dir,
+                f"audio_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4()}.pcm",
+            )
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(audio_data)
+            return path
+        except Exception as exc:
+            # A failed cache write must not be reported as a stored file, and
+            # must not fail the recognition it was incidental to.
+            self.logger.error("Audio cache write failed: %s", exc, exc_info=True)
+            return None
 
-        self.logger.info("EnhancedSpeechRecognition initialized")
+    # -- Lifecycle ------------------------------------------------------------
 
     def start_listening(
         self,
-        speech_callback: Optional[Callable[[str, float, Dict[str, Any]], None]] = None,
-        sound_pattern_callback: Optional[
-            Callable[[Any, float, Dict[str, Any]], None]
-        ] = None,
+        speech_callback: Optional[Callable[[RecognitionResult], None]] = None,
+        sound_pattern_callback: Optional[Callable[[Any], None]] = None,
     ) -> bool:
         """
-        Start listening for speech and sound patterns.
-
-        Args:
-            speech_callback: Optional callback(text, confidence, metadata).
-            sound_pattern_callback: Optional callback(pattern, confidence, metadata).
+        Start the background loop.
 
         Returns:
-            True if started successfully, False otherwise.
+            False if already listening, if the previous thread has not exited,
+            or if nothing is attached to listen with.
         """
         if self.is_listening:
-            self.logger.warning("Speech recognition is already active")
+            self.logger.warning("Speech recognition is already active.")
             return False
 
-        if speech_callback:
-            self.speech_callbacks.append(speech_callback)
+        if self._thread is not None and self._thread.is_alive():
+            self.logger.warning("Previous listener thread has not exited.")
+            return False
 
-        if sound_pattern_callback:
-            self.sound_pattern_callbacks.append(sound_pattern_callback)
+        if not self.available:
+            self.logger.error(
+                "Cannot start: no recognizer and no sound service attached."
+            )
+            return False
 
-        if self.sound_service:
-            self.sound_service.start_listening()
+        with self._lock:
+            if speech_callback:
+                self.speech_callbacks.append(speech_callback)
+            if sound_pattern_callback:
+                self.sound_pattern_callbacks.append(sound_pattern_callback)
+
+        if self.sound_service is not None:
+            try:
+                self.sound_service.start_listening()  # type: ignore[attr-defined]
+            except AttributeError:
+                pass  # not all services expose a lifecycle
+            except Exception as exc:
+                self.logger.error(
+                    "Sound service failed to start: %s", exc, exc_info=True
+                )
+                return False
 
         self.is_listening = True
-        self._start_listening_thread()
-        self.logger.info("Speech recognition started")
+        self._thread = threading.Thread(
+            target=self._listening_loop, name="speech_listener", daemon=True
+        )
+        self._thread.start()
+        self.logger.info("Speech recognition started.")
         return True
 
-    def stop_listening(self) -> bool:
+    def stop_listening(self, wait: bool = True, timeout: float = 10.0) -> bool:
         """
-        Stop listening for speech and sound patterns.
+        Stop the background loop and clear callbacks.
+
+        Callbacks are cleared here specifically so a stop/start cycle does not
+        re-register them and double every delivery.
 
         Returns:
-            True if stopped successfully, False otherwise.
+            True only if it was running AND (when wait=True) the thread exited.
         """
         if not self.is_listening:
-            self.logger.warning("Speech recognition is not active")
+            self.logger.warning("Speech recognition is not active.")
             return False
 
-        if self.sound_service:
-            self.sound_service.stop_listening()
-
         self.is_listening = False
-        self.logger.info("Speech recognition stopped")
-        return True
 
-    def _start_listening_thread(self) -> None:
-        """Start the background listening thread."""
-        thread = threading.Thread(target=self._listening_loop, name="speech_listener")
-        thread.daemon = True
-        thread.start()
+        if self.sound_service is not None:
+            try:
+                self.sound_service.stop_listening()  # type: ignore[attr-defined]
+            except AttributeError:
+                pass
+            except Exception as exc:
+                self.logger.error("Error stopping sound service: %s", exc, exc_info=True)
+
+        exited = True
+        if wait and self._thread is not None:
+            self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                self.logger.error(
+                    "Listener thread did not exit within %.1fs.", timeout
+                )
+                exited = False
+            else:
+                self._thread = None
+
+        self.clear_callbacks()
+        self.logger.info("Speech recognition stopped.")
+        return exited
+
+    def clear_callbacks(self) -> None:
+        with self._lock:
+            self.speech_callbacks.clear()
+            self.sound_pattern_callbacks.clear()
+
+    # -- Loop -----------------------------------------------------------------
 
     def _listening_loop(self) -> None:
-        """Main listening loop that runs in the background."""
-        self.logger.debug("Listening loop started")
+        """
+        Poll the sound service.
+
+        No speech simulation. The original called
+        `self._simulate_speech_recognition()` here on every pass; that method no
+        longer exists.
+        """
+        self.logger.debug("Listening loop started.")
+        consecutive_errors = 0
 
         while self.is_listening:
             try:
-                if self.sound_service:
-                    sound_result = self.sound_service.detect_sound_pattern()
-                    if sound_result:
-                        self._process_sound_pattern(sound_result)
+                if self.sound_service is not None:
+                    detection = self.sound_service.detect_sound_pattern()
+                    if detection is not None:
+                        self._process_sound_pattern(detection)
+                consecutive_errors = 0
+            except Exception as exc:
+                consecutive_errors += 1
+                # Log the first few in full, then stop flooding. A traceback
+                # per iteration is how a log fills a disk during an outage.
+                if consecutive_errors <= 3:
+                    self.logger.error(
+                        "Error in listening loop: %s", exc, exc_info=True
+                    )
+                elif consecutive_errors % 100 == 0:
+                    self.logger.error(
+                        "Listening loop still failing (%d consecutive): %s",
+                        consecutive_errors,
+                        exc,
+                    )
+            finally:
+                # In `finally`, not at the end of the `try`. This is the fix for
+                # the hot-spin: an exception can no longer skip the sleep.
+                time.sleep(LOOP_INTERVAL_SECONDS)
 
-                self._simulate_speech_recognition()
-                time.sleep(0.1)
-            except Exception as e:
-                self.logger.error("Error in listening loop: %s", e, exc_info=True)
+        self.logger.debug("Listening loop ended.")
 
-        self.logger.debug("Listening loop ended")
-
-    def _simulate_speech_recognition(self) -> None:
-        """
-        Simulate speech recognition for testing and development.
-
-        In a real implementation, this would process actual audio streams.
-        """
-        if not hasattr(self, "_last_simulation_time"):
-            self._last_simulation_time = 0.0
-
-        current_time = time.time()
-        simulation_interval = 10.0 + (5.0 * self.sensitivity)
-
-        if current_time - self._last_simulation_time < simulation_interval:
+    def _process_sound_pattern(self, detection: Any) -> None:
+        """Classify a detection and deliver it. Never invents a classification."""
+        if detection is None:
             return
 
-        import random
-
-        if random.random() < 0.1:
-            self._last_simulation_time = current_time
-
-            sample_phrases = [
-                "Hello, how are you today?",
-                "Can you tell me more about nonverbal communication?",
-                "I would like to learn about eye tracking.",
-                "Can you explain how this AI system works?",
-                "Thank you for helping me communicate.",
-            ]
-
-            recognized_text = random.choice(sample_phrases)
-            confidence = 0.7 + (random.random() * 0.25)
-
-            metadata: Dict[str, Any] = {
-                "confidence": confidence,
-                "language": self.language,
-                "timestamp": current_time,
-                "audio_length": random.uniform(1.0, 3.0),
-                "source": "simulation",
-            }
-
-            self.logger.info(
-                "Simulated speech recognition: '%s' (confidence: %.2f)",
-                recognized_text,
-                confidence,
-            )
-
-            self._process_recognized_speech(recognized_text, metadata)
-
-    def process_audio_data(
-        self, audio_data: bytes, sample_rate: int = 16000, format_: str = "wav"
-    ) -> Dict[str, Any]:
-        """
-        Process audio data and perform speech recognition.
-
-        Args:
-            audio_data: Raw audio data bytes.
-            sample_rate: Sample rate of the audio.
-            format_: Audio format label.
-
-        Returns:
-            Dict with recognition results or error description.
-        """
-        if not audio_data:
-            return {"error": "No audio data provided"}
-
-        self.logger.info("Processing %d bytes of audio data", len(audio_data))
-        self.is_processing = True
-
-        try:
-            import uuid
-            from datetime import datetime
-            import random
-
-            file_id = str(uuid.uuid4())
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_path = os.path.join(
-                self.audio_cache_dir, f"audio_{timestamp}_{file_id}.{format_}"
-            )
-
-            # Placeholder: in a full implementation, audio_data would be written and
-            # passed to a real ASR engine.
-
-            sample_phrases = [
-                "Hello, this is a speech recognition test.",
-                "Can you help me with communication?",
-                "This is a test of the recognition pipeline.",
-                "I would like to know more about this system.",
-                "Thank you for assisting with my speech.",
-            ]
-
-            recognized_text = random.choice(sample_phrases)
-            confidence = 0.7 + (random.random() * 0.25)
-
-            result: Dict[str, Any] = {
-                "text": recognized_text,
-                "confidence": confidence,
-                "language": self.language,
-                "timestamp": time.time(),
-                "audio_path": file_path,
-            }
-
-            self.logger.info(
-                "Audio processing result: '%s' (confidence: %.2f)",
-                recognized_text,
-                confidence,
-            )
-
-            self._update_recognition_context(recognized_text)
-            self._process_recognized_speech(recognized_text, result)
-
-            return result
-        except Exception as e:
-            self.logger.error("Error processing audio data: %s", e, exc_info=True)
-            return {"error": str(e)}
-        finally:
-            self.is_processing = False
-
-    def _process_recognized_speech(self, text: str, metadata: Dict[str, Any]) -> None:
-        """
-        Process recognized speech and notify callbacks.
-
-        Args:
-            text: Recognized text.
-            metadata: Recognition metadata.
-        """
-        if not text:
-            return
-
-        self._update_recognition_context(text)
-
-        for callback in list(self.speech_callbacks):
+        classification = None
+        if self.sound_service is not None:
             try:
-                callback(text, metadata.get("confidence", 0.0), metadata)
-            except Exception as e:
-                self.logger.error("Error in speech callback: %s", e, exc_info=True)
+                classification = self.sound_service.classify_sound_intent(detection)
+            except Exception as exc:
+                # Escalation failures propagate — a help request that could not
+                # be delivered must not be swallowed by a coordinator.
+                if type(exc).__name__ == "EscalationNotDelivered":
+                    raise
+                self.logger.error(
+                    "Error classifying sound intent: %s", exc, exc_info=True
+                )
 
-    def _process_sound_pattern(self, sound_result: Dict[str, Any]) -> None:
-        """
-        Process detected sound pattern and notify callbacks.
-
-        Args:
-            sound_result: Sound pattern detection result.
-        """
-        if not sound_result:
-            return
-
-        pattern = sound_result.get("pattern")
-        confidence = sound_result.get("confidence", 0.0)
-
-        intent_data: Dict[str, Any] = {}
-        if self.sound_service:
+        with self._lock:
+            targets = list(self.sound_pattern_callbacks)
+        for cb in targets:
             try:
-                intent_data = self.sound_service.classify_sound_intent(pattern)
-            except Exception as e:
-                self.logger.error("Error classifying sound intent: %s", e, exc_info=True)
+                cb(classification if classification is not None else detection)
+            except Exception as exc:
+                self.logger.error(
+                    "Error in sound pattern callback: %s", exc, exc_info=True
+                )
 
-        combined_data = {**sound_result, **intent_data}
+    def _deliver_speech(self, result: RecognitionResult) -> None:
+        """Deliver a result. Only real speech updates the context."""
+        if result.is_user_speech:
+            self._update_recognition_context(result.text)
 
-        for callback in list(self.sound_pattern_callbacks):
+        with self._lock:
+            targets = list(self.speech_callbacks)
+        for cb in targets:
             try:
-                callback(pattern, confidence, combined_data)
-            except Exception as e:
-                self.logger.error("Error in sound pattern callback: %s", e, exc_info=True)
+                cb(result)
+            except Exception as exc:
+                self.logger.error("Error in speech callback: %s", exc, exc_info=True)
 
     def _update_recognition_context(self, text: str) -> None:
         """
-        Update the recognition context with newly recognized text.
+        Record a recognized phrase.
 
-        Args:
-            text: Recognized text.
+        Guarded by `is_user_speech` at the call site, so an error string can
+        never enter the phrase history. The original called this from
+        `process_audio_data` before delivery and again inside
+        `_process_recognized_speech`, recording every phrase twice.
         """
-        phrases = self.recognition_context["recent_phrases"]
-        phrases.append(text)
-        if len(phrases) > 5:
-            phrases.pop(0)
+        if not text:
+            return
+        with self._lock:
+            phrases = self.recognition_context["recent_phrases"]
+            phrases.append(text)
+            del phrases[:-MAX_RECENT_PHRASES]
 
-        # Placeholder: a full implementation would update topic and keywords using NLP.
+    # -- Configuration --------------------------------------------------------
 
     def set_language(self, language: str) -> bool:
-        """Set the recognition language."""
-        self.language = language
-        self.logger.info("Recognition language set to: %s", language)
+        """Set the recognition language. Rejects empty or non-string input."""
+        if not isinstance(language, str) or not language.strip():
+            self.logger.error("Invalid language: %r", language)
+            return False
+        self.language = language.strip()
+        self.logger.info("Recognition language set to: %s", self.language)
         return True
 
     def set_sensitivity(self, sensitivity: float) -> bool:
         """
-        Set the recognition sensitivity.
+        Set sensitivity in [0.0, 1.0].
 
-        Args:
-            sensitivity: Sensitivity value (0.0–1.0).
+        The bound is written in the positive form. The original used
+        `if sensitivity < 0.0 or sensitivity > 1.0`, and both comparisons are
+        False for NaN — so NaN passed validation and was stored.
         """
-        if sensitivity < 0.0 or sensitivity > 1.0:
-            self.logger.error("Invalid sensitivity value: %.3f", sensitivity)
+        try:
+            value = float(sensitivity)
+        except (TypeError, ValueError):
+            self.logger.error("Sensitivity must be a number, got %r", sensitivity)
             return False
 
-        self.sensitivity = sensitivity
-        self.logger.info("Recognition sensitivity set to: %.3f", sensitivity)
+        if not (0.0 <= value <= 1.0):
+            self.logger.error("Invalid sensitivity value: %r", sensitivity)
+            return False
+
+        self._sensitivity = value
+        self.logger.info("Recognition sensitivity set to: %.3f", value)
         return True
 
     def add_recognition_keywords(self, keywords: List[str]) -> bool:
         """
-        Add keywords to prioritize in recognition.
+        Add keywords to prioritize.
 
-        Args:
-            keywords: List of keywords to prioritize.
+        The original checked only that the container was a list, so
+        `[None, 42, {}]` was accepted and each element later crashed whatever
+        consumed it. Elements are validated here.
         """
-        if not isinstance(keywords, list):
-            self.logger.error("Keywords must be a list")
+        if not isinstance(keywords, (list, tuple)):
+            self.logger.error("Keywords must be a list or tuple.")
             return False
 
-        self.recognition_context["active_keywords"].extend(keywords)
-        self.logger.info("Added recognition keywords: %s", keywords)
+        cleaned = []
+        for kw in keywords:
+            if not isinstance(kw, str) or not kw.strip():
+                self.logger.error("Invalid keyword %r — must be a non-empty string.", kw)
+                return False
+            cleaned.append(kw.strip())
+
+        with self._lock:
+            self.recognition_context["active_keywords"].extend(cleaned)
+        self.logger.info("Added recognition keywords: %s", cleaned)
         return True
 
     def clear_recognition_keywords(self) -> bool:
-        """Clear all recognition keywords."""
-        self.recognition_context["active_keywords"] = []
-        self.logger.info("Cleared recognition keywords")
+        with self._lock:
+            self.recognition_context["active_keywords"] = []
+        self.logger.info("Cleared recognition keywords.")
         return True
 
     def get_recognition_status(self) -> Dict[str, Any]:
-        """Return the current status of the speech recognition system."""
-        return {
-            "is_listening": self.is_listening,
-            "is_processing": self.is_processing,
-            "language": self.language,
-            "sensitivity": self.sensitivity,
-            "context": {
-                "recent_phrases_count": len(
-                    self.recognition_context["recent_phrases"]
-                ),
-                "current_topic": self.recognition_context["current_topic"],
-                "active_keywords_count": len(
-                    self.recognition_context["active_keywords"]
-                ),
-            },
-        }
+        """Current state, for health checks and audit."""
+        with self._lock:
+            return {
+                "available": self.available,
+                "is_listening": self.is_listening,
+                "is_processing": self.is_processing,
+                "language": self.language,
+                "sensitivity": self._sensitivity,
+                "has_recognizer": self.recognizer is not None,
+                "has_sound_service": self.sound_service is not None,
+                "generates_placeholder_text": False,
+                "context": {
+                    "recent_phrases_count": len(
+                        self.recognition_context["recent_phrases"]
+                    ),
+                    "current_topic": self.recognition_context["current_topic"],
+                    "active_keywords_count": len(
+                        self.recognition_context["active_keywords"]
+                    ),
+                },
+            }
 
 
-_enhanced_speech_recognition: Optional[EnhancedSpeechRecognition] = None
+# -----------------------------------------------------------------------------
+# Accessor
+# -----------------------------------------------------------------------------
+
+_instance: Optional[EnhancedSpeechRecognition] = None
+_instance_lock = threading.Lock()
 
 
-def get_enhanced_speech_recognition() -> EnhancedSpeechRecognition:
-    """Return the singleton enhanced speech recognition instance."""
-    global _enhanced_speech_recognition
-    if _enhanced_speech_recognition is None:
-        _enhanced_speech_recognition = EnhancedSpeechRecognition()
-    return _enhanced_speech_recognition
+def get_enhanced_speech_recognition(
+    recognizer: Optional[SpeechRecognizer] = None,
+    sound_service: Optional[SoundPatternService] = None,
+) -> EnhancedSpeechRecognition:
+    """
+    Get or create the shared instance.
+
+    Double-checked locking. The original had none, so two threads could each
+    construct one and the loser's callbacks were registered on an object
+    nothing would ever fire.
+    """
+    global _instance
+    if _instance is None:
+        with _instance_lock:
+            if _instance is None:
+                _instance = EnhancedSpeechRecognition(
+                    recognizer=recognizer, sound_service=sound_service
+                )
+    return _instance
 
 
-__all__ = ["EnhancedSpeechRecognition", "get_enhanced_speech_recognition"]
+def reset_enhanced_speech_recognition(timeout: float = 10.0) -> bool:
+    """Stop and discard the shared instance. False if its thread would not exit."""
+    global _instance
+    with _instance_lock:
+        inst = _instance
+        if inst is None:
+            return True
+        if inst.is_listening and not inst.stop_listening(wait=True, timeout=timeout):
+            return False
+        _instance = None
+        return True
+
+
+__all__ = [
+    "EnhancedSpeechRecognition",
+    "SpeechRecognizer",
+    "SoundPatternService",
+    "get_enhanced_speech_recognition",
+    "reset_enhanced_speech_recognition",
+]
 
 # ==============================================================================
 # Patent Pending
