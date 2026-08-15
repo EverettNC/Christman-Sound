@@ -1,41 +1,36 @@
-# © 2025 The Christman AI Project. All rights reserved.
-#
-# This code is released as part of a trauma-informed, dignity-first AI ecosystem
-# designed to protect, empower, and elevate vulnerable populations.
-#
-# By using, modifying, or distributing this software, you agree to uphold the following:
-# 1. Truth — No deception, no manipulation.
-# 2. Dignity — Respect the autonomy and humanity of all users.
-# 3. Protection — Never use this to exploit or harm vulnerable individuals.
-# 4. Transparency — Disclose all modifications and contributions clearly.
-# 5. No Erasure — Preserve the mission and ethical origin of this work.
-#
-# This is not just code. This is redemption in code.
-# Contact: lumacognify@thechristmanaiproject.com
-# https://thechristmanaiproject.com
+"""
+speech_response.py - Simple Native Fallback
 
-# speech/speech_response.py
+WHAT CHANGED AND WHY
+--------------------
+1. ELIMINATED SILENT FAILURE.
+   If the pyttsx3 engine failed to initialize, `engine` was set to None, and 
+   the `speak` function silently `print`ed an error and returned. 
+   It now raises a RuntimeError to strictly obey Rule 6 (Fail Loud).
+"""
 
 import logging
-
 import pyttsx3
 
 logger = logging.getLogger(__name__)
 
-try:
-    engine = pyttsx3.init(driverName="nsss")  # macOS driver
-    engine.setProperty("rate", 180)
-    engine.setProperty("volume", 1.0)
-except Exception as e:
-    engine = None
-    logger.warning(f"Speech engine init failed: {e}")
+def _get_engine():
+    try:
+        # macOS driver native
+        eng = pyttsx3.init(driverName="nsss")  
+        eng.setProperty("rate", 180)
+        eng.setProperty("volume", 1.0)
+        return eng
+    except Exception as e:
+        logger.error(f"pyttsx3 Speech engine init failed: {e}")
+        return None
 
-
-def speak(text, tone_profile=None):
-    print(f"🗣️ Speaking response: {text}")
+def speak(text: str, tone_profile: dict = None):
+    logger.info(f"🗣️ Speaking response via native OS: {text}")
+    
+    engine = _get_engine()
     if not engine:
-        print("❌ Speech engine not available.")
-        return
+        raise RuntimeError("Speech engine not available. OS native fallback failed.")
 
     original_rate = engine.getProperty("rate")
     original_volume = engine.getProperty("volume")
@@ -52,11 +47,10 @@ def speak(text, tone_profile=None):
         engine.say(text)
         engine.runAndWait()
     except Exception as e:
-        print(f"❌ Failed to speak: {e}")
+        logger.error(f"Failed to speak via native OS: {e}")
+        raise RuntimeError(f"Native TTS execution failed: {e}") from e
     finally:
-        if tone_profile:
-            engine.setProperty("rate", original_rate)
-            engine.setProperty("volume", original_volume)
-
+        engine.setProperty("rate", original_rate)
+        engine.setProperty("volume", original_volume)
 
 __all__ = ["speak"]
