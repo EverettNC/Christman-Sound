@@ -1,8 +1,7 @@
 """
 © The Christman AI Project | Luma Cognify AI. All rights reserved. Patent pending.
-No license — express or implied — is granted without prior written permission.
 
-AlphaVox Voice Stack — Presence Guide.
+— Presence Guide.
 
 Detects when an AAC / nonverbal user is in a state that needs *presence*
 rather than problem-solving, and shapes response guidance accordingly.

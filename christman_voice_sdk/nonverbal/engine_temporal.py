@@ -1,7 +1,7 @@
 """
-BROCKSTON — Temporal Nonverbal Engine
+— Temporal Nonverbal Engine
 -------------------------------------
-Project: The Christman AI Project — BROCKSTON
+Project: The Christman AI Project — 
 
 LSTM-based temporal pattern recognition over gestures, eye movement, and
 emotion sequences.
@@ -75,7 +75,7 @@ logger.addHandler(logging.NullHandler())
 
 #: Set to "1" to permit loading pickled model files. OFF by default —
 #: pickle.load executes arbitrary code. A digest must also match.
-ALLOW_PICKLE_ENV = "ALPHAVOX_ALLOW_PICKLE_MODELS"
+ALLOW_PICKLE_ENV = "CORTI_ALLOW_PICKLE_MODELS"
 
 DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, str]] = {
     "Hand Up": {"intent": "Request attention", "message": "I need help."},

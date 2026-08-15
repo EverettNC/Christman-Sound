@@ -2,7 +2,7 @@
 © The Christman AI Project | Luma Cognify AI. All rights reserved. Patent pending.
 No license — express or implied — is granted without prior written permission.
 
-AlphaVox Voice Stack — Grounder.
+— Grounder.
 
 Short, repeatable, safe grounding techniques the voice surface can offer when
 emotional metrics indicate the user is escalating or dissociating.
