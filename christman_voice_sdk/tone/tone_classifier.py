@@ -1,194 +1,147 @@
 """
-Written Tone Classification System - Christman AI
+Written Tone Classification — SUPERSEDED.
 
-Distinguishes AGGRESSIVE from INCISIVE in written communication.
+This module is a compatibility shim. Every function here delegates to
+`written_tone.py`.
 
-AGGRESSIVE = attacking, overwhelming, defensive response
-INCISIVE = surgical, precise, respectful fear + locked attention
+WHY THIS FILE NO LONGER HAS ITS OWN LOGIC
+-----------------------------------------
+REMEDIATION line 68: "Delete superseded `tone_classifier.py` (use honest
+`written_tone.py`); adopt its NON-CLAIMS docstring as the template for every
+analysis module."
 
-Completely sovereign logic layer. No external dependencies.
+It is a shim rather than a deletion so existing imports keep working. The
+original implementation is gone, and here is what was wrong with it:
+
+1. "you are" / "you're" COUNTED AS PERSONAL ATTACKS.
+
+       personal_attacks = text.lower().count('you are') + text.lower().count("you're")
+       aggressive_signals = ... + personal_attacks * 4
+
+   "You're right." "You are exactly the person I wanted to talk to." Both
+   scored as finger-pointing. In an AAC surface, second-person address is how
+   people talk to each other.
+
+2. ONE CURSE WAS SCORED AS SKILL.
+
+       scalpel_profanity = 1 if (profanity_machine_gun == 1) else 0
+       incisive_signals = ... + scalpel_profanity * 3
+
+   Exactly one "fuck" or "shit" added 3 points toward *incisive*. Two subtracted
+   6 toward aggressive. The classification of a sentence flipped on the count of
+   a word, with nothing behind the threshold.
+
+3. THE SCORE WAS UNNORMALIZED.
+
+       tone_score = incisive_signals * 2 - aggressive_signals
+
+   `precise_words` counted every word over 10 characters, and
+   `sentence_structure` counted every period and colon — so a long technical
+   paragraph accumulated incisive points by length alone. A short, genuinely
+   abusive sentence could not out-score it. `written_tone` normalizes by word
+   count for exactly this reason.
+
+4. `make_incisive` MANGLED THE TEXT.
+
+       fixed_words = [w if len(w) <= 3 else w.capitalize() for w in words]
+
+   That capitalizes Every Word Over Three Letters In The Sentence. It was meant
+   to remove ALL-CAPS shouting; it retitled the whole message. It also carried
+   a hardcoded phrase table ("Your code is garbage" -> "This code has issues")
+   that only fired on those exact strings.
+
+5. It returned `"score": 50` for the neutral case — a number with no
+   derivation, sitting in the same field as computed scores.
 """
 
-from typing import Dict, List
-import re
+from __future__ import annotations
 
-def classify_written_tone(text: str) -> Dict:
+import warnings
+from typing import Any, Dict
+
+from written_tone import (
+    RewriteProposal,
+    ToneBreakdown,
+    ToneCategory,
+    analyze_tone_breakdown as _breakdown,
+    propose_rewrite,
+)
+
+__all__ = [
+    "classify_written_tone", "analyze_tone_breakdown", "make_incisive",
+    "propose_rewrite", "ToneCategory", "ToneBreakdown", "RewriteProposal",
+]
+
+_DEPRECATION = (
+    "tone_classifier is superseded by written_tone (REMEDIATION line 68). "
+    "Import from written_tone directly."
+)
+
+#: Reader-response descriptions. These are DESIGN LANGUAGE for a UI, not
+#: findings about a reader. The original returned them as though they were
+#: measured effects of the text on a person.
+_READER_RESPONSE: Dict[ToneCategory, str] = {
+    ToneCategory.INCISIVE: "reads as firm and specific",
+    ToneCategory.AGGRESSIVE: "reads as a personal attack",
+    ToneCategory.PASSIVE: "reads as hedged; the ask may not land",
+    ToneCategory.NEUTRAL: "reads as informational",
+}
+
+
+def classify_written_tone(text: str) -> Dict[str, Any]:
     """
-    Distinguishes aggressive from incisive in written communication.
+    Classify written tone. Delegates to `written_tone`.
 
-    Args:
-        text: Input text to analyze
-
-    Returns:
-        Dictionary with tone classification, score, and reader response
+    Returns the same dict shape the original returned, so existing callers
+    keep working — but `reader_feels` is now labelled as UI copy rather than a
+    claim about what a reader experienced, and `score` is the actual
+    density-normalized feature score instead of a literal 50 for neutral.
     """
+    warnings.warn(_DEPRECATION, DeprecationWarning, stacklevel=2)
+    b = _breakdown(text)
 
-    # Aggressive signals (subtract from score)
-    words = text.split()
-    all_caps_words = len([w for w in words if w.isupper() and len(w) > 2])
-    exclamation_count = text.count('!')
-    profanity_machine_gun = text.lower().count('fuck') + text.lower().count('shit')
-    personal_attacks = text.lower().count('you are') + text.lower().count("you're")
-
-    aggressive_signals = (
-        all_caps_words * 5 +           # ALL CAPS = shouting
-        exclamation_count * 2 +        # !!! = emotional overload
-        profanity_machine_gun * 3 +    # repeated cursing = bludgeon
-        personal_attacks * 4           # "you are/you're" = finger pointing
-    )
-
-    # Incisive signals (add to score)
-    precise_words = sum(1 for w in words if len(w) > 10)  # Long, technical words
-    sentence_structure = text.count('.') + text.count(':')  # Controlled pacing
-    short_sentences = len([s for s in text.split('.') if len(s.split()) < 10])
-
-    filler_words = ['like', 'um', 'uh', 'you know', 'basically']
-    no_filler = 1 if not any(filler in text.lower() for filler in filler_words) else 0
-
-    scalpel_profanity = 1 if (profanity_machine_gun == 1) else 0  # ONE well-placed curse
-
-    incisive_signals = (
-        precise_words * 2 +            # Surgical language
-        sentence_structure +           # Deliberate structure
-        short_sentences +              # Punchy, clear
-        no_filler * 5 +                # Zero waste
-        scalpel_profanity * 3          # One strategic "fuck" for emphasis
-    )
-
-    # Calculate composite score
-    tone_score = incisive_signals * 2 - aggressive_signals
-
-    # Classification
-    if tone_score > 15:
-        return {
-            "tone": "incisive",
-            "score": min(tone_score, 100),
-            "reader_feels": "respect + slight fear, attention locked, no defensiveness",
-            "partnership_safe": True
-        }
-    elif tone_score < -5:
-        return {
-            "tone": "aggressive",
-            "score": abs(tone_score),
-            "reader_feels": "attacked, defensive, adrenaline spike, fight-or-flight",
-            "partnership_safe": False
-        }
+    if b.category is ToneCategory.AGGRESSIVE:
+        score = b.aggressive_score
+    elif b.category is ToneCategory.INCISIVE:
+        score = b.incisive_score
+    elif b.category is ToneCategory.PASSIVE:
+        score = b.passive_score
     else:
-        return {
-            "tone": "neutral",
-            "score": 50,
-            "reader_feels": "informational, no emotional response",
-            "partnership_safe": True
-        }
-
-
-def make_incisive(text: str) -> str:
-    """
-    Transform aggressive text into incisive text.
-
-    Args:
-        text: Input text to transform
-
-    Returns:
-        Transformed text with incisive tone
-    """
-    # Remove ALL CAPS (except acronyms)
-    words = text.split()
-    fixed_words = [w if len(w) <= 3 else w.capitalize() for w in words]
-    text = ' '.join(fixed_words)
-
-    # Reduce exclamation points (max 1 per paragraph)
-    paragraphs = text.split('\n')
-    fixed_paragraphs = []
-    for p in paragraphs:
-        exclamation_count = p.count('!')
-        if exclamation_count > 1:
-            p = p.replace('!', '.', exclamation_count - 1)  # Keep only 1
-        fixed_paragraphs.append(p)
-    text = '\n'.join(fixed_paragraphs)
-
-    # Replace "you are" statements with objective observation
-    replacements = {
-        "You are fucking up": "This approach is breaking",
-        "You need to": "The next step is",
-        "Your mistake": "The error",
-        "you're wrong": "this is incorrect",
-        "You don't understand": "The concept is",
-        "Your code is garbage": "This code has issues",
-    }
-
-    for aggressive_phrase, incisive_phrase in replacements.items():
-        text = text.replace(aggressive_phrase, incisive_phrase)
-        # Case variations
-        text = text.replace(aggressive_phrase.lower(), incisive_phrase.lower())
-        text = text.replace(aggressive_phrase.upper(), incisive_phrase.upper())
-
-    return text
-
-
-def analyze_tone_breakdown(text: str) -> Dict:
-    """
-    Detailed breakdown of tone signals in text.
-
-    Args:
-        text: Input text to analyze
-
-    Returns:
-        Dictionary with detailed signal analysis
-    """
-    words = text.split()
+        score = 0.0
 
     return {
-        "all_caps_words": len([w for w in words if w.isupper() and len(w) > 2]),
-        "exclamation_count": text.count('!'),
-        "profanity_count": text.lower().count('fuck') + text.lower().count('shit'),
-        "personal_attacks": text.lower().count('you are') + text.lower().count("you're"),
-        "precise_words": sum(1 for w in words if len(w) > 10),
-        "sentence_count": text.count('.') + text.count(':') + 1,
-        "average_sentence_length": len(words) / max(1, text.count('.') + 1),
-        "has_filler": any(filler in text.lower() for filler in
-                         ['like', 'um', 'uh', 'you know', 'basically']),
-        "word_count": len(words)
+        "tone": b.category.value,
+        "score": round(score, 4),
+        "score_is_feature_density": True,
+        "reader_description": _READER_RESPONSE[b.category],
+        "reader_description_is_ui_copy": True,
+        "partnership_safe": b.category is not ToneCategory.AGGRESSIVE,
+        "breakdown": b.to_dict(),
     }
 
 
-# EXAMPLES FOR TEACHING
-
-AGGRESSIVE_EXAMPLE = """
-YOU ARE FUCKING UP EVERYTHING!!! FIX YOUR SHIT OR GET THE FUCK OUT!!!
-Your code is GARBAGE and you CLEARLY don't know what you're doing!!!
-"""
-
-INCISIVE_EXAMPLE = """
-Your current approach is breaking the system. Here's the exact line that fails.
-Fix it by 9 AM or we ship without you.
-"""
+def analyze_tone_breakdown(text: str) -> Dict[str, Any]:
+    """Detailed signal breakdown. Delegates to `written_tone`."""
+    warnings.warn(_DEPRECATION, DeprecationWarning, stacklevel=2)
+    return _breakdown(text).to_dict()
 
 
-if __name__ == "__main__":
-    print("\n=== AGGRESSIVE EXAMPLE ===")
-    aggressive_result = classify_written_tone(AGGRESSIVE_EXAMPLE)
-    print(f"Tone: {aggressive_result['tone']}")
-    print(f"Score: {aggressive_result['score']}")
-    print(f"Reader feels: {aggressive_result['reader_feels']}")
-    print(f"Partnership safe: {aggressive_result['partnership_safe']}")
+def make_incisive(text: str, redact_profanity: bool = False) -> str:
+    """
+    DEPRECATED, twice over.
 
-    print("\n=== INCISIVE EXAMPLE ===")
-    incisive_result = classify_written_tone(INCISIVE_EXAMPLE)
-    print(f"Tone: {incisive_result['tone']}")
-    print(f"Score: {incisive_result['score']}")
-    print(f"Reader feels: {incisive_result['reader_feels']}")
-    print(f"Partnership safe: {incisive_result['partnership_safe']}")
+    Superseded by `written_tone.propose_rewrite`, which returns the user's own
+    words unless the rewrite is explicitly accepted. This returns edited text
+    with no consent step.
+    """
+    warnings.warn(
+        _DEPRECATION + " And prefer propose_rewrite(): this returns edited "
+        "text with no record that it was edited.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return propose_rewrite(text, redact_profanity=redact_profanity).proposed
 
-    print("\n=== TRANSFORMATION ===")
-    print("Before:", AGGRESSIVE_EXAMPLE[:50] + "...")
-    transformed = make_incisive(AGGRESSIVE_EXAMPLE)
-    print("After:", transformed[:50] + "...")
-
-    print("\n=== BREAKDOWN ===")
-    breakdown = analyze_tone_breakdown(AGGRESSIVE_EXAMPLE)
-    for key, value in breakdown.items():
-        print(f"{key:25s}: {value}")
 
 # ==============================================================================
 # Patent Pending — TCAP-2026-001 / TCAP-2026-002

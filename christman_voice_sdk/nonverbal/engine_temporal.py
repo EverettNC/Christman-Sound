@@ -1,725 +1,596 @@
 """
-BROCKSTON - Enhanced Temporal Nonverbal Engine
--------------------------------------------
-Author: Everett Christman & Python (AI)
-Project: The Christman AI Project - BROCKSTON
-Mission: Legends are our only option
+BROCKSTON — Temporal Nonverbal Engine
+-------------------------------------
+Project: The Christman AI Project — BROCKSTON
 
-This module extends the original nonverbal engine with LSTM-based temporal pattern recognition,
-allowing BROCKSTON to recognize patterns in gestures, eye movements, and emotions that
-unfold over time, such as tics, blinking patterns, and emotional transitions.
+LSTM-based temporal pattern recognition over gestures, eye movement, and
+emotion sequences.
+
+WHAT CHANGED AND WHY
+--------------------
+
+1. IT SPOKE FOR THE USER AT RANDOM. Three sites: :369, :419, :469.
+
+       gesture_idx = random.randint(0, len(self.labels["gesture"]) - 1)
+       confidence  = random.uniform(0.6, 0.95)
+
+   This branch ran whenever the loaded model lacked `.predict()` — any pickle
+   that is not a Keras model. Measured, one held gesture classified ten times:
+
+       'Move forward.'    0.93        'I need help.'     0.73
+       "I'm overwhelmed." 0.83        'I need help.'     0.92
+       'I need help.'     0.89        'Go back.'         0.61
+       ...
+       distribution: {'Hand Up': 4, 'Head Jerk': 3, 'Wave Left': 2, 'Wave Right': 1}
+
+   A nonverbal person holding one gesture had a one-in-four chance of the
+   system saying the thing they meant. The confidence floor was 0.60 — above
+   this stack's own 0.6 threshold, so every fabrication passed every gate.
+
+   REMEDIATION line 28 lists this. All three branches are gone. A model that
+   cannot predict is not a model: it is rejected at load.
+
+2. PICKLE OF UNTRUSTED FILES. Six sites.
+
+       with open(path, "rb") as f:
+           self.models["gesture"] = pickle.load(f)
+
+   `pickle.load` executes arbitrary code during deserialization. Model and
+   label files are inputs. REMEDIATION Phase 4 lists this. Labels now load
+   from JSON. Model pickles require an explicit opt-in AND a SHA-256 that
+   matches a recorded digest.
+
+3. `except (ImportError, Exception)` — the second clause makes the first
+   meaningless, and it caught everything including KeyboardInterrupt's
+   siblings.
+
+4. `_load_language_map` WROTE TO DISK on a missing file, inside a constructor,
+   at a relative path. Importing the engine created files.
+
+5. `expression_data["intent"]` raised KeyError on any language-map entry
+   missing that key — a hand-edited JSON file took the engine down.
+
+6. The learning hook logged `successful=True` for EVERY interaction:
+
+       self.learning_journey.log_interaction(modality=..., successful=True, ...)
+
+   Nothing had confirmed success. That is the same defect as the confidence
+   decay in `nonverbal_engine.py`, pointed the other way: it learns that
+   everything worked.
 """
 
-import numpy as np
+from __future__ import annotations
+
+import hashlib
 import json
 import logging
 import os
-import pickle
-import random
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+import numpy as np
 
-
-def load_json_file(filename, default=None):
-    try:
-        with open(os.path.join(DATA_DIR, filename), "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"[WARNING] Could not load {filename}: {e}")
-        return default or {}
-
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
+#: Set to "1" to permit loading pickled model files. OFF by default —
+#: pickle.load executes arbitrary code. A digest must also match.
+ALLOW_PICKLE_ENV = "ALPHAVOX_ALLOW_PICKLE_MODELS"
+
+DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, str]] = {
+    "Hand Up": {"intent": "Request attention", "message": "I need help."},
+    "Wave Left": {"intent": "Previous mode", "message": "Go back."},
+    "Wave Right": {"intent": "Next mode", "message": "Move forward."},
+    "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed."},
+    "Looking Up": {"intent": "Thinking", "message": "I'm thinking."},
+    "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy."},
+    "Neutral": {"intent": "Calm", "message": "I'm fine."},
+    "Happy": {"intent": "Joy", "message": "I'm happy."},
+    "Sad": {"intent": "Unhappy", "message": "I'm sad."},
+    "Angry": {"intent": "Upset", "message": "I'm angry."},
+    "Fear": {"intent": "Worried", "message": "I'm scared."},
+    "Surprise": {"intent": "Shocked", "message": "I'm surprised."},
+}
+
+DEFAULT_LABELS: Dict[str, List[str]] = {
+    "gesture": ["Hand Up", "Wave Left", "Wave Right", "Head Jerk"],
+    "eye_movement": ["Looking Up", "Rapid Blinking"],
+    "emotion": ["Neutral", "Happy", "Sad", "Angry", "Fear", "Surprise"],
+}
+
+#: What a modality reports when it cannot classify. NOT a guess.
+UNAVAILABLE_RESULT: Dict[str, Any] = {
+    "expression": None,
+    "intent": None,
+    "confidence": None,
+    "message": None,
+    "status": "unavailable",
+}
+
+
+class ModelLoadError(RuntimeError):
+    """Raised when a model file cannot be trusted or used."""
+
+
+@dataclass
+class ClassificationResult:
+    """
+    One modality's reading.
+
+    `confidence` is the model's own value, or None. There is no path that
+    generates one.
+    """
+
+    modality: str
+    status: str                      # ok | unavailable | not_ready
+    expression: Optional[str] = None
+    intent: Optional[str] = None
+    confidence: Optional[float] = None
+    message: Optional[str] = None
+    reason: Optional[str] = None
+
+    @property
+    def usable(self) -> bool:
+        return self.status == "ok"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "modality": self.modality, "status": self.status,
+            "expression": self.expression, "intent": self.intent,
+            "confidence": self.confidence,
+            "confidence_known": self.confidence is not None,
+            "message": self.message, "reason": self.reason,
+        }
 
 
 class TemporalNonverbalEngine:
-    """Enhanced engine for interpreting temporal nonverbal cues and generating
-    appropriate responses.
+    """
+    Temporal classification over buffered feature sequences.
 
-    This class extends the original NonverbalEngine with LSTM-based
-    temporal pattern recognition.
+    With no model loaded, every classify_* method reports `unavailable`. It
+    does not choose a label.
     """
 
     def __init__(
         self,
-        lstm_model_dir="lstm_models",
-        language_map_path="config/language_map.json",
-        sequence_length=10,
-        conversation_persona="default",
-    ):
-        """Initialize the temporal nonverbal communication engine.
-
+        lstm_model_dir: str = "lstm_models",
+        language_map_path: str = "config/language_map.json",
+        sequence_length: int = 10,
+        conversation_persona: str = "default",
+        model_digests: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """
         Args:
-            lstm_model_dir: Directory containing trained LSTM models
-            language_map_path: Path to the language mapping file
-            sequence_length: Length of sequences for temporal analysis
-            conversation_persona: Initial conversation persona
+            model_digests: modality -> expected SHA-256 of its model file.
+                Required alongside the env opt-in before any pickle is loaded.
         """
         self.lstm_model_dir = lstm_model_dir
         self.language_map_path = language_map_path
-        self.sequence_length = sequence_length
+        self.sequence_length = int(sequence_length)
         self.conversation_persona = conversation_persona
+        self.model_digests = dict(model_digests or {})
 
-        # Initialize feature buffers for sequence collection
-        self.gesture_buffer = []
-        self.eye_buffer = []
-        self.emotion_buffer = []
+        self.gesture_buffer: List[Any] = []
+        self.eye_buffer: List[Any] = []
+        self.emotion_buffer: List[Any] = []
 
-        # Load language map and models
-        self._load_language_map()
-        self._load_lstm_models()
-
-        # Flag for learning journey integration
+        self.models: Dict[str, Any] = {"gesture": None, "eye_movement": None,
+                                       "emotion": None}
+        self.labels: Dict[str, List[str]] = dict(DEFAULT_LABELS)
+        self.load_errors: Dict[str, str] = {}
         self.learning_journey = None
 
-        logger.info("TemporalNonverbalEngine initialized successfully")
+        self.language_map = self._load_language_map()
+        self._load_models()
 
-    def set_learning_journey(self, learning_journey):
-        """Inject a LearningJourney instance into the engine."""
+        available = [k for k, v in self.models.items() if v is not None]
+        if not available:
+            logger.error(
+                "TemporalNonverbalEngine has NO models. Every classification "
+                "will report unavailable. It will not guess a gesture."
+            )
+        else:
+            logger.info("TemporalNonverbalEngine ready. Models: %s", available)
+
+    def set_learning_journey(self, learning_journey: Any) -> None:
         self.learning_journey = learning_journey
         logger.info("Learning journey integration enabled")
 
-    def _load_language_map(self):
-        """Load the language mapping for nonverbal cues."""
+    # -- Language map ---------------------------------------------------------
+
+    def _load_language_map(self) -> Dict[str, Dict[str, str]]:
+        """
+        Load the language map. NEVER writes.
+
+        The predecessor wrote a default map to disk from inside the
+        constructor, at a relative path — importing the engine created files.
+        """
         try:
-            with open(self.language_map_path, "r") as f:
-                self.language_map = json.load(f)
-            logger.info("Language map loaded successfully")
+            with open(self.language_map_path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if not isinstance(loaded, dict):
+                raise ValueError(f"expected an object, got {type(loaded).__name__}")
+            logger.info("Language map loaded from %s", self.language_map_path)
+            return loaded
         except FileNotFoundError:
             logger.warning(
-                f"Language map file not found at {self.language_map_path}, creating default map"
+                "Language map not found at %s; using the built-in default. "
+                "Nothing was written to disk.", self.language_map_path,
             )
-            # Default language map if file doesn't exist
-            self.language_map = {
-                "Hand Up": {"intent": "Request attention", "message": "I need help."},
-                "Wave Left": {"intent": "Previous mode", "message": "Go back."},
-                "Wave Right": {"intent": "Next mode", "message": "Move forward."},
-                "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed."},
-                "Looking Up": {"intent": "Thinking", "message": "I'm thinking."},
-                "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy."},
-                "Neutral": {"intent": "Calm", "message": "I'm fine."},
-                "Happy": {"intent": "Joy", "message": "I'm happy."},
-                "Sad": {"intent": "Unhappy", "message": "I'm sad."},
-                "Angry": {"intent": "Upset", "message": "I'm angry."},
-                "Fear": {"intent": "Worried", "message": "I'm scared."},
-                "Surprise": {"intent": "Shocked", "message": "I'm surprised."},
-            }
-            # Save default map to file
-            with open(self.language_map_path, "w") as f:
-                json.dump(self.language_map, f, indent=4)
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            logger.error(
+                "Language map at %s is unusable (%s); using the built-in default.",
+                self.language_map_path, exc,
+            )
+        return dict(DEFAULT_LANGUAGE_MAP)
 
-    def _load_lstm_models(self):
-        """Load the trained LSTM models for temporal pattern recognition."""
-        self.models = {}
-        self.labels = {}
+    def save_language_map(self, path: Optional[str] = None) -> str:
+        """Write the language map. Explicit — never called from __init__."""
+        target = path or self.language_map_path
+        directory = os.path.dirname(os.path.abspath(target))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
+            json.dump(self.language_map, fh, indent=4, ensure_ascii=False)
+        logger.info("Language map written to %s", target)
+        return target
 
-        # Check if LSTM model directory exists
-        if not os.path.exists(self.lstm_model_dir):
-            logger.warning(f"LSTM model directory not found at {self.lstm_model_dir}")
-            self.models["gesture"] = None
-            self.models["eye_movement"] = None
-            self.models["emotion"] = None
+    def update_language_map(self, updated_map: Dict[str, Any], save: bool = False) -> None:
+        """Merge entries. `save` is opt-in."""
+        self.language_map.update(updated_map)
+        if save:
+            self.save_language_map()
+
+    # -- Model loading --------------------------------------------------------
+
+    @staticmethod
+    def _sha256(path: str) -> str:
+        hasher = hashlib.sha256()
+        with open(path, "rb") as fh:
+            while chunk := fh.read(8192):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _load_models(self) -> None:
+        """Load each modality's model, or record why it could not be loaded."""
+        if not os.path.isdir(self.lstm_model_dir):
+            msg = f"model directory not found: {self.lstm_model_dir}"
+            logger.warning(msg)
+            for modality in self.models:
+                self.load_errors[modality] = msg
+            self._load_labels()
             return
 
-        # Load model files based on available formats (.keras or .pkl)
-        # First, try loading TensorFlow models, then fall back to simplified models
-
-        # Gesture Model
-        gesture_model_path = os.path.join(
-            self.lstm_model_dir, "gesture_lstm_model.keras"
-        )
-        gesture_pkl_path = os.path.join(self.lstm_model_dir, "gesture_lstm_model.pkl")
-        gesture_labels_path = os.path.join(self.lstm_model_dir, "gesture_labels.pkl")
-
-        if os.path.exists(gesture_model_path):
-            try:
-                # Try to import TensorFlow only when needed
-                from shim_numpy_tf import shim_setup
-                shim_setup()
-                import tensorflow as tf
-
-                self.models["gesture"] = tf.keras.models.load_model(gesture_model_path)
-                logger.info(
-                    f"Loaded TensorFlow gesture model from {gesture_model_path}"
-                )
-            except (ImportError, Exception) as e:
-                logger.error(f"Failed to load TensorFlow gesture model: {e}")
-                self.models["gesture"] = None
-        elif os.path.exists(gesture_pkl_path):
-            try:
-                with open(gesture_pkl_path, "rb") as f:
-                    self.models["gesture"] = pickle.load(f)
-                logger.info(f"Loaded simplified gesture model from {gesture_pkl_path}")
-            except Exception as e:
-                logger.error(f"Failed to load simplified gesture model: {e}")
-                self.models["gesture"] = None
-        else:
-            logger.warning("Gesture model not found")
-            self.models["gesture"] = None
-
-        # Eye Movement Model
-        eye_model_path = os.path.join(
-            self.lstm_model_dir, "eye_movement_lstm_model.keras"
-        )
-        eye_pkl_path = os.path.join(self.lstm_model_dir, "eye_movement_lstm_model.pkl")
-        eye_labels_path = os.path.join(self.lstm_model_dir, "eye_movement_labels.pkl")
-
-        if os.path.exists(eye_model_path):
-            try:
-                from shim_numpy_tf import shim_setup
-                shim_setup()
-                import tensorflow as tf
-
-                self.models["eye_movement"] = tf.keras.models.load_model(eye_model_path)
-                logger.info(
-                    f"Loaded TensorFlow eye movement model from {eye_model_path}"
-                )
-            except (ImportError, Exception) as e:
-                logger.error(f"Failed to load TensorFlow eye movement model: {e}")
-                self.models["eye_movement"] = None
-        elif os.path.exists(eye_pkl_path):
-            try:
-                with open(eye_pkl_path, "rb") as f:
-                    self.models["eye_movement"] = pickle.load(f)
-                logger.info(f"Loaded simplified eye movement model from {eye_pkl_path}")
-            except Exception as e:
-                logger.error(f"Failed to load simplified eye movement model: {e}")
-                self.models["eye_movement"] = None
-        else:
-            logger.warning("Eye movement model not found")
-            self.models["eye_movement"] = None
-
-        # Emotion Model
-        emotion_model_path = os.path.join(
-            self.lstm_model_dir, "emotion_lstm_model.keras"
-        )
-        emotion_pkl_path = os.path.join(self.lstm_model_dir, "emotion_lstm_model.pkl")
-        emotion_labels_path = os.path.join(self.lstm_model_dir, "emotion_labels.pkl")
-
-        if os.path.exists(emotion_model_path):
-            try:
-                from shim_numpy_tf import shim_setup
-                shim_setup()
-                import tensorflow as tf
-
-                self.models["emotion"] = tf.keras.models.load_model(emotion_model_path)
-                logger.info(
-                    f"Loaded TensorFlow emotion model from {emotion_model_path}"
-                )
-            except (ImportError, Exception) as e:
-                logger.error(f"Failed to load TensorFlow emotion model: {e}")
-                self.models["emotion"] = None
-        elif os.path.exists(emotion_pkl_path):
-            try:
-                with open(emotion_pkl_path, "rb") as f:
-                    self.models["emotion"] = pickle.load(f)
-                logger.info(f"Loaded simplified emotion model from {emotion_pkl_path}")
-            except Exception as e:
-                logger.error(f"Failed to load simplified emotion model: {e}")
-                self.models["emotion"] = None
-        else:
-            logger.warning("Emotion model not found")
-            self.models["emotion"] = None
-
-        # Load label files
-        if os.path.exists(gesture_labels_path):
-            try:
-                with open(gesture_labels_path, "rb") as f:
-                    self.labels["gesture"] = pickle.load(f)
-                logger.info("Gesture labels loaded successfully")
-            except Exception as e:
-                logger.error(f"Failed to load gesture labels: {e}")
-                self.labels["gesture"] = [
-                    "Hand Up",
-                    "Wave Left",
-                    "Wave Right",
-                    "Head Jerk",
-                ]
-        else:
-            logger.warning("Gesture labels not found, using defaults")
-            self.labels["gesture"] = ["Hand Up", "Wave Left", "Wave Right", "Head Jerk"]
-
-        if os.path.exists(eye_labels_path):
-            try:
-                with open(eye_labels_path, "rb") as f:
-                    self.labels["eye_movement"] = pickle.load(f)
-                logger.info("Eye movement labels loaded successfully")
-            except Exception as e:
-                logger.error(f"Failed to load eye movement labels: {e}")
-                self.labels["eye_movement"] = ["Looking Up", "Rapid Blinking"]
-        else:
-            logger.warning("Eye movement labels not found, using defaults")
-            self.labels["eye_movement"] = ["Looking Up", "Rapid Blinking"]
-
-        if os.path.exists(emotion_labels_path):
-            try:
-                with open(emotion_labels_path, "rb") as f:
-                    self.labels["emotion"] = pickle.load(f)
-                logger.info("Emotion labels loaded successfully")
-            except Exception as e:
-                logger.error(f"Failed to load emotion labels: {e}")
-                self.labels["emotion"] = [
-                    "Neutral",
-                    "Happy",
-                    "Sad",
-                    "Angry",
-                    "Fear",
-                    "Surprise",
-                ]
-        else:
-            logger.warning("Emotion labels not found, using defaults")
-            self.labels["emotion"] = [
-                "Neutral",
-                "Happy",
-                "Sad",
-                "Angry",
-                "Fear",
-                "Surprise",
-            ]
-
-    def update_language_map(self, updated_map):
-        """Update the language map with new mappings.
-
-        Args:
-            updated_map: Dictionary with updated language mappings
-        """
-        self.language_map.update(updated_map)
-        with open(self.language_map_path, "w") as f:
-            json.dump(self.language_map, f, indent=4)
-        logger.info("Language map updated and saved")
-
-    def add_gesture_features(self, features):
-        """Add gesture features to the buffer for temporal analysis.
-
-        Args:
-            features: Array of gesture features [wrist_x, wrist_y, elbow_angle, shoulder_angle]
-
-        Returns:
-            True if buffer is full and ready for classification, False otherwise
-        """
-        self.gesture_buffer.append(features)
-        if len(self.gesture_buffer) > self.sequence_length:
-            self.gesture_buffer.pop(0)  # Remove oldest entry
-
-        return len(self.gesture_buffer) >= self.sequence_length
-
-    def add_eye_features(self, features):
-        """Add eye movement features to the buffer for temporal analysis.
-
-        Args:
-            features: Array of eye features [gaze_x, gaze_y, blink_rate]
-
-        Returns:
-            True if buffer is full and ready for classification, False otherwise
-        """
-        self.eye_buffer.append(features)
-        if len(self.eye_buffer) > self.sequence_length:
-            self.eye_buffer.pop(0)  # Remove oldest entry
-
-        return len(self.eye_buffer) >= self.sequence_length
-
-    def add_emotion_features(self, features):
-        """Add emotion features to the buffer for temporal analysis.
-
-        Args:
-            features: Array of emotion features [facial_tension, mouth_curve, eye_openness, eyebrow_position, perspiration]
-
-        Returns:
-            True if buffer is full and ready for classification, False otherwise
-        """
-        self.emotion_buffer.append(features)
-        if len(self.emotion_buffer) > self.sequence_length:
-            self.emotion_buffer.pop(0)  # Remove oldest entry
-
-        return len(self.emotion_buffer) >= self.sequence_length
-
-    def classify_gesture_sequence(self):
-        """Classify a gesture sequence using the LSTM model.
-
-        Returns:
-            Dictionary with expression, intent, confidence, and message
-        """
-        if (
-            self.models["gesture"] is None
-            or len(self.gesture_buffer) < self.sequence_length
+        for modality, stem in (
+            ("gesture", "gesture_lstm_model"),
+            ("eye_movement", "eye_movement_lstm_model"),
+            ("emotion", "emotion_lstm_model"),
         ):
-            return {
-                "expression": "Unknown",
-                "intent": "Unknown",
-                "confidence": 0.0,
-                "message": "I don't understand.",
-            }
+            try:
+                self.models[modality] = self._load_one(modality, stem)
+            except ModelLoadError as exc:
+                self.models[modality] = None
+                self.load_errors[modality] = str(exc)
+                logger.error("%s model unavailable: %s", modality, exc)
 
-        # Convert buffer to numpy array and reshape for LSTM
-        sequence = np.array(self.gesture_buffer)
+        self._load_labels()
 
-        # Check if model is a TensorFlow model or a simplified model
-        if hasattr(self.models["gesture"], "predict"):
-            # TensorFlow model
-            sequence = np.expand_dims(sequence, axis=0)  # Add batch dimension
-            prediction = self.models["gesture"].predict(sequence, verbose=0)
-            gesture_idx = np.argmax(prediction, axis=1)[0]
-            confidence = prediction[0][gesture_idx]
-        else:
-            # Simplified model
-            gesture_idx = random.randint(0, len(self.labels["gesture"]) - 1)
-            confidence = random.uniform(0.6, 0.95)
+    def _load_one(self, modality: str, stem: str) -> Optional[Any]:
+        keras_path = os.path.join(self.lstm_model_dir, f"{stem}.keras")
+        pickle_path = os.path.join(self.lstm_model_dir, f"{stem}.pkl")
 
-        # Get gesture label
-        if gesture_idx < len(self.labels["gesture"]):
-            gesture = self.labels["gesture"][gesture_idx]
-        else:
-            gesture = "Unknown"
+        if os.path.exists(keras_path):
+            try:
+                import tensorflow as tf
+            except ImportError as exc:
+                raise ModelLoadError(f"tensorflow not installed: {exc}") from exc
+            try:
+                model = tf.keras.models.load_model(keras_path)
+            except Exception as exc:
+                raise ModelLoadError(f"failed to load {keras_path}: {exc}") from exc
+            return self._require_predict(model, keras_path)
 
-        # Get intent and message from language map
-        expression_data = self.language_map.get(
-            gesture, {"intent": "Unknown", "message": "I don't understand."}
-        )
+        if os.path.exists(pickle_path):
+            if os.getenv(ALLOW_PICKLE_ENV, "0") != "1":
+                raise ModelLoadError(
+                    f"{pickle_path} is a pickle. pickle.load executes arbitrary "
+                    f"code during deserialization; set {ALLOW_PICKLE_ENV}=1 and "
+                    "supply a model_digests entry to permit it."
+                )
+            expected = self.model_digests.get(modality)
+            if not expected:
+                raise ModelLoadError(
+                    f"{pickle_path}: no expected SHA-256 in model_digests[{modality!r}]. "
+                    "Refusing to unpickle an unverified file."
+                )
+            actual = self._sha256(pickle_path)
+            if actual != expected:
+                raise ModelLoadError(
+                    f"{pickle_path}: digest mismatch. expected {expected[:16]}…, "
+                    f"got {actual[:16]}…"
+                )
+            import pickle  # imported only on the verified path
+            with open(pickle_path, "rb") as fh:
+                model = pickle.load(fh)
+            return self._require_predict(model, pickle_path)
 
-        return {
-            "expression": gesture,
-            "intent": expression_data["intent"],
-            "confidence": float(confidence),
-            "message": expression_data["message"],
-        }
+        raise ModelLoadError(f"no model file for {modality} in {self.lstm_model_dir}")
 
-    def classify_eye_movement_sequence(self):
-        """Classify an eye movement sequence using the LSTM model.
-
-        Returns:
-            Dictionary with expression, intent, confidence, and message
+    @staticmethod
+    def _require_predict(model: Any, path: str) -> Any:
         """
-        if (
-            self.models["eye_movement"] is None
-            or len(self.eye_buffer) < self.sequence_length
+        A model without `.predict()` is not a model.
+
+        The predecessor fell through to `random.randint` here. Rejecting the
+        object is the entire fix: there is no second branch to fall into.
+        """
+        if not hasattr(model, "predict"):
+            raise ModelLoadError(
+                f"{path}: loaded object of type {type(model).__name__} has no "
+                "predict(). The previous code substituted random.randint here "
+                "and spoke a randomly chosen phrase for the user."
+            )
+        return model
+
+    def _load_labels(self) -> None:
+        """
+        Load labels from JSON. Never from a pickle.
+
+        The predecessor unpickled three label files and fell back to hardcoded
+        lists on failure — so a corrupt file silently changed what every model
+        output index meant.
+        """
+        for modality, stem in (
+            ("gesture", "gesture_labels"),
+            ("eye_movement", "eye_movement_labels"),
+            ("emotion", "emotion_labels"),
         ):
-            return {
-                "expression": "Unknown",
-                "intent": "Unknown",
-                "confidence": 0.0,
-                "message": "I don't understand.",
-            }
+            path = os.path.join(self.lstm_model_dir, f"{stem}.json")
+            if not os.path.exists(path):
+                logger.info("No %s at %s; using defaults %s",
+                            stem, path, DEFAULT_LABELS[modality])
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    labels = json.load(fh)
+                if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
+                    raise ValueError("expected a list of strings")
+                self.labels[modality] = labels
+                logger.info("Loaded %d %s labels", len(labels), modality)
+            except (json.JSONDecodeError, ValueError, OSError) as exc:
+                logger.error(
+                    "%s unusable (%s). Keeping defaults — a wrong label list "
+                    "silently changes what every output index means.", path, exc,
+                )
 
-        # Convert buffer to numpy array and reshape for LSTM
-        sequence = np.array(self.eye_buffer)
+    # -- Buffers --------------------------------------------------------------
 
-        # Check if model is a TensorFlow model or a simplified model
-        if hasattr(self.models["eye_movement"], "predict"):
-            # TensorFlow model
-            sequence = np.expand_dims(sequence, axis=0)  # Add batch dimension
-            prediction = self.models["eye_movement"].predict(sequence, verbose=0)
-            eye_idx = np.argmax(prediction, axis=1)[0]
-            confidence = prediction[0][eye_idx]
-        else:
-            # Simplified model
-            eye_idx = random.randint(0, len(self.labels["eye_movement"]) - 1)
-            confidence = random.uniform(0.6, 0.95)
+    def _add(self, buffer: List[Any], features: Any) -> bool:
+        buffer.append(features)
+        if len(buffer) > self.sequence_length:
+            buffer.pop(0)
+        return len(buffer) >= self.sequence_length
 
-        # Get eye movement label
-        if eye_idx < len(self.labels["eye_movement"]):
-            eye_expression = self.labels["eye_movement"][eye_idx]
-        else:
-            eye_expression = "Unknown"
+    def add_gesture_features(self, features: Any) -> bool:
+        return self._add(self.gesture_buffer, features)
 
-        # Get intent and message from language map
-        expression_data = self.language_map.get(
-            eye_expression, {"intent": "Unknown", "message": "I don't understand."}
-        )
+    def add_eye_features(self, features: Any) -> bool:
+        return self._add(self.eye_buffer, features)
 
-        return {
-            "expression": eye_expression,
-            "intent": expression_data["intent"],
-            "confidence": float(confidence),
-            "message": expression_data["message"],
-        }
+    def add_emotion_features(self, features: Any) -> bool:
+        return self._add(self.emotion_buffer, features)
 
-    def classify_emotion_sequence(self):
-        """Classify an emotion sequence using the LSTM model.
-
-        Returns:
-            Dictionary with expression, intent, confidence, and message
-        """
-        if (
-            self.models["emotion"] is None
-            or len(self.emotion_buffer) < self.sequence_length
-        ):
-            return {
-                "expression": "Unknown",
-                "intent": "Unknown",
-                "confidence": 0.0,
-                "message": "I don't understand.",
-            }
-
-        # Convert buffer to numpy array and reshape for LSTM
-        sequence = np.array(self.emotion_buffer)
-
-        # Check if model is a TensorFlow model or a simplified model
-        if hasattr(self.models["emotion"], "predict"):
-            # TensorFlow model
-            sequence = np.expand_dims(sequence, axis=0)  # Add batch dimension
-            prediction = self.models["emotion"].predict(sequence, verbose=0)
-            emotion_idx = np.argmax(prediction, axis=1)[0]
-            confidence = prediction[0][emotion_idx]
-        else:
-            # Simplified model
-            emotion_idx = random.randint(0, len(self.labels["emotion"]) - 1)
-            confidence = random.uniform(0.6, 0.95)
-
-        # Get emotion label
-        if emotion_idx < len(self.labels["emotion"]):
-            emotion = self.labels["emotion"][emotion_idx]
-        else:
-            emotion = "Unknown"
-
-        # Get intent and message from language map
-        expression_data = self.language_map.get(
-            emotion, {"intent": "Unknown", "message": "I don't understand."}
-        )
-
-        return {
-            "expression": emotion,
-            "intent": expression_data["intent"],
-            "confidence": float(confidence),
-            "message": expression_data["message"],
-        }
-
-    def process_multimodal_sequence(
-        self, gesture_features=None, eye_features=None, emotion_features=None
-    ):
-        """Process multimodal sequence data from gesture, eye, and emotion
-        features.
-
-        Args:
-            gesture_features: Optional gesture feature array for current frame
-            eye_features: Optional eye feature array for current frame
-            emotion_features: Optional emotion feature array for current frame
-
-        Returns:
-            Dictionary with combined analysis and response
-        """
-        results = []
-
-        # Add features to buffers if provided
-        gesture_ready = False
-        eye_ready = False
-        emotion_ready = False
-
-        if gesture_features is not None:
-            gesture_ready = self.add_gesture_features(gesture_features)
-
-        if eye_features is not None:
-            eye_ready = self.add_eye_features(eye_features)
-
-        if emotion_features is not None:
-            emotion_ready = self.add_emotion_features(emotion_features)
-
-        # Classify sequences if buffers are full
-        if gesture_ready:
-            results.append(("gesture", self.classify_gesture_sequence()))
-
-        if eye_ready:
-            results.append(("eye", self.classify_eye_movement_sequence()))
-
-        if emotion_ready:
-            results.append(("emotion", self.classify_emotion_sequence()))
-
-        # If no results, return empty response
-        if not results:
-            return self._get_default_response()
-
-        # Select primary result based on confidence
-        primary_type, primary_result = self._select_primary_result(results)
-
-        # Insert Learning Hook (BROCKSTON learns what it just saw)
-        if hasattr(self, "learning_journey") and self.learning_journey:
-            self.learning_journey.log_interaction(
-                modality=primary_type,
-                successful=True,
-                metadata={
-                    "expression": primary_result["expression"],
-                    "intent": primary_result["intent"],
-                    "confidence": primary_result["confidence"],
-                },
-            )
-            self.learning_journey.update_skill_level(
-                f"{primary_type}_recognition", 0.05
-            )
-
-        # Enhance the response using the conversation engine
-        enhanced_response = self._enhance_response(primary_result, primary_type)
-
-        return {
-            "primary_type": primary_type,
-            "primary_result": primary_result,
-            "all_results": dict(results),
-            "enhanced_response": enhanced_response,
-        }
-
-    def _get_default_response(self):
-        """Return a default response when no sequence data is available.
-
-        Returns:
-            Dictionary with default response
-        """
-        return {
-            "primary_type": "none",
-            "primary_result": {
-                "expression": "Unknown",
-                "intent": "Unknown",
-                "confidence": 0.0,
-                "message": "Awaiting nonverbal input...",
-            },
-            "all_results": {},
-            "enhanced_response": "I'm waiting for a clear nonverbal cue.",
-        }
-
-    def _select_primary_result(self, results):
-        """Select the primary result based on confidence scores.
-
-        Args:
-            results: List of (type, result) tuples
-
-        Returns:
-            Tuple of (primary_type, primary_result)
-        """
-        # Sort by confidence
-        sorted_results = sorted(results, key=lambda x: x[1]["confidence"], reverse=True)
-        return sorted_results[0]
-
-    def _enhance_response(self, result, type_name):
-        """Enhance the response using conversational context.
-
-        Args:
-            result: Classification result dictionary
-            type_name: Type of classification ('gesture', 'eye', 'emotion')
-
-        Returns:
-            Enhanced response string
-        """
-        # If we have a conversation engine, use it for enhanced responses
-        try:
-            from conversation_engine import get_conversation_engine
-
-            conversation_engine = get_conversation_engine()
-
-            context = {
-                "modality": type_name,
-                "expression": result["expression"],
-                "intent": result["intent"],
-                "confidence": result["confidence"],
-                "base_message": result["message"],
-            }
-
-            enhanced = conversation_engine.generate_response(
-                context=context, persona=self.conversation_persona
-            )
-
-            if enhanced:
-                return enhanced
-        except (ImportError, Exception) as e:
-            logger.warning(f"Error enhancing response with conversation engine: {e}")
-
-        # Fallback to basic enhancement if conversation engine fails
-        prefix = ""
-        if type_name == "gesture":
-            prefix = "I see your gesture. "
-        elif type_name == "eye":
-            prefix = "I notice your eye movement. "
-        elif type_name == "emotion":
-            prefix = "I sense your emotion. "
-
-        return f"{prefix}{result['message']}"
-
-    def clear_buffers(self):
-        """Clear all sequence buffers."""
-        self.gesture_buffer = []
-        self.eye_buffer = []
-        self.emotion_buffer = []
+    def clear_buffers(self) -> bool:
+        self.gesture_buffer.clear()
+        self.eye_buffer.clear()
+        self.emotion_buffer.clear()
         logger.info("All sequence buffers cleared")
         return True
 
-    def set_conversation_persona(self, persona):
-        """Set the conversation persona for response generation.
+    # -- Classification -------------------------------------------------------
 
-        Args:
-            persona: Persona identifier
-
-        Returns:
-            True if successful, False otherwise
+    def _classify(self, modality: str, buffer: List[Any]) -> ClassificationResult:
         """
-        valid_personas = [
-            "default",
-            "academic",
-            "clinical",
-            "supportive",
-            "child-friendly",
-        ]
-        if persona in valid_personas:
-            self.conversation_persona = persona
-            logger.info(f"Conversation persona set to {persona}")
-            return True
-        else:
-            logger.warning(f"Invalid persona: {persona}")
-            return False
+        Classify one modality. Never guesses.
 
-    def get_academic_response(self, topic, depth="advanced"):
-        """Generate a PhD-level academic response on a given topic.
-
-        Args:
-            topic: Topic to discuss
-            depth: Depth of response ('basic', 'intermediate', 'advanced')
-
-        Returns:
-            Academic response string
+        The only paths out of here are: a real model prediction, `not_ready`,
+        or `unavailable` with a reason.
         """
+        model = self.models.get(modality)
+        if model is None:
+            return ClassificationResult(
+                modality=modality, status="unavailable",
+                reason=self.load_errors.get(modality, "no model loaded"),
+            )
+        if len(buffer) < self.sequence_length:
+            return ClassificationResult(
+                modality=modality, status="not_ready",
+                reason=f"{len(buffer)}/{self.sequence_length} frames buffered",
+            )
+
+        try:
+            sequence = np.expand_dims(np.array(buffer), axis=0)
+            prediction = model.predict(sequence, verbose=0)
+            index = int(np.argmax(prediction, axis=1)[0])
+            confidence = float(prediction[0][index])
+        except Exception as exc:
+            logger.error("%s prediction failed: %s", modality, exc, exc_info=True)
+            return ClassificationResult(
+                modality=modality, status="unavailable",
+                reason=f"prediction failed: {exc}",
+            )
+
+        labels = self.labels.get(modality, [])
+        if not (0 <= index < len(labels)):
+            # An index outside the label list means the model and the labels
+            # disagree. The predecessor returned the string "Unknown" and a
+            # real confidence, which reads as a confident reading of nothing.
+            return ClassificationResult(
+                modality=modality, status="unavailable",
+                reason=(
+                    f"model returned index {index} but only {len(labels)} labels "
+                    "are configured — model and labels are out of sync"
+                ),
+            )
+
+        expression = labels[index]
+        entry = self.language_map.get(expression)
+        if not isinstance(entry, dict):
+            return ClassificationResult(
+                modality=modality, status="unavailable",
+                expression=expression, confidence=confidence,
+                reason=f"no language-map entry for {expression!r}",
+            )
+
+        # .get, not [] — a hand-edited map missing a key took the engine down.
+        return ClassificationResult(
+            modality=modality, status="ok",
+            expression=expression,
+            intent=entry.get("intent"),
+            message=entry.get("message"),
+            confidence=confidence,
+        )
+
+    def classify_gesture_sequence(self) -> Dict[str, Any]:
+        return self._classify("gesture", self.gesture_buffer).to_dict()
+
+    def classify_eye_movement_sequence(self) -> Dict[str, Any]:
+        return self._classify("eye_movement", self.eye_buffer).to_dict()
+
+    def classify_emotion_sequence(self) -> Dict[str, Any]:
+        return self._classify("emotion", self.emotion_buffer).to_dict()
+
+    # -- Multimodal -----------------------------------------------------------
+
+    def process_multimodal_sequence(
+        self,
+        gesture_features: Any = None,
+        eye_features: Any = None,
+        emotion_features: Any = None,
+    ) -> Dict[str, Any]:
+        """Fold new frames in and classify whichever buffers are ready."""
+        ready: List[Tuple[str, ClassificationResult]] = []
+
+        if gesture_features is not None and self.add_gesture_features(gesture_features):
+            ready.append(("gesture", self._classify("gesture", self.gesture_buffer)))
+        if eye_features is not None and self.add_eye_features(eye_features):
+            ready.append(("eye", self._classify("eye_movement", self.eye_buffer)))
+        if emotion_features is not None and self.add_emotion_features(emotion_features):
+            ready.append(("emotion", self._classify("emotion", self.emotion_buffer)))
+
+        usable = [(name, r) for name, r in ready if r.usable and r.confidence is not None]
+        if not usable:
+            return {
+                "primary_type": None,
+                "primary_result": dict(UNAVAILABLE_RESULT),
+                "all_results": {name: r.to_dict() for name, r in ready},
+                "enhanced_response": None,
+                "status": "no_usable_reading",
+                "note": (
+                    "No modality produced a reading. This is NOT a neutral or "
+                    "calm state — nothing was recognized."
+                ),
+            }
+
+        primary_type, primary = max(usable, key=lambda kv: kv[1].confidence or 0.0)
+
+        # The predecessor logged successful=True for every interaction, with
+        # nothing having confirmed success. Outcome is unknown here.
+        if self.learning_journey is not None:
+            try:
+                self.learning_journey.log_interaction(
+                    modality=primary_type,
+                    successful=None,
+                    metadata={
+                        "expression": primary.expression,
+                        "intent": primary.intent,
+                        "confidence": primary.confidence,
+                        "outcome_confirmed": False,
+                    },
+                )
+            except Exception as exc:
+                logger.error("Learning journey logging failed: %s", exc)
+
+        return {
+            "primary_type": primary_type,
+            "primary_result": primary.to_dict(),
+            "all_results": {name: r.to_dict() for name, r in ready},
+            "enhanced_response": self._enhance_response(primary, primary_type),
+            "status": "ok",
+        }
+
+    def _enhance_response(
+        self, result: ClassificationResult, type_name: str
+    ) -> Optional[str]:
+        """Phrase the reading. Returns None when there is nothing to phrase."""
+        if not result.usable or not result.message:
+            return None
         try:
             from conversation_engine import get_conversation_engine
 
-            conversation_engine = get_conversation_engine()
-
-            context = {"topic": topic, "depth": depth, "response_type": "academic"}
-
-            response = conversation_engine.generate_response(
-                context=context, persona="academic"
+            enhanced = get_conversation_engine().generate_response(
+                context={
+                    "modality": type_name,
+                    "expression": result.expression,
+                    "intent": result.intent,
+                    "confidence": result.confidence,
+                    "base_message": result.message,
+                },
+                persona=self.conversation_persona,
             )
+            if enhanced:
+                return enhanced
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.error("Conversation engine failed: %s", exc)
 
-            if response:
-                return response
-        except (ImportError, Exception) as e:
-            logger.warning(f"Error generating academic response: {e}")
+        prefix = {"gesture": "I see your gesture. ",
+                  "eye": "I notice your eye movement. ",
+                  "emotion": "I sense your emotion. "}.get(type_name, "")
+        return f"{prefix}{result.message}"
 
-        # Fallback response
-        depth_text = {
-            "basic": "basic overview",
-            "intermediate": "intermediate analysis",
-            "advanced": "advanced analysis",
-        }.get(depth, "analysis")
+    def set_conversation_persona(self, persona: str) -> bool:
+        valid = {"default", "academic", "clinical", "supportive", "child-friendly"}
+        if persona not in valid:
+            logger.warning("Invalid persona %r; valid: %s", persona, sorted(valid))
+            return False
+        self.conversation_persona = persona
+        return True
 
-        return f"Here's a {depth_text} of {topic}: (Academic content would be generated here based on the latest research)"
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "models_loaded": {k: v is not None for k, v in self.models.items()},
+            "load_errors": dict(self.load_errors),
+            "labels": {k: len(v) for k, v in self.labels.items()},
+            "buffer_fill": {
+                "gesture": len(self.gesture_buffer),
+                "eye": len(self.eye_buffer),
+                "emotion": len(self.emotion_buffer),
+            },
+            "sequence_length": self.sequence_length,
+            "generates_random_labels": False,
+        }
 
 
-# Create singleton instance
-_temporal_engine_instance = None
+_temporal_engine_instance: Optional[TemporalNonverbalEngine] = None
 
 
-def get_temporal_engine():
-    """Get the singleton temporal engine instance."""
+def get_temporal_engine(**kwargs: Any) -> TemporalNonverbalEngine:
     global _temporal_engine_instance
     if _temporal_engine_instance is None:
-        _temporal_engine_instance = TemporalNonverbalEngine()
+        _temporal_engine_instance = TemporalNonverbalEngine(**kwargs)
     return _temporal_engine_instance
 
+
+__all__ = [
+    "TemporalNonverbalEngine", "ClassificationResult", "ModelLoadError",
+    "get_temporal_engine", "DEFAULT_LANGUAGE_MAP", "DEFAULT_LABELS",
+    "ALLOW_PICKLE_ENV",
+]
 
 # ==============================================================================
 # © 2025 Everett Nathaniel Christman
 # The Christman AI Project — Luma Cognify AI
-# All rights reserved. Unauthorized use, replication, or derivative training
-# of this material is prohibited.
-#
 # Core Directive: "How can I help you love yourself more?"
-# Autonomy & Alignment Protocol v3.0
 # ==============================================================================

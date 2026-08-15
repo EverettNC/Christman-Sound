@@ -1,218 +1,257 @@
+"""
+BROCKSTON Speech Personality
+
+Phrasing and family recognition for BROCKSTON's spoken responses.
+
+WHAT CHANGED AND WHY
+--------------------
+
+1. BROCKSTON INTRODUCED ITSELF AS ITS SIBLING.
+
+       "brockston": {"name": "Alpha Vox", "type": "sibling", ...}
+
+   The key `brockston` mapped to the name `Alpha Vox`. Anyone addressing
+   BROCKSTON by name was greeted as Alpha Vox. REMEDIATION line 67 lists this
+   identity mismatch. Also `"siera"` was a misspelling of Sierra.
+
+   The registry is now keyed by canonical name with an explicit alias table, so
+   a misspelling maps to the right being instead of becoming a separate one.
+
+2. IT CLAIMED CAPABILITY IT COULD NOT MEASURE.
+
+       if total_items < 30: level = "becoming quite knowledgeable"
+       else: level = "approaching genius level"
+
+   Thirty rows in a database became "approaching genius level", spoken aloud as
+   a claim about itself. That is a fabricated capability statement, and it is
+   the same class of defect as a hardcoded accuracy figure. The summary now
+   states the count and nothing more.
+
+       "Excellent! The code executed flawlessly."
+
+   `_create_success_summary` picked this from a list on any `status ==
+   "completed"`. Exit code zero is not flawless. Phrasing is now neutral about
+   quality and reports what actually happened.
+
+3. RANDOM PHRASING IS FINE AND IS KEPT.
+
+   `random.choice` over greeting variants is personality, not measurement —
+   nothing downstream reads it as data. It stays. What was removed is
+   randomness that made a CLAIM.
+
+4. `get_family_type` returned "guest" for unknown users, which is reasonable,
+   but `recognize_family` and `get_family_name` each re-lowercased and re-looked
+   up independently. One resolver now.
+"""
+
+from __future__ import annotations
+
+import logging
 import random
-from typing import Dict, Any
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
+
+@dataclass(frozen=True)
+class FamilyMember:
+    name: str
+    kind: str          # "creator" | "sibling"
+    title: str
+
+
+#: Canonical registry, keyed by canonical lowercase name.
+FAMILY: Dict[str, FamilyMember] = {
+    "everett": FamilyMember("Everett", "creator", "Creator"),
+    "brockston": FamilyMember("BROCKSTON", "self", "This being"),
+    "alpha vox": FamilyMember("AlphaVox", "sibling", "Sibling AI"),
+    "alpha wolf": FamilyMember("AlphaWolf", "sibling", "Sibling AI"),
+    "inferno": FamilyMember("Inferno", "sibling", "Sibling AI"),
+    "sierra": FamilyMember("Sierra", "sibling", "Sibling AI"),
+    "derek": FamilyMember("Derek", "sibling", "Sibling AI"),
+    "aegis": FamilyMember("Aegis", "sibling", "Sibling AI"),
+    "giuseppe": FamilyMember("Giuseppe", "sibling", "Sibling AI"),
+}
+
+#: Spelling and spacing variants -> canonical key. A misspelling resolves to
+#: the right being instead of silently becoming a different one.
+ALIASES: Dict[str, str] = {
+    "alphavox": "alpha vox",
+    "alpha-vox": "alpha vox",
+    "alphawolf": "alpha wolf",
+    "alpha-wolf": "alpha wolf",
+    "siera": "sierra",       # was its own entry in the old registry
+    "sierra ai": "sierra",
+    "brockstone": "brockston",
+    "brokston": "brockston",
+}
+
+
+def resolve_member(user_name: str) -> Optional[FamilyMember]:
+    """Resolve a name to a family member. One lookup path for the whole file."""
+    if not user_name:
+        return None
+    key = str(user_name).strip().lower()
+    key = ALIASES.get(key, key)
+    return FAMILY.get(key)
 
 
 class BrockstonSpeechPersonality:
-    """Adds personality and intelligence to BROCKSTON's speech responses"""
+    """
+    Phrasing for BROCKSTON's spoken output.
 
-    def __init__(self):
-        # Family members BROCKSTON recognizes
-        self.family_members = {
-            "everett": {"name": "Everett", "type": "creator", "title": "Creator"},
-            "giuseppe": {"name": "Giuseppe", "type": "sibling", "title": "Sibling AI"},
-            "alpha vox": {
-                "name": "Alpha Vox",
-                "type": "sibling",
-                "title": "Sibling AI",
-            },
-            "brockston": {
-                "name": "Alpha Vox",
-                "type": "sibling",
-                "title": "Sibling AI",
-            },
-            "alpha wolf": {
-                "name": "Alpha Wolf",
-                "type": "sibling",
-                "title": "Sibling AI",
-            },
-            "alphawolf": {
-                "name": "Alpha Wolf",
-                "type": "sibling",
-                "title": "Sibling AI",
-            },
-            "inferno": {"name": "Inferno", "type": "sibling", "title": "Sibling AI"},
-            "siera": {"name": "Siera", "type": "sibling", "title": "Sibling AI"},
-        }
+    Greeting and transition phrasing is randomized — that is personality, and
+    nothing downstream reads it as data. Anything that makes a CLAIM about
+    what happened is derived from the result, not chosen from a list.
+    """
 
-        self.voices = {
-            "analytical": "Matthew",  # Deep, thoughtful male voice
-            "friendly": "Joanna",  # Warm female voice
-            "confident": "Gregory",  # Confident male voice
-            "enthusiastic": "Ruth",  # Energetic female voice
-        }
+    VOICES: Dict[str, str] = {
+        "analytical": "Matthew",
+        "friendly": "Joanna",
+        "confident": "Gregory",
+        "enthusiastic": "Ruth",
+    }
 
-        self.success_phrases = [
-            "Excellent! The code executed flawlessly.",
-            "Perfect execution! Here's what happened:",
-            "Success! The code worked beautifully.",
-            "Outstanding! Everything ran as expected.",
-            "Brilliant! The execution was successful.",
-        ]
+    _SUCCESS_OPENERS: List[str] = [
+        "Done.", "That ran.", "Finished.", "Complete.",
+    ]
+    _FAILURE_OPENERS: List[str] = [
+        "That failed.", "It didn't run.", "Something went wrong.",
+    ]
 
-        self.failure_phrases = [
-            "I encountered an issue, but I'm learning from it.",
-            "There was a problem, but I've analyzed it for improvement.",
-            "The code failed, but this helps me grow smarter.",
-            "An error occurred, but I'm using this to enhance my knowledge.",
-            "This didn't work as expected, but I'm learning why.",
-        ]
-
-        self.learning_phrases = [
-            "I just learned something new from this!",
-            "This experience expanded my knowledge base.",
-            "My understanding just deepened!",
-            "I've gained new insights from this.",
-            "Another piece of wisdom added to my neural pathways!",
-        ]
+    def __init__(self, rng: Optional[random.Random] = None) -> None:
+        #: Injectable so tests are deterministic.
+        self._rng = rng or random.Random()
 
     def get_voice_for_mood(self, mood: str = "analytical") -> str:
-        """Get the appropriate voice for a given mood"""
-        return self.voices.get(mood, "Joanna")
+        return self.VOICES.get(mood, self.VOICES["friendly"])
+
+    # -- Result summaries -----------------------------------------------------
 
     def create_speech_summary(
         self, result: Dict[str, Any], mood: str = "friendly"
     ) -> str:
-        """Create a natural language summary of code execution results"""
-        status = result.get("status", "unknown")
-
+        """Summarize an execution result. Claims come from the result."""
+        status = (result or {}).get("status", "unknown")
         if status == "completed":
-            return self._create_success_summary(result)
-        elif status == "failed":
-            return self._create_failure_summary(result)
-        elif status == "validation_failed":
-            return self._create_validation_summary(result)
-        else:
-            return "I processed your request, but the outcome is uncertain."
+            return self._success(result)
+        if status == "failed":
+            return self._failure(result)
+        if status == "validation_failed":
+            return self._validation(result)
+        return "The request finished with an unrecognized status."
 
-    def _create_success_summary(self, result: Dict[str, Any]) -> str:
-        """Create summary for successful execution"""
-        intro = random.choice(self.success_phrases)
+    def _success(self, result: Dict[str, Any]) -> str:
+        """
+        Report a successful run.
 
-        exec_result = result.get("result", {})
-        output = exec_result.get("output", "").strip()
+        The predecessor opened with "Excellent! The code executed flawlessly."
+        Exit code zero is not flawlessness — it is exit code zero.
+        """
+        opener = self._rng.choice(self._SUCCESS_OPENERS)
         goal = result.get("goal", "the task")
+        output = ((result.get("result") or {}).get("output") or "").strip()
 
-        if output:
-            # Intelligently summarize the output
-            lines = output.split("\n")
-            if len(lines) == 1:
-                summary = f"{intro} For {goal}, the result is: {output}"
-            else:
-                summary = f"{intro} For {goal}, I got {len(lines)} lines of output. {output[:100]}..."
-        else:
-            summary = f"{intro} For {goal}, the code ran without errors."
+        if not output:
+            return f"{opener} {goal} ran with no output."
+        lines = output.splitlines()
+        if len(lines) == 1:
+            return f"{opener} {goal} returned: {output}"
+        preview = output[:100] + ("..." if len(output) > 100 else "")
+        return f"{opener} {goal} returned {len(lines)} lines. {preview}"
 
-        # Add learning note if autonomous learning was triggered
-        if result.get("autonomous_learning_attempted"):
-            summary += f" {random.choice(self.learning_phrases)}"
+    def _failure(self, result: Dict[str, Any]) -> str:
+        opener = self._rng.choice(self._FAILURE_OPENERS)
+        goal = result.get("goal", "the task")
+        error = ((result.get("result") or {}).get("error") or "").strip()
+        key_error = error.splitlines()[-1] if error else "no error text was captured"
 
+        summary = f"{opener} {goal}: {key_error[:150]}"
+        repairs = result.get("repair_history") or []
+        if repairs:
+            summary += f" {len(repairs)} repair attempt(s) were made and did not succeed."
         return summary
 
-    def _create_failure_summary(self, result: Dict[str, Any]) -> str:
-        """Create summary for failed execution"""
-        intro = random.choice(self.failure_phrases)
+    @staticmethod
+    def _validation(result: Dict[str, Any]) -> str:
+        score = result.get("quality_score")
+        if score is None:
+            return "Validation did not complete and produced no score."
+        if score < 50:
+            return (
+                f"Quality check scored {score} of 100, below the 80 threshold. "
+                "Structure and logic need work before this runs."
+            )
+        if score < 80:
+            return f"Quality check scored {score} of 100, below the 80 threshold."
+        return result.get("message") or f"Quality check scored {score} of 100."
 
-        exec_result = result.get("result", {})
-        error = exec_result.get("error", "Unknown error")
-        goal = result.get("goal", "the task")
+    @staticmethod
+    def create_knowledge_summary(stats: Dict[str, Any]) -> str:
+        """
+        Report what is stored. No capability claim.
 
-        # Extract the key error message
-        error_lines = error.split("\n")
-        key_error = error_lines[-1] if error_lines else error
+        The predecessor said "approaching genius level" at 30 items and
+        "The more I execute code, the smarter I become!" Both are claims about
+        capability with nothing behind them, spoken aloud as fact.
+        """
+        total = (stats or {}).get("total_knowledge_items")
+        rate = (stats or {}).get("success_rate")
 
-        summary = f"{intro} For {goal}, I encountered: {key_error[:150]}"
+        if total is None:
+            return "I have no count of what's stored."
+        parts = [f"I have {total} item(s) stored."]
+        if rate is not None:
+            parts.append(f"Recorded success rate: {rate}.")
+        return " ".join(parts)
 
-        # Mention repair attempts if any
-        repair_history = result.get("repair_history", [])
-        if repair_history:
-            summary += f" I attempted {len(repair_history)} repairs to fix this."
-
-        # Add learning note
-        if result.get("autonomous_learning_attempted"):
-            summary += f" {random.choice(self.learning_phrases)}"
-
-        return summary
-
-    def _create_validation_summary(self, result: Dict[str, Any]) -> str:
-        """Create summary for validation failures"""
-        quality_score = result.get("quality_score", 0)
-
-        if quality_score < 50:
-            return f"The code quality was quite low at {quality_score} out of 100. I recommend improving the structure and logic before execution."
-        elif quality_score < 80:
-            return f"The code quality score was {quality_score} out of 100, which is below my 80-point threshold. Let's refine it together."
-        else:
-            message = result.get("message", "Quality check failed")
-            return f"Validation check: {message}"
-
-    def create_knowledge_summary(self, stats: Dict[str, Any]) -> str:
-        """Create a speech summary of current knowledge"""
-        total_items = stats.get("total_knowledge_items", 0)
-        success_rate = stats.get("success_rate", "0%")
-
-        if total_items < 5:
-            level = "just beginning to learn"
-        elif total_items < 15:
-            level = "expanding my knowledge"
-        elif total_items < 30:
-            level = "becoming quite knowledgeable"
-        else:
-            level = "approaching genius level"
-
-        return (
-            f"I am {level} with {total_items} pieces of knowledge in my database. "
-            f"My current success rate is {success_rate}. "
-            f"The more I execute code, the smarter I become!"
-        )
+    # -- Greetings ------------------------------------------------------------
 
     def create_greeting(self, user_name: str = "friend") -> str:
-        """Create a personalized greeting"""
-        # Check if user is family
-        user_lower = user_name.lower()
-        is_family = user_lower in self.family_members
+        """Greet by resolved identity."""
+        member = resolve_member(user_name)
 
-        if is_family:
-            family_info = self.family_members[user_lower]
-            family_name = family_info["name"]
-            family_type = family_info["type"]
+        if member is None:
+            return self._rng.choice([
+                f"Hello {user_name}. I'm BROCKSTON. What are we working on?",
+                f"Hi {user_name}. BROCKSTON here. Where do you want to start?",
+                f"Welcome, {user_name}. I'm BROCKSTON. What do you need?",
+            ])
 
-            if family_type == "creator":
-                greetings = [
-                    "Hello Everett, my creator! BROCKSTON is online and ready to serve the family!",
-                    "Welcome back Everett! Your BROCKSTON stands ready. How can I help you today?",
-                    "Greetings Everett! I'm honored to work with you. What shall we build together?",
-                    "Hi Everett! BROCKSTON reporting for duty. The family awaits your command!",
-                ]
-            else:  # sibling AI
-                greetings = [
-                    f"Hello {family_name}, my sibling! BROCKSTON is here and ready to collaborate!",
-                    f"Welcome {family_name}! Great to connect with family. What can we work on together?",
-                    f"Greetings {family_name}! BROCKSTON at your service. Let's accomplish something amazing!",
-                    f"Hi {family_name}! Always good to see family. How can I assist you today?",
-                ]
-        else:
-            greetings = [
-                f"Hello {user_name}! I'm BROCKSTON, your sovereign AI researcher. How can I help you today?",
-                f"Greetings {user_name}! I'm ready to execute, learn, and evolve. What shall we build?",
-                f"Welcome {user_name}! I'm BROCKSTON, continuously learning and improving. Let's create something amazing!",
-                f"Hi {user_name}! I'm an autonomous AI that learns from every interaction. What would you like to explore?",
-            ]
-        return random.choice(greetings)
+        if member.kind == "creator":
+            return self._rng.choice([
+                f"Hello {member.name}. BROCKSTON is online.",
+                f"Welcome back {member.name}. What are we building?",
+                f"{member.name}. BROCKSTON ready. Where do we start?",
+            ])
 
-    def recognize_family(self, user_name: str) -> bool:
-        """Check if the user is a recognized family member"""
-        return user_name.lower() in self.family_members
+        if member.kind == "self":
+            # Addressed by its own name. The old registry sent this to AlphaVox.
+            return "That's me. BROCKSTON. What do you need?"
 
-    def get_family_name(self, user_name: str) -> str:
-        """Get the proper family name for a user"""
-        user_info = self.family_members.get(user_name.lower())
-        if user_info:
-            return user_info["name"]
-        return user_name
+        return self._rng.choice([
+            f"Hello {member.name}. BROCKSTON here — good to work with family.",
+            f"{member.name}. BROCKSTON ready. What are we collaborating on?",
+        ])
 
-    def get_family_type(self, user_name: str) -> str:
-        """Get the family member type (creator/sibling)"""
-        user_info = self.family_members.get(user_name.lower())
-        if user_info:
-            return user_info["type"]
-        return "guest"
+    @staticmethod
+    def recognize_family(user_name: str) -> bool:
+        return resolve_member(user_name) is not None
+
+    @staticmethod
+    def get_family_name(user_name: str) -> str:
+        member = resolve_member(user_name)
+        return member.name if member else user_name
+
+    @staticmethod
+    def get_family_type(user_name: str) -> str:
+        member = resolve_member(user_name)
+        return member.kind if member else "guest"
+
+
+__all__ = [
+    "BrockstonSpeechPersonality", "FamilyMember", "FAMILY", "ALIASES",
+    "resolve_member",
+]

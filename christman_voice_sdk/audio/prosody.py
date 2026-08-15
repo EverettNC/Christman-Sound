@@ -160,6 +160,12 @@ class VocalEvent:
     voiced: Optional[bool] = None
     timestamp: Optional[float] = None
 
+    #: Per-frame tape, when Corti supplies one. See tape_contour.TapeFrame.
+    #: Empty list means the tape was not carried; it does NOT mean silence.
+    #: The card's `median_f0` is the median of LOCKED frames only — the tape is
+    #: the one that keeps the gaps.
+    tape: List[Any] = field(default_factory=list)
+
     def has_signal(self) -> bool:
         return any(
             getattr(self, f) is not None
