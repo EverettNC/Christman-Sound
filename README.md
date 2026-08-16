@@ -281,16 +281,20 @@ Each being can have custom voice profiles, emotional ranges, and personality set
 
 ## Installation
 
-From git (what AlphaVox uses):
+Both kinds of editable:
+
+```bash
+# local clone — edits land immediately
+pip install -e /Users/EverettN/Christman-Sound
+
+# git clone in a temp tree, still editable
+pip install -e git+https://github.com/The-ChristmanAI-Project/Christman-Sound.git#egg=christman-sound
+```
+
+Frozen (no edit):
 
 ```bash
 pip install git+https://github.com/The-ChristmanAI-Project/Christman-Sound.git
-```
-
-Editable local clone:
-
-```bash
-pip install -e /Users/EverettN/Christman-Sound
 ```
 
 Then:
