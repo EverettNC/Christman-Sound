@@ -64,6 +64,10 @@ joined.
 - `real_speech_recognition.py` — Production speech recognition
 - `sound_recognition_service.py` — Sound classification and detection
 - `fusion_engine.py` — Multi-engine audio fusion
+- `prosody.py` — Prosody reading and reconcile
+- `structural_affect.py` — Clause-level affect
+- `tape_contour.py` — Tape contour (null F0 is a hole)
+- `recognition_result.py` — Honest recognition contract
 
 #### Engines (`engines/`)
 - `base_synthesizer.py` — Abstract TTS engine
@@ -79,13 +83,14 @@ joined.
 
 #### Tone (`tone/`)
 - `tone_analyzer.py` — Tone and emotion detection
-- `tonescore_engine.py` — ToneScore calculation
+- `tonescore_engine.py` — ToneScore calculation (file path; not a live producer on Corti)
 - `tonescore_analyzer.py` — Detailed tone analysis
 - `emotion_quantifier.py` — Emotion metric computation
 - `emotion_embedder.py` — Emotion representation
 - `christman_tone_engine_v2.py` — Production tone engine
 - `speech_personality.py` — Personality extraction from speech
 - `written_tone.py` — Tone analysis for text
+- `emotion_labels.py` — Labels from model.config.id2label
 
 #### Timbre (`timbre/`)
 - `timbre_modeler.py` — Voice timbre modeling
@@ -97,9 +102,8 @@ joined.
 - `christman_studio.py` — Music studio orchestration
 
 #### Nonverbal (`nonverbal/`)
-- `nonverbal_engine.py` — Non-vocal audio synthesis
-- `cochlear_sync_tts.py` — Cochlear implant sync
-- `engine_temporal.py` — Temporal audio processing
+- `nonverbal_engine.py` — Named AAC map engine
+- `engine_temporal.py` — Temporal sequence classification
 
 #### Integration (`integration/`)
 - `christman_speech_to_speech.py` — Speech-to-speech conversion
@@ -114,7 +118,6 @@ joined.
 ### Core Modules
 - `core.py` — Main framework initialization
 - `logger.py` — Unified logging
-- `tone_analyzer.py` — Top-level tone analysis
 - `christman_dsp.c` — DSP operations (compiled)
 
 ## Quick Start
@@ -129,7 +132,7 @@ wav = listen(max_duration=8)
 
 # Analyze tone
 tone = analyze_tone(wav)
-print(f"Detected emotion: {tone['emotion']}")
+print(tone)
 
 # Respond
 speak("I understood you, Everett.", emotion="warm")
@@ -156,19 +159,6 @@ wav = synthesizer.synthesize(
     voice_profile="seraphinia",
     emotion="curious"
 )
-```
-
-### Tone & Emotion Analysis
-
-```python
-from christman_voice_sdk.tone import christman_tone_engine_v2
-
-tone_engine = christman_tone_engine_v2.ChristmanToneEngineV2()
-analysis = tone_engine.analyze_audio(wav_file="speech.wav")
-
-print(f"Tone Score: {analysis['tonescore']}")
-print(f"Personality: {analysis['personality']}")
-print(f"Emotion: {analysis['emotion']}")
 ```
 
 ### Speech-to-Speech
@@ -249,10 +239,9 @@ User Output (Speech, Sound, Feedback)
 
 - **Multi-Engine Support** — XTTS, GPT-SoVITS, macOS fallback
 - **Real-Time Processing** — Streaming speech recognition and synthesis
-- **Emotional Intelligence** — ToneScore, personality, and emotion quantification
-- **Voice Profiles** — Frequency-based speaker identification
 - **Honesty Rule** — Truthful reporting of engine capabilities
 - **No Fakes** — Fallback modes clearly indicated, never pretending
+- **Voice Profiles** — Frequency-based speaker identification
 
 ## Beings
 
