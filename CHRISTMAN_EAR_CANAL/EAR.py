@@ -25,10 +25,15 @@ def capture(duration_seconds: float = 6.0, device: Optional[int] = None):
 
 
 def listen(max_duration: float = 10.0, device: Optional[int] = None):
-    """Listen with voice activity detection.
+    """Fixed-duration capture. NOT voice-activity-detected.
 
-    Currently aliases to capture_audio until a true VAD listen is restored
-    in voice_capture_client.
+    This does NOT listen for speech onset or silence. It records for
+    `max_duration` seconds and returns. A slow-to-start speaker is not
+    waited for; a speaker who finishes early is not stopped early.
+
+    Aliases capture_audio until a true VAD listen is restored in
+    voice_capture_client. The name is kept for call-site compatibility;
+    do not read it as a capability.
     """
     ensure_family_paths()
     config = get_config()

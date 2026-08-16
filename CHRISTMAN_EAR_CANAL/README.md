@@ -19,7 +19,7 @@ It wraps existing real modules — it does not delete or replace them.
 
 | File              | Purpose |
 |-------------------|-------|
-| `EAR.py`          | Microphone capture + VAD listening |
+| `EAR.py`          | Microphone capture. **VAD listening is NOT implemented** — `listen()` currently aliases fixed-duration capture. See the docstring. |
 | `TONE.py`         | Tone & emotion analysis |
 | `PHONEMES.py`     | Phoneme extraction + viseme timing |
 | `VOICE_PROFILE.py`| Voice frequency profile capture & loading |
