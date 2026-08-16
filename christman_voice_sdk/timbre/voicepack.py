@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from timbre.timbre_modeler import TimbreModeler, VoiceProfile
+from ..timbre.timbre_modeler import TimbreModeler, VoiceProfile
 from .logger import get_logger
 
 logger = get_logger(__name__)

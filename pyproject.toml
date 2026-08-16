@@ -15,8 +15,12 @@ dependencies = [
     "numpy<2",
     "librosa",
     "soundfile",
-    "torch",
-    "torchaudio",
+    # Intel Mac ceiling: PyTorch stopped publishing x86_64 macOS wheels after
+    # 2.2.2 (see setup.py note). The marker keeps other platforms unpinned.
+    "torch<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "torch; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torchaudio<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "torchaudio; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "transformers>=4.40,<5",
     "pygame",
     "pyttsx3",
@@ -27,7 +31,10 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["christman_voice_sdk*", "CHRISTMAN_EAR_CANAL"]
+include = ["christman_voice_sdk*", "christman_sound*", "CHRISTMAN_EAR_CANAL"]
 
 [tool.setuptools.package-data]
 christman_voice_sdk = ["py.typed"]
+# The compiled DSP engine rides inside the package for wheel installs;
+# editable installs find it at the repo root (core.py checks both homes).
+christman_sound = ["*.so"]

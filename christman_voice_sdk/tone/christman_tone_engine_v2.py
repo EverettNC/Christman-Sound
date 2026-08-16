@@ -63,7 +63,7 @@ import numpy as np
 from scipy.io import wavfile
 from scipy import signal as scipy_signal
 
-from emotion_labels import (
+from .emotion_labels import (
     LabelResolutionError,
     LabelSet,
     dominant,

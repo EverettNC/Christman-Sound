@@ -59,7 +59,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, Dict
 
-from written_tone import (
+from .written_tone import (
     RewriteProposal,
     ToneBreakdown,
     ToneCategory,

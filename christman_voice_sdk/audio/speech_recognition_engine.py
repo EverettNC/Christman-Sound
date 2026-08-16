@@ -81,7 +81,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
-from recognition_result import (
+from .recognition_result import (
     RecognitionResult,
     RecognitionStatus,
     simulation_enabled,

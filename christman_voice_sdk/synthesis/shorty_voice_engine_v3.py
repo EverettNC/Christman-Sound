@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import Optional, Dict, List
 import time
 
-from engines.xtts_engine import XTTSEngine
-from timbre.shorty_emotion import ShortyEmotionDetector
-from utils.logger import get_logger
+from ..engines.xtts_engine import XTTSEngine
+from ..timbre.shorty_emotion import ShortyEmotionDetector
+from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 

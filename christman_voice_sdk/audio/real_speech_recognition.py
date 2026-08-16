@@ -77,7 +77,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checka
 
 import numpy as np
 
-from recognition_result import RecognitionResult
+from .recognition_result import RecognitionResult
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())

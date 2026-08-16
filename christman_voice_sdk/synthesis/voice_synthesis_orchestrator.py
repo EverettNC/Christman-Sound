@@ -6,15 +6,18 @@ from typing import Any, Dict, List, Optional, Sequence
 import tempfile
 import time
 
-from audio.audio_processor import AudioProcessor
-from synthesis.phoneme_labeler import PhonemeLabeler
-from timbre.voicepack import VoicepackBuilder, VoicepackMetadata
-from timbre.timbre_modeler import TimbreModeler, VoiceProfile
-from tone.emotion_embedder import EmotionEmbedder
-from engines.xtts_engine import XTTSEngine
-from tone.tonescore_engine import ToneScoreEngine
-from audio.config import Config, Tier, get_config
-from logger import get_logger
+from ..audio.audio_processor import AudioProcessor
+from ..synthesis.phoneme_labeler import PhonemeLabeler
+from ..timbre.voicepack import VoicepackBuilder, VoicepackMetadata
+from ..timbre.timbre_modeler import TimbreModeler, VoiceProfile
+from ..tone.emotion_embedder import EmotionEmbedder
+from ..engines.xtts_engine import XTTSEngine
+# Re-exported: consumers (AlphaVox voice_stack) import SynthesisResult from
+# this module, as the pre-migration package did.
+from ..engines.base_synthesizer import SynthesisResult  # noqa: F401
+from ..tone.tonescore_engine import ToneScoreEngine
+from ..audio.config import Config, Tier, get_config
+from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 

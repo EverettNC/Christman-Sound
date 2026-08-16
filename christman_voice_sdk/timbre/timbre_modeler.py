@@ -26,11 +26,17 @@ import numpy as np
 import torch
 
 from .logger import get_logger
-from audio.audio_processor import AudioSegment
+from ..audio.audio_processor import AudioSegment
 
 logger = get_logger(__name__)
 
-DSP_LIB_PATH = Path(__file__).parent.parent / "christman_dsp.so"
+# Two homes: SDK dir (wheel installs, package-data) or repo root (editable
+# checkout, where the .so is built). First hit wins; a miss stays loud below.
+_dsp_candidates = (
+    Path(__file__).parent.parent / "christman_dsp.so",
+    Path(__file__).parent.parent.parent / "christman_dsp.so",
+)
+DSP_LIB_PATH = next((p for p in _dsp_candidates if p.exists()), _dsp_candidates[0])
 
 try:
     _dsp_engine = ctypes.CDLL(str(DSP_LIB_PATH))

@@ -10,8 +10,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from audio.enhanced_speech_recognition import EnhancedSpeechRecognition
-from synthesis.voice_synthesis import get_voice_synthesizer
+from ..audio.enhanced_speech_recognition import EnhancedSpeechRecognition
+from ..synthesis.voice_synthesis import get_speech_synthesis_engine
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class ChristmanSpeechToSpeech:
 
     def __init__(self):
         self.speech_recognition = EnhancedSpeechRecognition()
-        self.voice_synthesizer = get_voice_synthesizer()
+        self.voice_synthesizer = get_speech_synthesis_engine()
         self.lipsync = None
         logger.info("Christman Speech-to-Speech initialized (no lip-sync engine)")
 

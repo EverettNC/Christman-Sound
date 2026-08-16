@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 
 from flask import Flask, jsonify, send_file, request
-from voice_synthesis import get_speech_synthesis_engine
+from .voice_synthesis import get_speech_synthesis_engine
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)

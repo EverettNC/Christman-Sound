@@ -22,8 +22,8 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from engines.base_synthesizer import BaseSynthesizer, SynthesisResult, DegradedSynthesisError
-from engines.logger import get_logger
+from ..engines.base_synthesizer import BaseSynthesizer, SynthesisResult, DegradedSynthesisError
+from ..engines.logger import get_logger
 
 logger = get_logger(__name__)
 

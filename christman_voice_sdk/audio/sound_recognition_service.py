@@ -56,7 +56,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
-from recognition_result import RecognitionResult
+from .recognition_result import RecognitionResult
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())

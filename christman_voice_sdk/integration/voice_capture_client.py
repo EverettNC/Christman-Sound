@@ -22,8 +22,8 @@ import scipy.signal as signal
 import argparse
 import websockets  # pyright: ignore[reportMissingImports]
 
-from audio.config import get_config
-from utils.logger import get_logger
+from ..audio.config import get_config
+from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 

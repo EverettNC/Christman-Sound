@@ -69,7 +69,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from scipy.io import wavfile
 
-from emotion_labels import (
+from .emotion_labels import (
     LabelResolutionError,
     LabelSet,
     dominant,
@@ -92,7 +92,13 @@ logger = get_logger(__name__)
 FRAME_LENGTH = 2048
 HOP_LENGTH = 512
 
-DSP_LIB_PATH = Path(__file__).parent.parent / "christman_dsp.so"
+# Two homes: SDK dir (wheel installs, package-data) or repo root (editable
+# checkout, where the .so is built). First hit wins; a miss stays loud below.
+_dsp_candidates = (
+    Path(__file__).parent.parent / "christman_dsp.so",
+    Path(__file__).parent.parent.parent / "christman_dsp.so",
+)
+DSP_LIB_PATH = next((p for p in _dsp_candidates if p.exists()), _dsp_candidates[0])
 
 _dsp_engine = None
 _dsp_ok = False

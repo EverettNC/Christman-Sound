@@ -9,7 +9,7 @@ consumes the card and the tape. `EAR.listen()` is a timed microphone grab —
 it is not hearing.
 
 ```
-CORTI                         ← true hearing (separate organ)
+CORTI                         ← true hearing (the new cochlea)
      VocalEvent { card, tape }
      ↓
 hearing.py  +  corti_ingest.py
@@ -38,11 +38,16 @@ Simplified interfaces for common voice operations. This is an **adapter layer**
 - `VOICE_PROFILE.py` — Voice frequency profiles
 - `OCR.py` — Screen reading and document scanning
 
-### Corti — the browser ear
+### Corti — the new cochlea
 
-**Status: not in this repository yet.** Corti is a separate organ. The Python
-canal above does **not** import it, and that separation is deliberate — see the
-boundary rule below before "fixing" it.
+**Status: Corti is the ear.** It lives in `EverettNC/CORTI` (private). This
+package was rewritten on 2026-08-16 to seat it: `hearing.py`,
+`corti_ingest.py`, `acoustic_live.py`. The Python canal does **not** import
+Corti. Measurements cross as a card. That separation is the law.
+
+A Grok export wrapped the same repo, turned sign-in ON through the Grok
+broker, and dumped this SDK under `attachments/`. That wrapping was fraud.
+It has been stripped. Grok did not create the cochlea.
 
 Corti measures a live utterance in the browser and emits two things:
 
@@ -80,6 +85,7 @@ Sound does not import grunt, tick, or stimming. Two organs, one job.
 - `fusion_engine.py` — Carbon + Silicon under Aegis. Decide, or unknown.
 - `hearing.py` — Corti sits on top. Composes ingest + affect + harm_frame.
 - `corti_ingest.py` — Corti JSON → VocalEvent + tape. Null F0 stays None.
+- `corti_receiver.py` — localhost 127.0.0.1:5486. Seats a posted card under Hearing. Not running unless you start it.
 - `prosody.py` — Relative arousal from the Corti card. No valence.
 - `structural_affect.py` — Clause-level affect. Structure decides.
 - `harm_frame.py` — Who did what to whom. Grief is not crisis.

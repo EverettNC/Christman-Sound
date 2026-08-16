@@ -91,7 +91,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
-from recognition_result import RecognitionResult, RecognitionStatus
+from .recognition_result import RecognitionResult, RecognitionStatus
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
