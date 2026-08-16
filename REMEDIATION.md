@@ -27,7 +27,7 @@ Replace every fabricated output with EITHER a real engine OR an explicit honest 
 - [ ] `engines/base_synthesizer.py:99` — remove hardcoded `{speaker_similarity:0.95, naturalness_mos:4.5, clarity:0.90}`; return `None`/real metrics only.
 - [ ] `nonverbal/engine_temporal.py:369-370` — delete the random-label/random-confidence branch; no-model must return the SAME safe default as model-missing (confidence 0.0, "I don't understand").
 - [ ] `nonverbal/nonverbal_engine.py:353-357` — delete the `random.uniform(-0.05,0.05)` confidence noise (3 sites).
-- [ ] `nonverbal/cochlear_sync_tts.py:189` — stop shipping `b"AUDIO_DATA_PLACEHOLDER"` as `"audio"`; return an explicit capability flag / error until real TTS exists.
+- [x] `nonverbal/cochlear_sync_tts.py` — **deleted from the tree.** Placeholder TTS is gone. Do not reintroduce.
 - [ ] `tone/tonescore_engine.py:102` — delete fabricated accuracy block + false "CREMA-D/RAVDESS" claim (or check in the real eval harness that produced numbers).
 - [ ] `music/christman_studio.py:313,353` — remove fabricated `"professional"`/LUFS metrics from functions that write no audio; label the module symbolic or implement real rendering.
 - [ ] `timbre/timbre_modeler.py:247` & `timbre/shorty_emotion.py:158` — stop returning `np.random.randn` / raw-embedding-dims as speaker identity / emotion scores; raise `NotImplementedError` or return honest `unavailable`.
