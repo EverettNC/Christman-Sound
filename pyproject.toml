@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "christman-sound"
+version = "1.0.0"
+description = "Christman Sound — family audio, voice, and speech SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Everett Nathaniel Christman", email = "lumacognify@thechristmanaiproject.com" },
+]
+dependencies = [
+    "numpy<2",
+    "librosa",
+    "soundfile",
+    "torch",
+    "torchaudio",
+    "transformers>=4.40,<5",
+    "pygame",
+    "pyttsx3",
+    "flask",
+    "fastapi",
+    "rich",
+    "praat-parselmouth",
+]
+
+[tool.setuptools.packages.find]
+include = ["christman_voice_sdk*", "CHRISTMAN_EAR_CANAL"]
+
+[tool.setuptools.package-data]
+christman_voice_sdk = ["py.typed"]

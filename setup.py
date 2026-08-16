@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="christman-voice-sdk",
+    name="christman-sound",
     version="1.0.0",
     author="Everett Nathaniel Christman",
     author_email="lumacognify@thechristmanaiproject.com",
@@ -22,7 +22,6 @@ setup(
         # backend stays enabled instead of silently disabling itself.
         "transformers>=4.40,<5",
         "pygame",
-        "gtts",
         "pyttsx3",
         "flask",
         "fastapi",

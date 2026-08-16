@@ -281,8 +281,23 @@ Each being can have custom voice profiles, emotional ranges, and personality set
 
 ## Installation
 
+From git (what AlphaVox uses):
+
 ```bash
-pip install -e .
+pip install git+https://github.com/The-ChristmanAI-Project/Christman-Sound.git
+```
+
+Editable local clone:
+
+```bash
+pip install -e /Users/EverettN/Christman-Sound
+```
+
+Then:
+
+```python
+from christman_voice_sdk.nonverbal.acoustic_live import deliver_acoustic_key
+from christman_voice_sdk.audio.hearing import Hearing
 ```
 
 ## Logging
