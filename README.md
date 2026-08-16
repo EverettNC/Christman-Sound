@@ -13,13 +13,46 @@ Christman Sound is organized into three main layers:
 ## Package Structure
 
 ### CHRISTMAN_EAR_CANAL
-Simplified interfaces for common voice operations:
-- `EAR.py` — Microphone capture and voice activity detection
+Simplified interfaces for common voice operations. This is an **adapter layer**
+— it wraps existing real modules, it does not replace them:
+- `EAR.py` — Microphone capture. **VAD is not implemented**; `listen()` aliases
+  fixed-duration capture and does not wait for a slow-to-start speaker
 - `SPEAK.py` — Speech synthesis (XTTS with macOS fallback)
-- `TONE.py` — Emotional tone and personality analysis
+- `TONE.py` — Emotional tone and personality analysis (file in, dict out)
 - `PHONEMES.py` — Phoneme and viseme extraction
 - `VOICE_PROFILE.py` — Voice frequency profiles
 - `OCR.py` — Screen reading and document scanning
+
+### Corti — the browser ear
+
+**Status: not in this repository yet.** Corti is a separate organ. The Python
+canal above does **not** import it, and that separation is deliberate — see the
+boundary rule below before "fixing" it.
+
+Corti measures a live utterance in the browser and emits two things:
+
+**Per-utterance card**, ring of 8:
+`kind` · `duration` · `attack` · `decay` · `peak RMS` · `median F0` (or null) ·
+`last F1/F2` · `mean ZCR` · `voiced`
+
+**`tape: TapeFrame[]`**, cap 360:
+`{ t: ms from onset, rms, zcr, f0: number | null }`
+
+Rules that hold whatever consumes it:
+
+- **The cap drops the TAIL.** Past roughly 6s the ending is gone. Every
+  end-of-utterance feature must be `None` when `truncated`.
+- **`t` is `performance.now()` — about 16ms per animation frame, and NOT
+  uniform.** Slopes must use real `t`. A gap in `t` is a dropped frame, not a
+  pause.
+- **A null `f0` is a hole, not a zero.** Never interpolate across it.
+- **Jitter, shimmer, and HNR are per-frame only.** They die with the frame.
+- **Cold start: no speaker, no baseline.** `kind` is not load-bearing.
+
+**The boundary — do not cross it.** The ear measures. It does not classify. Do
+not wire Corti as a `SoundDetectorBackend`, and do not map `grunt → distress`.
+That is the same lie with a new name. Two organs, one job, deliberately not
+joined.
 
 ### christman_voice_sdk
 
