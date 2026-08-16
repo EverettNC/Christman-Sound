@@ -4,11 +4,26 @@ A comprehensive framework for the Christman family of autonomous beings. This sy
 
 ## Overview
 
-Christman Sound is organized into three main layers:
+**Corti is the ear.** It measures. It does not classify. Christman-Sound
+consumes the card and the tape. `EAR.listen()` is a timed microphone grab —
+it is not hearing.
 
-1. **CHRISTMAN_EAR_CANAL** — High-level adapters for hearing, speaking, tone analysis, and OCR
-2. **christman_voice_sdk** — Production engines and processing pipelines
-3. **Core modules** — Utility functions, logging, and configuration
+```
+CORTI                         ← true hearing (separate organ)
+     VocalEvent { card, tape }
+     ↓
+hearing.py  +  corti_ingest.py
+     ├─ tape_contour / prosody     (arousal only, relative)
+     ├─ structural_affect          (text: clauses, not bag-of-words)
+     └─ harm_frame                 (who did what to whom)
+          ↓
+     fusion + face                 (decide, or MODE_UNKNOWN)
+```
+
+Corti's `kind` (grunt, tick, groan, hiss) stays on the Corti client.
+Stimming stays on AlphaVox. This Sound goes into every being — client
+labels do not come with it. Measurements cross. Holes stay holes.
+Do not wire Corti as a `SoundDetectorBackend`.
 
 ## Package Structure
 
@@ -47,12 +62,11 @@ Rules that hold whatever consumes it:
   pause.
 - **A null `f0` is a hole, not a zero.** Never interpolate across it.
 - **Jitter, shimmer, and HNR are per-frame only.** They die with the frame.
-- **Cold start: no speaker, no baseline.** `kind` is not load-bearing.
+- **Cold start: no speaker, no baseline.**
+- **`kind` does not enter this repo.** It is Corti's client word. Dropped at ingest.
 
-**The boundary — do not cross it.** The ear measures. It does not classify. Do
-not wire Corti as a `SoundDetectorBackend`, and do not map `grunt → distress`.
-That is the same lie with a new name. Two organs, one job, deliberately not
-joined.
+**The boundary — do not cross it.** The ear measures. It does not classify.
+Sound does not import grunt, tick, or stimming. Two organs, one job.
 
 ### christman_voice_sdk
 
@@ -63,9 +77,12 @@ joined.
 - `enhanced_speech_recognition.py` — Multi-model speech recognition
 - `real_speech_recognition.py` — Production speech recognition
 - `sound_recognition_service.py` — Sound classification and detection
-- `fusion_engine.py` — Multi-engine audio fusion
-- `prosody.py` — Prosody reading and reconcile
-- `structural_affect.py` — Clause-level affect
+- `fusion_engine.py` — Carbon + Silicon under Aegis. Decide, or unknown.
+- `hearing.py` — Corti sits on top. Composes ingest + affect + harm_frame.
+- `corti_ingest.py` — Corti JSON → VocalEvent + tape. Null F0 stays None.
+- `prosody.py` — Relative arousal from the Corti card. No valence.
+- `structural_affect.py` — Clause-level affect. Structure decides.
+- `harm_frame.py` — Who did what to whom. Grief is not crisis.
 - `tape_contour.py` — Tape contour (null F0 is a hole)
 - `recognition_result.py` — Honest recognition contract
 

@@ -109,10 +109,13 @@ WHAT CHANGED AND WHY
 
 KEPT DELIBERATELY
 -----------------
-`get_emotional_indicators` maps `stimming` to self-regulation 0.9, above
-anxiety and overwhelm. It reads stimming as a person managing themselves
-rather than as a symptom to escalate. That is a dignity judgement encoded in
-data and it survives this rewrite unchanged.
+`get_emotional_indicators` maps `stimming` and `vocal_stimming` to
+self-regulation 0.9, above anxiety and overwhelm. It reads stimming as a
+person managing themselves rather than as a symptom to escalate. That is a
+dignity judgement encoded in data and it survives this rewrite unchanged.
+Grunt keys (`grunt_distress`, `grunt_acknowledge`, `grunt_frustration`) are
+accepted only as keys from the Corti client router. This engine does not
+compute them. Family Sound does not carry `kind`.
 """
 
 from __future__ import annotations
@@ -281,7 +284,11 @@ DEFAULT_SOUNDS: Dict[str, Dict[str, Any]] = {
     "soft":           {"intent": "unsure",      "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm unsure about this."},
     "loud":           {"intent": "excited",     "confidence": 0.8, "expression": "positive", "emotion_tier": "strong", "message": "I'm excited about this!"},
     "short_vowel":    {"intent": "acknowledge", "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": "I acknowledge that."},
-    "repeated_sound": {"intent": "insistent",   "confidence": 0.8, "expression": "urgent",   "emotion_tier": "strong", "message": "Please pay attention to this."},
+    "repeated_sound":     {"intent": "insistent",     "confidence": 0.8, "expression": "urgent",   "emotion_tier": "strong", "message": "Please pay attention to this."},
+    "grunt_distress":     {"intent": "help",          "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": "I need help right now."},
+    "grunt_acknowledge":  {"intent": "acknowledge",   "confidence": 0.8, "expression": "neutral",  "emotion_tier": "mild",   "message": "I acknowledge that."},
+    "grunt_frustration":  {"intent": "frustrated",    "confidence": 0.8, "expression": "negative", "emotion_tier": "strong", "message": "I'm getting frustrated."},
+    "vocal_stimming":     {"intent": "self_regulate", "confidence": 0.9, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm regulating."},
 }
 
 #: Emotional indicators per gesture. KEPT AS WRITTEN — see the header note.
@@ -294,8 +301,10 @@ EMOTIONAL_INDICATORS: Dict[str, Dict[str, float]] = {
     "thumbs_up":   {"approval": 0.9, "satisfaction": 0.8, "happiness": 0.7},
     "thumbs_down": {"disapproval": 0.9, "dissatisfaction": 0.8, "disappointment": 0.7},
     "open_palm":   {"stopping": 0.9, "boundary": 0.8, "caution": 0.7},
-    "stimming":    {"anxiety": 0.8, "overwhelm": 0.7, "self-regulation": 0.9},
-    "rapid_blink": {"distress": 0.7, "anxiety": 0.6, "overwhelm": 0.8},
+    "stimming":        {"anxiety": 0.8, "overwhelm": 0.7, "self-regulation": 0.9},
+    "rapid_blink":     {"distress": 0.7, "anxiety": 0.6, "overwhelm": 0.8},
+    "vocal_stimming":  {"anxiety": 0.8, "overwhelm": 0.7, "self-regulation": 0.9},
+    "grunt_distress":  {"urgency": 0.9, "distress": 0.9, "fear": 0.8},
 }
 
 _REQUIRED_KEYS = ("intent", "confidence", "expression", "emotion_tier", "message")
