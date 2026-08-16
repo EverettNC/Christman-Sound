@@ -12,7 +12,7 @@ Verify each with: `python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read(
 
 - [ ] `core.py:67` — resolve merge conflict (keep HEAD side; logger must be defined before use ~line 60/88). Prove: parses + `python3 -c "import core"` in the SDK context.
 - [ ] `setup.py:19` — resolve merge conflict (keep HEAD dependency pins: numpy<2, transformers<5, praat-parselmouth, torchaudio). Prove: `pip install -e .` succeeds.
-- [ ] `crypto_bridge.py:15` — fix indentation AND resolve missing `christman_crypto`: either vendor a real module or **delete crypto_bridge.py** until real crypto exists (do not ship fake encryption). Prove: parses; no import of a nonexistent module.
+- [x] `crypto_bridge.py:15` — parses. Loads official HNDL (`~/Harvest-Now-Decrypt-Later`, https://github.com/The-ChristmanAI-Project/Harvest-Now-Decrypt-Later.git). `HybridPQCipher(768)` encrypt/decrypt roundtrip proved; `HybridSigner` reports `classical_rsa_pss` when oqs is absent. Bad signature raises. Does not import a nonexistent module.
 - [ ] `CHRISTMAN_EAR_CANAL/__init__.py:34` — resolve merge conflict (`unmatched ']'`). Prove: `import CHRISTMAN_EAR_CANAL` works.
 - [ ] `christman_preflight.py:205` — resolve merge conflict (keep HEAD: parselmouth/torchaudio mappings). Then **delete the 3 duplicate broken copies** `christman_preflight0.py`, `christman_preflight2.py`, `christman_preflight3.py`. Prove: preflight runs and reports.
 - [ ] `christman_voice_sdk/_init_.py` → rename to `__init__.py`. Prove: `import christman_voice_sdk; christman_voice_sdk.__version__` resolves.

@@ -28,9 +28,20 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
+import time
+
 import pygame
-from engines.xtts_engine import XTTSEngine
-from engines.base_synthesizer import SynthesisResult, DegradedSynthesisError
+
+try:
+    from engines.xtts_engine import XTTSEngine
+except Exception:  # torch / TTS missing — do not take the whole module down
+    XTTSEngine = None  # type: ignore[misc, assignment]
+
+try:
+    from engines.base_synthesizer import DegradedSynthesisError
+except Exception:
+    class DegradedSynthesisError(Exception):
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +64,22 @@ class SpeechSynthesisEngine:
         self.audio_playback_ready = _initialize_audio_playback()
         self.is_playing = False
         
-        self.xtts = XTTSEngine()
+        self.xtts = None
         self.reference_audio = Path(reference_audio) if reference_audio else None
-
-        if self.reference_audio and self.reference_audio.exists():
-            self.xtts.load_voice(self.reference_audio)
+        if XTTSEngine is not None:
+            try:
+                self.xtts = XTTSEngine()
+                if self.reference_audio and self.reference_audio.exists():
+                    self.xtts.load_voice(self.reference_audio)
+                else:
+                    logger.warning(
+                        "No reference audio provided. XTTS will require load_voice() before synthesis."
+                    )
+            except Exception as exc:
+                logger.warning("XTTSEngine unavailable: %s", exc)
+                self.xtts = None
         else:
-            logger.warning("No reference audio provided. XTTSEngine will require load_voice() before synthesis.")
+            logger.warning("XTTSEngine not importable (torch/TTS missing). Native fallback only.")
 
         logger.info("Speech synthesis engine initialized (local only).")
 
@@ -81,6 +101,8 @@ class SpeechSynthesisEngine:
         audio_output_path = Path(output_path) if output_path else Path(tempfile.NamedTemporaryFile(suffix=".wav", dir=self.cache_dir, delete=False).name)
 
         try:
+            if self.xtts is None:
+                raise DegradedSynthesisError("XTTS not loaded")
             result = self.xtts.synthesize(text, emotion_params=emotion_params, language=selected_language)
             if result.degraded or result.audio is None:
                 raise DegradedSynthesisError(result.error_reason or "XTTS returned degraded status.")
@@ -99,15 +121,32 @@ class SpeechSynthesisEngine:
 
     def _native_os_fallback(self, text: str, output_path: Path) -> Optional[str]:
         """Native OS fallback. Generates a local wav file using built-in TTS."""
-        safe_text = text.replace('"', '\\"').replace("'", "\\'")
         logger.warning("Executing Native OS Fallback TTS. This is degraded output.")
         
+        import subprocess
+
         if sys.platform == "darwin":
-            os.system(f'say -o "{output_path}" --data-format=LEF32@24000 "{safe_text}"')
+            try:
+                subprocess.run(
+                    ["say", "-o", str(output_path), "--data-format=LEF32@24000", text],
+                    check=True,
+                    timeout=30,
+                )
+            except Exception as exc:
+                logger.error("macOS say failed: %s", exc)
+                return None
             if output_path.exists():
                 return str(output_path)
         elif sys.platform.startswith("linux"):
-            os.system(f'espeak -w "{output_path}" "{safe_text}" 2>/dev/null')
+            try:
+                subprocess.run(
+                    ["espeak", "-w", str(output_path), text],
+                    check=True,
+                    timeout=30,
+                )
+            except Exception as exc:
+                logger.error("espeak failed: %s", exc)
+                return None
             if output_path.exists():
                 return str(output_path)
                 
@@ -155,3 +194,24 @@ def get_speech_synthesis_engine(reference_audio: Optional[str] = None) -> Speech
     if _speech_synthesis_engine is None:
         _speech_synthesis_engine = SpeechSynthesisEngine(reference_audio=reference_audio)
     return _speech_synthesis_engine
+
+
+def synthesize_speech(text: str, params: Optional[Dict] = None, reference_audio: Optional[str] = None):
+    """Adapter SPEAK.py calls. Returns a Path or None. Never mutates text."""
+    engine = SpeechSynthesisEngine(reference_audio=reference_audio)
+    path = engine.generate_speech_audio(
+        text,
+        emotion_params=params,
+        play_audio=False,
+    )
+    return Path(path) if path else None
+
+
+def play_audio(audio_path: str) -> bool:
+    return get_speech_synthesis_engine().play_audio_file(audio_path)
+
+
+def wait_for_playback() -> None:
+    engine = get_speech_synthesis_engine()
+    while engine.is_audio_playing():
+        time.sleep(0.05)
