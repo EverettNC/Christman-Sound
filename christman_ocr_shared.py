@@ -18,8 +18,12 @@ from typing import Dict, List, Optional, Callable
 import numpy as np
 import websockets
 
-from audio.config import get_config
-from utils.logger import get_logger
+try:
+    from christman_voice_sdk.audio.config import get_config
+    from christman_voice_sdk.utils.logger import get_logger
+except ImportError:
+    from audio.config import get_config
+    from utils.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -22,11 +22,15 @@ Patent Pending TCAP-2026-001
 
 import ast
 import argparse
+import importlib
 import importlib.util
+import inspect
 import os
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
@@ -82,7 +86,7 @@ CELEBRATIONS = [
 
 MILESTONE_CELEBRATIONS = {
     5:  "5 clean junctions — we're moving! 🚀",
-    10: "10 clean junctions — Brockston is breathing! 💙",
+    10: "10 clean junctions — this being is breathing! 💙",
     20: "20 clean — this chain is strong! 🔥",
     30: "30 clean — sovereign and sovereign! ⚡",
     50: "50 clean junctions — UNSTOPPABLE! 🏆",
@@ -116,12 +120,13 @@ STDLIB = {
 # ── Junction Status ───────────────────────────────────────────────────────────
 
 class JunctionStatus(str, Enum):
-    CLEAN    = "CLEAN"      # loaded and wired
-    STDLIB   = "STDLIB"     # standard library — always good
-    BROKEN   = "BROKEN"     # failed to load
-    MISSING  = "MISSING"    # file not found anywhere
-    CIRCULAR = "CIRCULAR"   # already being traced (cycle)
-    SKIPPED  = "SKIPPED"    # in skip list
+    CLEAN     = "CLEAN"      # first-party, loaded AND exercised
+    INSTALLED = "INSTALLED"  # venv / site-packages — present, not first-party
+    STDLIB    = "STDLIB"     # standard library — always good
+    BROKEN    = "BROKEN"     # first-party failed to load or failed to work
+    MISSING   = "MISSING"    # not in the tree and not installed
+    CIRCULAR  = "CIRCULAR"   # already being traced (cycle)
+    SKIPPED   = "SKIPPED"    # in skip list
 
 
 @dataclass
@@ -134,12 +139,38 @@ class Junction:
     fix:         str = ""
     children:    List["Junction"] = field(default_factory=list)
     filepath:    str = ""
+    work:        str = ""
 
 
 # ── Import Extractor ──────────────────────────────────────────────────────────
 
-def extract_imports(filepath: str) -> List[str]:
-    """Parse a .py file and extract all imported module names."""
+def _local_path(name: str, project_dir: str) -> Optional[str]:
+    """Dotted name → file in this house, or None.
+
+    Bare names like `self_modifying_code` live under brain_modules/ or
+    services/ even when the import omits the package prefix.
+    """
+    houses = [()]
+    top = name.split(".")[0]
+    if top not in {"brain_modules", "services", "core", "alphawolf"}:
+        houses.extend([("brain_modules",), ("services",), ("core",), ("alphawolf",)])
+    parts = name.split(".")
+    for house in houses:
+        as_py = os.path.join(project_dir, *house, *parts) + ".py"
+        as_pkg = os.path.join(project_dir, *house, *parts, "__init__.py")
+        if os.path.isfile(as_py):
+            return as_py
+        if os.path.isfile(as_pkg):
+            return as_pkg
+    return None
+
+
+def extract_imports(filepath: str, project_dir: str = "") -> List[str]:
+    """Full import paths. `from services.foo import Bar` stays services.foo.
+
+    First-word-only tracing is a lie: it counts the package door and never
+    runs the files inside it.
+    """
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             source = f.read()
@@ -147,44 +178,189 @@ def extract_imports(filepath: str) -> List[str]:
     except Exception:
         return []
 
+    pkg = ""
+    if project_dir:
+        rel = os.path.relpath(filepath, project_dir)
+        if rel.endswith("__init__.py"):
+            pkg = os.path.dirname(rel).replace(os.sep, ".")
+        elif rel.endswith(".py"):
+            pkg = os.path.dirname(rel).replace(os.sep, ".")
+        if pkg == ".":
+            pkg = ""
+
     imports = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                imports.append(alias.name.split(".")[0])
+                imports.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
-            if node.module and node.level == 0:
-                imports.append(node.module.split(".")[0])
-    return list(dict.fromkeys(imports))  # deduplicate, preserve order
+            if node.level and pkg:
+                parent = pkg.split(".")
+                cut = node.level - (1 if os.path.basename(filepath) != "__init__.py" else 0)
+                base = ".".join(parent[:-cut] if cut else parent)
+                if node.module:
+                    imports.append(f"{base}.{node.module}" if base else node.module)
+                else:
+                    imports.append(base)
+            elif node.module and node.level == 0:
+                imports.append(node.module)
+
+    out = []
+    for name in imports:
+        if not name:
+            continue
+        top = name.split(".")[0]
+        if top in STDLIB:
+            continue
+        if project_dir and _local_path(name, project_dir):
+            out.append(name)
+        else:
+            out.append(top)
+    return list(dict.fromkeys(out))
 
 
-def find_module_file(name: str, project_dir: str) -> Optional[str]:
-    """Find a module's .py file — check project dir first, then sys.path."""
-    # Check project directory first
-    local = os.path.join(project_dir, f"{name}.py")
-    if os.path.exists(local):
-        return local
-    # Check subdirectories
-    for root, dirs, files in os.walk(project_dir):
-        dirs[:] = [d for d in dirs if not d.startswith((".", "__pycache__", "venv", "node_modules"))]
-        candidate = os.path.join(root, f"{name}.py")
-        if os.path.exists(candidate):
-            return candidate
-    return None
+def resolve_module(name: str, project_dir: str) -> Tuple[str, Optional[str]]:
+    """Where does this name live?
+
+    Returns (kind, filepath):
+      local     — project_dir/name.py or project_dir/name/__init__.py
+      installed — on sys.path (venv / site-packages)
+      missing   — nowhere
+    """
+    local = _local_path(name, project_dir)
+    if local:
+        return "local", local
+    top = name.split(".")[0]
+    pkg = os.path.join(project_dir, top, "__init__.py")
+    py = os.path.join(project_dir, f"{top}.py")
+    pkg_dir = os.path.join(project_dir, top)
+    if os.path.isfile(pkg) and name == top:
+        return "local", pkg
+    if os.path.isfile(py) and name == top:
+        return "local", py
+    if os.path.isdir(pkg_dir) and name == top and not name.startswith("."):
+        return "local", pkg_dir
+
+    try:
+        spec = importlib.util.find_spec(name)
+    except (ImportError, ValueError, ModuleNotFoundError):
+        spec = None
+    if spec is None:
+        return "missing", None
+
+    origin = getattr(spec, "origin", None) or ""
+    if origin in ("built-in", "frozen"):
+        return "installed", None
+    if origin:
+        abs_origin = os.path.abspath(origin)
+        abs_proj = os.path.abspath(project_dir)
+        if abs_origin.startswith(abs_proj + os.sep):
+            rel = os.path.relpath(abs_origin, abs_proj)
+            top = rel.split(os.sep)[0]
+            if top not in {".venv", "venv", "env", "node_modules", "_NEEDS_CHECK", "layer"} and "site-packages" not in rel.split(os.sep):
+                return "local", abs_origin
+    return "installed", origin if origin else None
 
 
-def try_load_module(name: str, filepath: str) -> Tuple[bool, float, str]:
-    """Attempt to load a module. Returns (success, ms, error_msg)."""
+_SKIP_CONSTRUCT = {
+    "Flask", "Blueprint", "SQLAlchemy", "Model", "UserMixin",
+    "Enum", "IntEnum", "Flag", "BaseModel", "BaseHTTPRequestHandler",
+}
+
+
+def try_work(name: str, filepath: str) -> Tuple[bool, str]:
+    """Import is not proof. Construct what this module owns, or fail loud."""
+    try:
+        mod = importlib.import_module(name)
+    except Exception as e:
+        return False, f"import died on work pass: {e}"[:160]
+
+    owned = []
+    for attr, obj in list(vars(mod).items()):
+        if attr.startswith("_"):
+            continue
+        if not inspect.isclass(obj):
+            continue
+        if getattr(obj, "__module__", None) != name:
+            continue
+        if attr in _SKIP_CONSTRUCT:
+            continue
+        owned.append(obj)
+
+    if not owned:
+        return True, "ran (no local class — module-level code executed)"
+
+    built = []
+    last_err = ""
+    for cls in owned:
+        try:
+            bases = [b.__name__ for b in getattr(cls, "__mro__", ())]
+            if any(b in ("Model", "UserMixin", "Flask", "Blueprint") for b in bases):
+                continue
+            sig = inspect.signature(cls.__init__)
+            needed = []
+            for p in list(sig.parameters.values())[1:]:
+                if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+                if p.default is inspect.Parameter.empty:
+                    needed.append(p.name)
+            if needed:
+                continue
+            cls()
+            built.append(cls.__name__)
+        except Exception as e:
+            last_err = f"{cls.__name__}: {type(e).__name__}: {e}"[:160]
+
+    if built:
+        return True, "worked — constructed " + ", ".join(built[:6])
+    if last_err:
+        return False, last_err
+    return True, "ran (classes need arguments — module-level code executed)"
+
+
+def exercise_live_gets(base: str = "http://127.0.0.1:6200") -> List[str]:
+    """Hit live GET doors. Loading a route file is not serving a patient."""
+    fails = []
+    try:
+        urllib.request.urlopen(base + "/", timeout=2)
+    except Exception:
+        return ["live server not answering " + base]
+    try:
+        from app import app
+        rules = []
+        for rule in app.url_map.iter_rules():
+            if "GET" not in rule.methods:
+                continue
+            if "<" in rule.rule:
+                continue
+            rules.append(rule.rule)
+    except Exception as e:
+        return [f"could not read routes: {e}"[:120]]
+    for path in sorted(set(rules)):
+        try:
+            urllib.request.urlopen(base + path, timeout=6)
+        except urllib.error.HTTPError as e:
+            if e.code >= 500:
+                fails.append(f"GET {path} -> {e.code}")
+        except Exception as e:
+            fails.append(f"GET {path} -> {type(e).__name__}")
+    return fails
+
+
+def try_load_module(name: str) -> Tuple[bool, float, str]:
+    """Load as a real package: importlib.import_module.
+
+    Never spec_from_file_location. That strips package context and
+    invents 'relative import with no known parent package' on core/.
+    """
     start = time.perf_counter()
     try:
-        spec = importlib.util.spec_from_file_location(f"_tracer_{name}", filepath)
-        mod  = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        importlib.import_module(name)
         ms = round((time.perf_counter() - start) * 1000, 1)
         return True, ms, ""
     except Exception as e:
         ms = round((time.perf_counter() - start) * 1000, 1)
-        return False, ms, str(e).split("\n")[0][:120]
+        return False, ms, str(e).split("\n")[0][:160]
 
 
 def classify_error(error: str, name: str, project_dir: str) -> str:
@@ -226,6 +402,7 @@ class DependencyTracer:
         self.verbose      = verbose
         self.visited:     Set[str] = set()
         self.clean_count  = 0
+        self.installed_count = 0
         self.broken_count = 0
         self.total_ms     = 0.0
         self.broken_nodes: List[Junction] = []
@@ -252,38 +429,78 @@ class DependencyTracer:
 
         self.visited.add(entry_name)
 
-        # Find the file
-        filepath = find_module_file(entry_name, self.project_dir)
-        if not filepath:
-            fix = f"pip install {entry_name}" if entry_name.islower() else f"Create {entry_name}.py"
-            j   = Junction(name=entry_name, status=JunctionStatus.MISSING, depth=depth,
-                          error="File not found", fix=fix)
+        kind, filepath = resolve_module(entry_name, self.project_dir)
+
+        if kind == "missing":
+            local_hint = os.path.join(self.project_dir, entry_name)
+            if os.path.isdir(local_hint) or os.path.isfile(local_hint + ".py"):
+                fix = f"'{entry_name}' is in the tree but failed to resolve — check __init__.py"
+            else:
+                fix = f"pip install {entry_name}" if entry_name.islower() else f"Create {entry_name}.py"
+            j = Junction(name=entry_name, status=JunctionStatus.MISSING, depth=depth,
+                         error="Not in project and not installed", fix=fix)
             self.broken_count += 1
             self.broken_nodes.append(j)
             return j
 
-        # Try to load
-        success, ms, error = try_load_module(entry_name, filepath)
+        if kind == "installed":
+            self.installed_count += 1
+            return Junction(
+                name=entry_name,
+                status=JunctionStatus.INSTALLED,
+                depth=depth,
+                filepath=filepath or "",
+            )
+
+        load_name = entry_name
+        if filepath:
+            rel = os.path.relpath(filepath, self.project_dir)
+            if rel.endswith("__init__.py"):
+                load_name = os.path.dirname(rel).replace(os.sep, ".")
+            elif rel.endswith(".py"):
+                load_name = rel[:-3].replace(os.sep, ".")
+        success, ms, error = try_load_module(load_name)
         self.total_ms += ms
 
         if not success:
             fix = classify_error(error, entry_name, self.project_dir)
-            j   = Junction(name=entry_name, status=JunctionStatus.BROKEN, depth=depth,
-                          load_time_ms=ms, error=error, fix=fix, filepath=filepath)
+            j = Junction(name=entry_name, status=JunctionStatus.BROKEN, depth=depth,
+                         load_time_ms=ms, error=error, fix=fix, filepath=filepath or "")
             self.broken_count += 1
             self.broken_nodes.append(j)
             return j
 
-        # Success — extract imports and recurse
-        self.clean_count += 1
-        j = Junction(name=entry_name, status=JunctionStatus.CLEAN, depth=depth,
-                    load_time_ms=ms, filepath=filepath)
+        worked, work_note = try_work(load_name, filepath or "")
+        if not worked:
+            j = Junction(
+                name=entry_name,
+                status=JunctionStatus.BROKEN,
+                depth=depth,
+                load_time_ms=ms,
+                error=work_note,
+                fix=f"Imported but did not work: {work_note[:80]}",
+                filepath=filepath or "",
+                work=work_note,
+            )
+            self.broken_count += 1
+            self.broken_nodes.append(j)
+            return j
 
-        imports = extract_imports(filepath)
-        for imp in imports:
-            if imp not in STDLIB and imp != entry_name:
-                child = self.trace(imp, depth=depth + 1, max_depth=max_depth)
-                j.children.append(child)
+        self.clean_count += 1
+        j = Junction(
+            name=entry_name,
+            status=JunctionStatus.CLEAN,
+            depth=depth,
+            load_time_ms=ms,
+            filepath=filepath or "",
+            work=work_note,
+        )
+
+        if filepath:
+            for imp in extract_imports(filepath, self.project_dir):
+                if imp not in STDLIB and imp != entry_name:
+                    child = self.trace(imp, depth=depth + 1, max_depth=max_depth)
+                    j.children.append(child)
 
         return j
 
@@ -332,6 +549,10 @@ def render_tree(junction: Junction, tracer: DependencyTracer, prefix: str = "", 
         print(f"  {prefix}{c(connector, C.DIM)} {c(junction.name, C.DIM)}  {c('skipped', C.DIM)}")
         return
 
+    if junction.status == JunctionStatus.INSTALLED:
+        print(f"  {prefix}{c(connector, C.DIM)} {c(junction.name, C.CYAN)}  {c('installed ✓', C.DIM)}")
+        return
+
     if junction.status == JunctionStatus.MISSING:
         print(f"  {prefix}{c(connector, C.DIM)} {c(junction.name, C.RED, C.BOLD)}  {c('⛔ MISSING', C.RED)}")
         print(f"  {child_prefix}  {c('FIX:', C.DIM)} {c(junction.fix, C.YELLOW)}")
@@ -369,7 +590,7 @@ def render_report(junction: Junction, tracer: DependencyTracer, entry: str):
 
     pct = round(tracer.clean_count / max(1, tracer.clean_count + tracer.broken_count) * 100)
 
-    if pct >= 95:
+    if pct == 100 and tracer.broken_count == 0:
         # 🤠 HOEDOWN — 95%+ clean
         print(c("  ╔══════════════════════════════════════════════════════════════════════╗", C.GREEN, C.BOLD))
         print(c("  ║                                                                      ║", C.GREEN, C.BOLD))
@@ -378,7 +599,7 @@ def render_report(junction: Junction, tracer: DependencyTracer, entry: str):
         print(c("  ║   🎉🎊🎉🎊🎉🎊🎉🎊🎉🎊🎉🎊🎉🎊🎉🎊🎉🎊🎉🎊🎉🎊🎉              ║", C.GREEN, C.BOLD))
         print(c("  ║                                                                      ║", C.GREEN, C.BOLD))
         print(c("  ║   Every junction wired. The chain ran clean.                        ║", C.GREEN))
-        print(c("  ║   Brockston is sovereign. The Carbon-Silicon bond holds.            ║", C.GREEN))
+        print(c("  ║   The being is sovereign. The Carbon-Silicon bond holds.            ║", C.GREEN))
         print(c("  ║                                                                      ║", C.GREEN))
         print(c(f"  ║   {tracer.clean_count} clean junctions  ·  {pct}% accuracy  ·  {tracer.total_ms:.0f}ms            ║", C.GREEN))
         print(c("  ║                                                                      ║", C.GREEN))
@@ -402,8 +623,9 @@ def render_report(junction: Junction, tracer: DependencyTracer, entry: str):
             print(c("  ║  ", C.DIM) + c(label, C.DIM) + c(clean, val_color) + " "*pad + c("║", C.DIM))
 
         row("ENTRY POINT      : ", entry, C.CYAN)
-        row("CLEAN JUNCTIONS  : ", str(tracer.clean_count), C.GREEN)
-        row("BROKEN JUNCTIONS : ", str(tracer.broken_count), C.RED)
+        row("FIRST-PARTY CLEAN: ", str(tracer.clean_count), C.GREEN)
+        row("INSTALLED (venv) : ", str(tracer.installed_count), C.CYAN)
+        row("BROKEN / MISSING : ", str(tracer.broken_count), C.RED)
         row("MODULES VISITED  : ", str(len(tracer.visited)), C.WHITE)
         row("TOTAL TRACE TIME : ", f"{tracer.total_ms:.0f}ms", C.DIM)
 
@@ -417,7 +639,7 @@ def render_report(junction: Junction, tracer: DependencyTracer, entry: str):
         print(c("  ╠══════════════════════════════════════════════════════════════════════╣", C.DIM))
 
         if pct == 100:
-            status, col = "🟢  FULL CHAIN COMPLETE — Brockston is sovereign.", C.GREEN
+            status, col = "🟢  FULL CHAIN COMPLETE — this being is sovereign.", C.GREEN
         elif pct >= 80:
             status, col = f"🟡  MOSTLY WIRED — {pct}% clean. Fix the broken links above.", C.YELLOW
         elif pct >= 50:
@@ -450,7 +672,7 @@ def main():
     )
     parser.add_argument("entry",       help="Entry point module name (without .py)")
     parser.add_argument("--dir",       default=".", help="Project directory")
-    parser.add_argument("--depth",     type=int, default=12, help="Max trace depth (default: 12)")
+    parser.add_argument("--depth",     type=int, default=24, help="Max trace depth (default: 24)")
     parser.add_argument("--verbose",   action="store_true", help="Show full tracebacks")
     parser.add_argument("--no-color",  action="store_true", help="Disable ANSI colors")
     args = parser.parse_args()
@@ -472,6 +694,25 @@ def main():
 
     print()
     render_tree(root, tracer)
+
+    route_fails = exercise_live_gets()
+    if route_fails:
+        print()
+        print(c("  LIVE GET DOORS — these did not work:", C.RED, C.BOLD))
+        for line in route_fails[:40]:
+            print(c(f"    💥 {line}", C.YELLOW))
+            tracer.broken_count += 1
+            tracer.broken_nodes.append(Junction(
+                name=line.split()[1] if line.startswith("GET") else line,
+                status=JunctionStatus.BROKEN,
+                depth=0,
+                error=line,
+                fix="Route did not work — fix the handler",
+            ))
+    else:
+        print()
+        print(c("  LIVE GET DOORS — answered. Processes ran, not just imported.", C.GREEN))
+
     render_report(root, tracer, args.entry)
 
     sys.exit(0 if tracer.broken_count == 0 else 1)
