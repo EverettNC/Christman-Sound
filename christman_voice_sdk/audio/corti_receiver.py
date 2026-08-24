@@ -53,11 +53,12 @@ from .hearing import Hearing, HearingTurn
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-# The Corti client dev server (vite --port 8080). Override or extend with
+# Corti-in-the-being (AlphaVox launcher, port 5487). 8080 is the lab
+# (THEATHANOR) — it does not post cards here. Extra origins via
 # CORTI_ALLOWED_ORIGINS, comma-separated.
 DEFAULT_ALLOWED_ORIGINS = (
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
+    "http://localhost:5487",
+    "http://127.0.0.1:5487",
 )
 
 DEFAULT_PORT = 5486  # AlphaVox acoustic keys live on 5485; the card lives next door.
