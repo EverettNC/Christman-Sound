@@ -1,0 +1,11 @@
+{
+  "sound_root": "/Users/EverettN/Christman-Sound",
+  "voice_center": "/Users/EverettN/Voice_Creation_Center",
+  "memory": "/Users/EverettN/MEMORY",
+  "lucent": "/Users/EverettN/LUCENT",
+  "corti": "/Users/EverettN/CORTI",
+  "alphavox": "/Users/EverettN/AlphaVox",
+  "python_mill": "/usr/local/bin/python3.11",
+  "mouth": "CHRISTMAN_EAR_CANAL.speak",
+  "factory": "Voice_Creation_Center"
+}

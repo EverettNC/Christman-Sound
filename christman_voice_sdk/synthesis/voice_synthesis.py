@@ -65,6 +65,8 @@ class SpeechSynthesisEngine:
         self.is_playing = False
         
         self.xtts = None
+        self.last_engine = "none"
+        self.last_error = None
         self.reference_audio = Path(reference_audio) if reference_audio else None
         if XTTSEngine is not None:
             try:
@@ -108,11 +110,17 @@ class SpeechSynthesisEngine:
                 raise DegradedSynthesisError(result.error_reason or "XTTS returned degraded status.")
             
             result.save(audio_output_path)
+            self.last_engine = "christman_voice_sdk"
+            self.last_error = None
             logger.info(f"Audio saved locally to {audio_output_path}")
 
         except Exception as exc:
+            self.last_error = str(exc)
             logger.error(f"Local synthesis failed ({exc}). Falling back to OS native TTS.")
-            return self._native_os_fallback(text, audio_output_path)
+            native = self._native_os_fallback(text, audio_output_path)
+            if native:
+                self.last_engine = "macos_say_fallback"
+            return native
 
         if play_audio:
             self.play_audio_file(str(audio_output_path))
