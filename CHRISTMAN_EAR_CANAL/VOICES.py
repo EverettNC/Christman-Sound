@@ -133,6 +133,24 @@ def resolve_being_reference(being: str | None) -> Optional[Path]:
             ]
         )
 
+    if being == "cletus":
+        center = voice_center_root()
+        home = Path.home()
+        if center is not None:
+            candidates.extend(
+                [
+                    center / "packs" / "cletus" / "reference.wav",
+                    center / "incoming" / "cletus.wav",
+                ]
+            )
+        candidates.extend(
+            [
+                home / "Downloads" / "cletus.wav",
+                home / "Downloads" / "incoming" / "cletus.wav",
+                home / "Desktop" / "cletus.wav",
+            ]
+        )
+
     profile_dir = Path.home() / ".christman_ai" / "voice_profiles"
     candidates.extend(
         [

@@ -52,10 +52,22 @@ def sound_root() -> Path:
 
 def voice_center_root() -> Path | None:
     raw = (load_family_paths().get("voice_center") or "").strip()
-    if not raw:
-        return None
-    path = Path(raw).expanduser().resolve()
-    return path if path.is_dir() else None
+    if raw:
+        path = Path(raw).expanduser()
+        if path.is_dir():
+            return path.resolve()
+    guesses = [
+        Path.home() / "Voice_Creation_Center",
+        Path.home() / "Documents" / "Voice_Creation_Center",
+        Path.home() / "Desktop" / "Voice_Creation_Center",
+        sound_root().parent / "Voice_Creation_Center",
+        Path(__file__).resolve().parents[2] / "Voice_Creation_Center",
+        Path.cwd(),
+    ]
+    for guess in guesses:
+        if (guess / "Voice_registry.py").is_file() or (guess / "incoming").is_dir():
+            return guess.resolve()
+    return None
 
 
 def _resolve_sdk_dir() -> Path | None:
