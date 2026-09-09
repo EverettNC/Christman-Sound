@@ -1,4 +1,4 @@
-# CHRISTMAN_EAR_CANAL
+# CHRISTMAN_EAR_CANAL. DO NOT USE DO NOT USE 
 
 Shared hearing, speech, tone, phoneme, voice-profile, and OCR adapters for the Christman Family of Autonomous Beings.
 
