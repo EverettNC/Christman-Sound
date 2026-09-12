@@ -30,7 +30,10 @@ from typing import Dict, Optional
 
 import time
 
-import pygame
+try:
+    import pygame
+except ImportError:  # playback only; text-to-WAV must not depend on a speaker
+    pygame = None  # type: ignore[assignment]
 
 try:
     from engines.xtts_engine import XTTSEngine
