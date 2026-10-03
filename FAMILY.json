@@ -6,6 +6,6 @@
   "corti": "/Users/EverettN/CORTI",
   "alphavox": "/Users/EverettN/AlphaVox",
   "python_mill": "/usr/local/bin/python3.11",
-  "mouth": "CHRISTMAN_EAR_CANAL.speak",
+  "mouth": "christman_voice_sdk.synthesis.voice_synthesis",
   "factory": "Voice_Creation_Center"
 }
