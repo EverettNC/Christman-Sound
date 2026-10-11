@@ -48,7 +48,6 @@ CALL table for the crisis gate, and the gate is written to it. Run before claimi
 
     python3 -m pytest tests/ -q
     python3 scripts/build_dsp.py --check
-    python3 christman_preflight.py
 
 Standing rulings from Everett (2026-10-11) that bind every session:
 - `core.py` and `christman_sound/core.py` are **not used by anything and are not to be touched.**
@@ -56,8 +55,9 @@ Standing rulings from Everett (2026-10-11) that bind every session:
 - The seven "Everett's call, do not decide these" items in `HANDOFF_2026-08-15.md` stay his.
 - Show him the diff before pushing changes to how the SDK reads a person.
 
-Two mains exist: `EverettNC/Christman-Sound` and `The-ChristmanAI-Project/Christman-Sound`. They diverged
-on 2026-08-16 (the org copy deleted the preflight, both tracers and `REMEDIATION.md` on 2026-08-24).
-Which is canonical is his ruling; do not merge them on your own.
+Two remotes exist: `The-ChristmanAI-Project/Christman-Sound` (**canonical**, Everett's ruling 2026-10-11)
+and `EverettNC/Christman-Sound`. They diverged on 2026-08-16 and were re-joined by the merge on this branch.
 
-`REMEDIATION.md` is the ordered plan; its checkboxes are updated as items are proven, not before.
+The org copy (canonical, Everett's ruling 2026-10-11) removed `christman_preflight.py`, both tracers and
+`REMEDIATION.md` on 2026-08-24 and added `INSTALL_REVIEW_2026-08-22.md`. This branch merges that in; the
+preflight numbers above were measured before the merge. `HANDOFF_2026-08-15.md` still lists the fix history.
