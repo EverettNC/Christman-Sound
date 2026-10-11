@@ -16,17 +16,25 @@ WHAT CHANGED AND WHY
 """
 
 import hashlib
+import json
 import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 from pathlib import Path
 
-from flask import Flask, jsonify, send_file, request
+from flask import Flask, jsonify, send_from_directory, send_file, request
+from werkzeug.utils import secure_filename
 from .voice_synthesis import get_speech_synthesis_engine
 
-logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
+#: 2026-10-11: the service bound 0.0.0.0 — a text-in, file-out endpoint
+#: open to the whole network of an AAC device. Loopback by default; set
+#: CHRISTMAN_TTS_HOST to widen it on purpose.
+DEFAULT_HOST = os.getenv("CHRISTMAN_TTS_HOST", "127.0.0.1")
+DEFAULT_PORT = int(os.getenv("CHRISTMAN_TTS_PORT", "5000"))
 
 def _static_dir(*parts: str) -> str:
     return os.path.join(os.getcwd(), "static", *parts)
@@ -48,8 +56,11 @@ def local_text_to_speech(
 
     if not output_path:
         audio_dir = _static_dir("audio")
-        os.makedirs(audio_dir, exist_ok=True)
-        content_hash = _hash_content(text, str(reference_audio_path), lang)
+        os.makedirs(audio_dir, mode=0o700, exist_ok=True)
+        # emotion_params is part of the key. 2026-10-11: it was not, so a
+        # cached neutral rendering was served for an emotional request.
+        emotion_key = json.dumps(emotion_params or {}, sort_keys=True)
+        content_hash = _hash_content(text, str(reference_audio_path), lang, emotion_key)
         filename = f"{content_hash}.wav"
         output_path = os.path.join(audio_dir, filename)
 
@@ -102,8 +113,11 @@ def generate_speech():
 
 @app.route("/audio/<filename>")
 def serve_audio(filename: str):
-    audio_path = os.path.join("static", "audio", filename)
-    return send_file(audio_path, mimetype="audio/wav")
+    # Rule 12: only a bare filename inside the audio directory is served.
+    safe = secure_filename(filename)
+    if not safe or safe != filename or not safe.endswith(".wav"):
+        return jsonify({"error": "invalid filename"}), 400
+    return send_from_directory(_static_dir("audio"), safe, mimetype="audio/wav")
 
 @app.route("/status", methods=["GET"])
 def status():
@@ -116,4 +130,5 @@ def status():
     })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    logging.basicConfig(level=logging.WARNING)
+    app.run(host=DEFAULT_HOST, port=DEFAULT_PORT)

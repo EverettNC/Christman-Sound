@@ -30,14 +30,23 @@ except ImportError:
 
 
 class Phoneme:
-    """One phoneme with timing measured from audio (or MFA)."""
+    """
+    One phoneme with timing from MFA or from energy onsets.
 
-    def __init__(self, label: str, start_time: float, end_time: float, confidence: float = 1.0):
+    `confidence` is None: neither MFA nor the energy fallback measures one.
+    2026-10-11: the fallback stamped 0.6 / 0.7 / 0.5 on its guesses and MFA
+    output got 1.0 — four constants chosen to look like measurements.
+    `source` says which method produced the timing.
+    """
+
+    def __init__(self, label: str, start_time: float, end_time: float,
+                 confidence: Optional[float] = None, source: str = "unknown"):
         self.label = label.upper()
         self.start_time = start_time
         self.end_time = end_time
         self.duration = end_time - start_time
         self.confidence = confidence
+        self.source = source
 
     def to_dict(self) -> Dict:
         return {
@@ -46,6 +55,8 @@ class Phoneme:
             "end": self.end_time,
             "duration": self.duration,
             "confidence": self.confidence,
+            "confidence_known": self.confidence is not None,
+            "source": self.source,
         }
 
     def __repr__(self):
@@ -141,7 +152,7 @@ class PhonemeLabeler:
             for interval in tier.intervals:
                 mark = (interval.mark or "").strip()
                 if mark:
-                    phonemes.append(Phoneme(mark, interval.minTime, interval.maxTime, 1.0))
+                    phonemes.append(Phoneme(mark, interval.minTime, interval.maxTime, None, source="mfa"))
         return phonemes
 
     @classmethod
@@ -203,14 +214,14 @@ class PhonemeLabeler:
             for i, lab in enumerate(labels):
                 a = t0 + (t1 - t0) * i / n
                 b = t0 + (t1 - t0) * (i + 1) / n
-                phonemes.append(Phoneme(lab, a, b, 0.6))
+                phonemes.append(Phoneme(lab, a, b, None, source="energy_transcript"))
             for start, end, is_voiced in spans:
                 if not is_voiced:
-                    phonemes.append(Phoneme("SIL", start, end, 0.7))
+                    phonemes.append(Phoneme("SIL", start, end, None, source="energy_transcript"))
             phonemes.sort(key=lambda p: p.start_time)
         else:
             for start, end, is_voiced in spans:
-                phonemes.append(Phoneme("VOI" if is_voiced else "SIL", start, end, 0.5))
+                phonemes.append(Phoneme("VOI" if is_voiced else "SIL", start, end, None, source="energy_only"))
 
         logger.warning(f"Energy+transcript labeling: {len(phonemes)} segments from {audio_path.name}")
         return phonemes

@@ -33,6 +33,11 @@ class SynthesisResultPayload:
     synthesis_time: float
     quality_score: Optional[float]
     metadata: Dict[str, Any]
+    #: 2026-10-11: the engine's degraded flag and reason stopped here — a
+    #: failed synthesis came back as a dict with audio=None and nothing
+    #: naming the failure. Both now travel to the caller.
+    degraded: bool = False
+    error_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -44,7 +49,10 @@ class SynthesisResultPayload:
             "lipsync_data": self.lipsync_data,
             "synthesis_time": self.synthesis_time,
             "quality_score": self.quality_score,
+            "quality_score_known": self.quality_score is not None,
             "metadata": self.metadata,
+            "degraded": self.degraded,
+            "error_reason": self.error_reason,
         }
 
 class VoiceSynthesisOrchestrator:
@@ -172,7 +180,9 @@ class VoiceSynthesisOrchestrator:
             lipsync_data=lipsync_data,
             synthesis_time=time.time() - start_time,
             quality_score=result.naturalness_mos,
-            metadata={"tier": self.tier.value, "engine": result.engine}
+            metadata={"tier": self.tier.value, "engine": result.engine},
+            degraded=bool(result.degraded) or result.audio is None,
+            error_reason=result.error_reason,
         )
 
         return payload.to_dict()
