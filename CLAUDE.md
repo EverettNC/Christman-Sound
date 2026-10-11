@@ -32,7 +32,32 @@ being.** A real, vulnerable person depends on this code being both correct and h
   on faith. Rule 13 applies to *your own* status reports too.
 - The bridge service is **BROCKSTON Nexus** — never "Hermes" / "ZuesHermes."
 
-## Current state (medical-grade review, 2026-07-20)
-The SDK **does not currently import** and its three core functions (hear / read-emotion / speak) fabricate
-results in every reachable path. Full evidence: `Christman-Sound_Medical_Grade_Review.md`.
-Ordered fix plan: `REMEDIATION.md`. Start there. Do the phases in order — import blockers first.
+## Current state (verified on disk, 2026-10-11)
+**The July 20 review is history, not state.** It was written before ~50 commits of repair and was left
+here as "current" for three months. Checked against the tree on 2026-10-11:
+- All 79 Python files parse. Zero merge-conflict markers (the `=====` hits in grep are docstring rules).
+- `import christman_voice_sdk` and `import christman_sound` succeed. Preflight loads 77/79 modules in a
+  clean Linux container with free deps installed; the two that fail need the torch/TTS stack and a clone
+  of `~/Harvest-Now-Decrypt-Later`. Those are environment, not code.
+- The August 2026 pass (`HANDOFF_2026-08-15.md`) removed the random transcripts, the random gesture
+  labels, the placeholder audio, the unguarded pickle loads and the wrong-label zip in `tone/`. It held.
+
+What the 2026-10-11 full read (every file, not a sample) still found live, and fixed, is in the commit
+history and in `tests/`. Read `tests/test_harm_frame_gate.py` first: it is Everett's MUST CALL / MUST NOT
+CALL table for the crisis gate, and the gate is written to it. Run before claiming anything:
+
+    python3 -m pytest tests/ -q
+    python3 scripts/build_dsp.py --check
+    python3 christman_preflight.py
+
+Standing rulings from Everett (2026-10-11) that bind every session:
+- `core.py` and `christman_sound/core.py` are **not used by anything and are not to be touched.**
+- A subjectless utterance ("scared", "hurts") is the speaker's own. An AAC board does not need an "I".
+- The seven "Everett's call, do not decide these" items in `HANDOFF_2026-08-15.md` stay his.
+- Show him the diff before pushing changes to how the SDK reads a person.
+
+Two mains exist: `EverettNC/Christman-Sound` and `The-ChristmanAI-Project/Christman-Sound`. They diverged
+on 2026-08-16 (the org copy deleted the preflight, both tracers and `REMEDIATION.md` on 2026-08-24).
+Which is canonical is his ruling; do not merge them on your own.
+
+`REMEDIATION.md` is the ordered plan; its checkboxes are updated as items are proven, not before.
