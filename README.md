@@ -5,7 +5,7 @@ A comprehensive framework for the Christman family of autonomous beings. This sy
 ## Overview
 
 **Corti is the ear.** It measures. It does not classify. Christman-Sound
-consumes the card and the tape. `EAR.listen()` is a timed microphone grab —
+consumes the card and the tape. `listen()` (voice_capture_client.capture_audio) is a timed microphone grab —
 it is not hearing.
 
 ```
@@ -26,17 +26,6 @@ labels do not come with it. Measurements cross. Holes stay holes.
 Do not wire Corti as a `SoundDetectorBackend`.
 
 ## Package Structure
-
-### CHRISTMAN_EAR_CANAL
-Simplified interfaces for common voice operations. This is an **adapter layer**
-— it wraps existing real modules, it does not replace them:
-- `EAR.py` — Microphone capture. **VAD is not implemented**; `listen()` aliases
-  fixed-duration capture and does not wait for a slow-to-start speaker
-- `SPEAK.py` — Speech synthesis (XTTS with macOS fallback)
-- `TONE.py` — Emotional tone and personality analysis (file in, dict out)
-- `PHONEMES.py` — Phoneme and viseme extraction
-- `VOICE_PROFILE.py` — Voice frequency profiles
-- `OCR.py` — Screen reading and document scanning
 
 ### Corti — the new cochlea
 
@@ -139,26 +128,31 @@ Sound does not import grunt, tick, or stimming. Two organs, one job.
 - `presence_guide.py` — User presence detection
 
 ### Core Modules
-- `core.py` — Main framework initialization
+- `core.py` / `christman_sound/core.py` — kept for the record; nothing in the package imports them (Everett, 2026-10-11)
 - `logger.py` — Unified logging
-- `christman_dsp.c` — DSP operations (compiled)
+- `christman_dsp.c` — the bare-metal DSP engine. Build: `python3 scripts/build_dsp.py --check`; loaded by `christman_sound/dsp.py`
 
 ## Quick Start
 
 ### Basic Voice I/O
 
 ```python
-from CHRISTMAN_EAR_CANAL import listen, speak, analyze_tone
+from christman_voice_sdk import listen                      # timed mic grab; needs sounddevice + PortAudio
+from christman_voice_sdk.integration.voice_capture_client import extract_frequency_signature
+from christman_voice_sdk.audio.hearing import Hearing
 
-# Listen to user
-wav = listen(max_duration=8)
+audio = listen(8)                                           # 8 s, 44.1 kHz, float32
+print(extract_frequency_signature(audio))                   # None for anything that was not measured
 
-# Analyze tone
-tone = analyze_tone(wav)
-print(tone)
 
-# Respond
-speak("I understood you, Everett.", emotion="warm")
+def page_a_human(safety_result, context) -> bool:
+    ...                                                     # return True ONLY once a person was reached
+    return True
+
+
+hearing = Hearing(crisis_callback=page_a_human)
+turn = hearing.hear(text="scared")                          # a Corti card can be passed as corti_event=
+print(turn.decision.mode, turn.decision.safety.status)      # gentle-lift clear
 ```
 
 ### Speech Recognition
@@ -200,14 +194,12 @@ output_wav = converter.convert(
 ### OCR & Screen Reading
 
 ```python
-from CHRISTMAN_EAR_CANAL import scan_screen, scan_document
+import asyncio
+from christman_ocr_shared import ChristmanOCR               # needs paddleocr (+ pymupdf for PDFs)
 
-# Read screen
-result = scan_screen(being="AlphaVox")
-print(result["text"])
-
-# Scan document
-result = scan_document("/path/to/document.pdf", being="Seraphinia")
+ocr = ChristmanOCR(being_name="AlphaVox")                   # speaks via Derek, falls back to local TTS on stdin
+result = asyncio.run(ocr.read_document("/path/to/document.pdf"))
+print(result["pages"], result["confidence"], result["text"])
 ```
 
 ## Configuration
@@ -231,23 +223,18 @@ export CHRISTMAN_SAMPLE_RATE=16000
 
 ### Voice Profiles
 
-```python
-from CHRISTMAN_EAR_CANAL import capture_voice_profile, list_voice_profiles
-
-# Capture new profile
-capture_voice_profile("being_name", duration=8)
-
-# List available profiles
-profiles = list_voice_profiles()
-print(profiles)
+```bash
+python3 -m christman_voice_sdk.integration.voice_capture_client --capture everett   # 8 s from the mic
+python3 -m christman_voice_sdk.integration.voice_capture_client --list
+python3 -m christman_voice_sdk.integration.voice_capture_client --speak "I'm here." --profile everett
 ```
+
+A profile stores only what was measured. Silence yields `fundamental_hz: null`, never 150.
 
 ## Architecture
 
 ```
 User Input
-    ↓
-[CHRISTMAN_EAR_CANAL] (High-level API)
     ↓
 [christman_voice_sdk] (Production engines)
     ├── Audio → Speech Recognition → Text

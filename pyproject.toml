@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["christman_voice_sdk*", "christman_sound*", "CHRISTMAN_EAR_CANAL"]
+include = ["christman_voice_sdk*", "christman_sound*"]
 
 [tool.setuptools.package-data]
 christman_voice_sdk = ["py.typed"]
