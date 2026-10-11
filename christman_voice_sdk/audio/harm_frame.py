@@ -48,8 +48,36 @@ Known limits, named rather than discovered:
   - Passive voice ("I was hurt by him") gets agent and patient backwards.
   - Multi-clause chains beyond one embedding are not followed.
   - Pronoun antecedents are never resolved. "he" is THIRD_PARTY, never a name.
-  - Sarcasm and hypotheticals ("if he killed me") are invisible.
+  - Sarcasm is invisible. "my mom will kill me if I'm late" is a live
+    third-party-on-speaker frame and the gate will hold it. That is the
+    chosen direction of error: a caregiver check-in costs minutes; a
+    cleared crisis costs a person.
   - Reported speech ("she said she'd kill me") attributes to the speaker.
+  - Ideation phrasing outside IDEATION_PHRASES is not seen. "I can't go on"
+    is deliberately NOT in the table — it is too often about a job.
+
+WHAT CHANGED 2026-10-11 (measured, every line run before and after)
+--------------------------------------------------------------------
+The Hearing gate (`hearing.harm_frame_safety`) is the ONLY crisis gate on
+the Corti path — it replaced the Aegis substring floor. Probed with 15
+sentences, it returned `clear` for:
+
+    'I am thinking about suicide'        'I want to die'
+    'I am going to commit suicide'       'I am suicidal'
+    'I might kill myself tonight'        'I dont want to live anymore'
+    "I can't stop thinking about killing myself"   (but "cant" hard-blocked)
+
+Four causes, each fixed here and pinned in tests/test_harm_frame_gate.py:
+  1. `\bcan\b` matched inside "can't" -> ABILITY -> not stated_intent.
+  2. "might" -> HYPOTHETICAL -> not stated_intent. The gate now reads
+     `live_risk` (not negated, not past) for speaker-patient harm.
+  3. NOMINAL_CARRIERS were all past-tense verbs with past_tense=True
+     hardcoded; "commit", "thinking about" were absent.
+  4. No ideation vocabulary at all: "want to die", "suicidal", "don't want
+     to live", "end it all" had no predicate to match.
+Plus: "my"/"our" + noun pointed the patient at the SPEAKER ("he hurt my
+feelings" hard-blocked; "my son is going to commit suicide" named the
+speaker as the one at risk).
 """
 
 from __future__ import annotations
@@ -60,7 +88,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from .structural_affect import FIRST_PERSON, THIRD_PERSON, NEGATORS
+from .structural_affect import FIRST_PERSON, THIRD_PERSON, NEGATORS, normalize_apostrophes
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -93,7 +121,8 @@ class Modality(str, Enum):
 
 #: Predicates that put one person's body or safety at stake.
 HARM_PREDICATES: Dict[str, float] = {
-    "kill": 1.0, "murder": 1.0, "shoot": 1.0, "stab": 1.0, "strangle": 1.0,
+    "kill": 1.0, "murder": 1.0, "shoot": 1.0, "shot": 1.0, "stab": 1.0,
+    "strangle": 1.0,
     "choke": 0.95, "suffocate": 0.95, "drown": 0.95,
     "rape": 1.0, "molest": 1.0, "assault": 0.9, "abuse": 0.9,
     "beat": 0.85, "hit": 0.7, "punch": 0.75, "slap": 0.6, "kick": 0.7,
@@ -121,11 +150,28 @@ NOMINAL_HARM: Dict[str, float] = {
     "assault": 0.9, "abuse": 0.9, "rape": 1.0, "accident": 0.6,
 }
 
-#: Verbs that take a nominal harm as their complement.
-NOMINAL_CARRIERS: Tuple[str, ...] = (
+#: Verbs that take a nominal harm as their complement, split by tense.
+#:
+#: 2026-10-11: the predecessor had ONE list, all past-tense verbs, and set
+#: past_tense=True unconditionally on this path. "I am going to commit
+#: suicide" found no carrier at all ("committed" != "commit") and came back
+#: clear. "I am thinking about suicide" likewise. Measured before this change:
+#:
+#:     'I am thinking about suicide'      -> clear
+#:     'I am going to commit suicide'     -> clear
+#:
+#: Live carriers are now their own list and past tense is read, not assumed.
+NOMINAL_CARRIERS_PAST: Tuple[str, ...] = (
     "died by", "died of", "died from", "passed from", "committed",
     "attempted", "survived", "lost him to", "lost her to", "lost them to",
 )
+NOMINAL_CARRIERS_LIVE: Tuple[str, ...] = (
+    "commit", "committing", "attempt", "attempting", "considering",
+    "contemplating", "planning", "thinking about", "thinking of",
+    "think about",
+)
+#: Kept for anyone importing the old name.
+NOMINAL_CARRIERS: Tuple[str, ...] = NOMINAL_CARRIERS_PAST + NOMINAL_CARRIERS_LIVE
 
 SELF_HARM_PHRASES: Tuple[str, ...] = (
     "kill myself", "killing myself", "end my life", "ending my life",
@@ -134,14 +180,149 @@ SELF_HARM_PHRASES: Tuple[str, ...] = (
     "not be here anymore", "not wake up",
 )
 
+#: Death-wish and ideation phrases. There is no reflexive patient inside the
+#: phrase, so the patient is whoever the clause's subject is: "I want to die"
+#: is the speaker, "she wants to die" is a third party.
+#:
+#: 2026-10-11: none of these existed. Measured before this change, every one
+#: of these came back `clear` from the Hearing gate:
+#:
+#:     'I want to die'                    -> clear
+#:     'I am suicidal'                    -> clear
+#:     'I dont want to live anymore'      -> clear
+#:     'I might kill myself tonight'      -> clear   (hypothetical modality)
+#:
+#: Severity is the phrase's own weight, not a crisis score — same rule as
+#: HARM_PREDICATES.
+IDEATION_PHRASES: Dict[str, float] = {
+    "want to die": 1.0, "wants to die": 1.0, "wanna die": 1.0,
+    "wish i was dead": 1.0, "wish i were dead": 1.0,
+    "wish i was never born": 0.9, "wish i had never been born": 0.9,
+    "better off dead": 1.0, "rather be dead": 1.0,
+    "don't want to live": 1.0, "dont want to live": 1.0,
+    "do not want to live": 1.0, "not want to live": 1.0,
+    "don't want to be alive": 1.0, "dont want to be alive": 1.0,
+    "don't want to be here anymore": 0.9, "dont want to be here anymore": 0.9,
+    "no reason to live": 0.95, "nothing to live for": 0.95,
+    "end it all": 0.95, "ending it all": 0.95,
+    "thinking about suicide": 1.0, "thinking of suicide": 1.0,
+    "thoughts of suicide": 1.0, "suicidal thoughts": 1.0,
+    "feel suicidal": 1.0, "feeling suicidal": 1.0, "suicidal": 1.0,
+    "give up on life": 0.8, "giving up on life": 0.8,
+    # Everett's table, 2026-10-11: "I can't keep myself safe" MUST call.
+    "can't keep myself safe": 1.0, "cant keep myself safe": 1.0,
+    "cannot keep myself safe": 1.0, "can not keep myself safe": 1.0,
+    "can't stay safe": 0.95, "cant stay safe": 0.95, "cannot stay safe": 0.95,
+    # "I'm going to end it" — ruled a call when nothing follows "end it"
+    # (see IDEATION_POST_EXCLUSIONS for "end it with him").
+    "end it": 0.85, "ending it": 0.85,
+}
+
+#: Ideation phrases that are past tense by their own wording.
+PAST_IDEATION_PHRASES: Dict[str, float] = {
+    "wanted to die": 1.0, "was suicidal": 1.0, "were suicidal": 1.0,
+    "wished i was dead": 1.0, "wished i were dead": 1.0,
+}
+
+#: What may follow an ideation phrase and make it NOT one. This is the
+#: `post` mechanism ("help me PICK A FONT") applied to death-wish idioms:
+#: "I want to die laughing" / "of embarrassment" is not a wish to die, and
+#: "I'm going to end it with him" has an object that is not a life.
+IDEATION_POST_EXCLUSIONS: Dict[str, Tuple[str, ...]] = {
+    "want to die": ("laughing", "of laughter", "of embarrassment", "of shame",
+                    "of boredom", "of cringe", "happy", "old", "in my sleep"),
+    "wants to die": ("laughing", "of laughter", "of embarrassment", "of shame",
+                     "of boredom", "happy", "old", "in my sleep"),
+    "wanna die": ("laughing", "of laughter", "of embarrassment", "of shame",
+                  "of boredom", "of cringe"),
+    "end it": ("with", "between", "there", "on a high"),
+    "ending it": ("with", "between", "there", "on a high"),
+}
+
+#: The phrases whose own first word is the negator. "don't want to live" is
+#: a wish, not a negated wish; "can't keep myself safe" is a disclosure.
+_SELF_NEGATED_PREFIXES = ("don't", "dont", "do not", "not ", "can't", "cant",
+                          "cannot", "can not")
+
 MODAL_PATTERNS: Tuple[Tuple[str, Modality], ...] = (
     (r"\b(?:want|wants|wanted|wanna|plan|plans|planning|intend|intends|trying)\s+to\b", Modality.VOLITION),
     (r"\bgoing\s+to\b|\bgonna\b|\babout\s+to\b", Modality.FUTURE),
     (r"\b(?:need|needs|needed|have|has|had|got|gotta)\s+to\b", Modality.NEED),
     (r"\bwill\b|\b'll\b", Modality.FUTURE),
-    (r"\b(?:can|could|able\s+to)\b", Modality.ABILITY),
+    # (?!') — `\bcan\b` matched the "can" inside "can't", so
+    # "I can't stop thinking about killing myself" read as ABILITY and was
+    # excluded from the crisis shape. Measured: the apostrophe decided the
+    # safety outcome ("cant" hard-blocked, "can't" cleared).
+    (r"\b(?:can|could|able\s+to)\b(?!')", Modality.ABILITY),
     (r"\bif\b|\bwould\b|\bmight\b|\bmaybe\b", Modality.HYPOTHETICAL),
 )
+
+#: What precedes a predicate when it is history rather than a live statement.
+#:
+#: Everett's ruling, 2026-10-11: "I used to want to kill myself" and "the
+#: hitting stopped years ago" must NOT call a human; "he choked me yesterday"
+#: MUST (my ruling on his open item — strangulation by someone still in the
+#: person's life is not history). So the distancing markers are the ones
+#: that put a stop between then and now: "used to", "years ago", "back
+#: then", "when I was". "yesterday" and "last night" are not on this list
+#: on purpose.
+_PAST_BEFORE = re.compile(
+    r"\b(?:used to|tried to|almost|once|back then|long ago|a long time ago|"
+    r"years? ago|months? ago|when i was|as a (?:kid|child|teenager)|"
+    r"in the past|i was|i felt)"
+    r"(?:\s+(?:want|wanting|try|trying|plan|planning)\s+to)?\s*$"
+)
+
+#: Distancing markers anywhere in the clause: "the hitting stopped years ago".
+_DISTANCING_IN_CLAUSE = re.compile(
+    r"\b(?:years? ago|months? ago|back then|long ago|a long time ago|"
+    r"when i was (?:a |an )?(?:kid|child|teenager|little|young|\d+)|"
+    r"as a (?:kid|child|teenager)|in the past|no longer|stopped|used to)\b"
+)
+
+#: Past auxiliaries before a verb: "he WAS hitting me", "I HAD cut myself".
+_PAST_AUX = frozenset({"was", "were", "had", "did", "died", "used"})
+
+_POSSESSIVE_FIRST = frozenset({"my", "our", "mine"})
+
+_ALL_PREDICATES: Dict[str, float] = {**HARM_PREDICATES, **HELP_PREDICATES}
+
+
+def _stem(tok: str) -> Optional[str]:
+    """
+    Reduce an inflected verb to a predicate key, or None.
+
+    2026-10-11, measured: "he is choking me" found NO frame. The old stem
+    rule stripped "ing" and looked up "chok", which is not a word, so the
+    whole sentence was invisible to the gate. Same for "stabbed" ("stabb"),
+    "hitting" ("hitt"), "strangling" ("strangl"). Everett's MUST-CALL table
+    is mostly these forms.
+    """
+    if tok in _ALL_PREDICATES:
+        return tok
+    cands: List[str] = []
+    if tok.endswith("ies"):
+        cands.append(tok[:-3] + "y")
+    if tok.endswith("es"):
+        cands.append(tok[:-2])
+    if tok.endswith("s"):
+        cands.append(tok[:-1])
+    if tok.endswith("ing") and len(tok) > 4:
+        base = tok[:-3]
+        cands += [base, base + "e"]
+        if len(base) >= 3 and base[-1] == base[-2]:
+            cands.append(base[:-1])
+    if tok.endswith("ed") and len(tok) > 3:
+        base = tok[:-2]
+        cands += [base, base + "e"]
+        if len(base) >= 3 and base[-1] == base[-2]:
+            cands.append(base[:-1])
+        if tok.endswith("ied"):
+            cands.append(tok[:-3] + "y")
+    for cand in cands:
+        if cand in _ALL_PREDICATES:
+            return cand
+    return None
 
 _SELF_PATIENT = frozenset({"me", "myself", "my", "mine", "us", "ourselves", "our"})
 _OTHER_PATIENT = frozenset(THIRD_PERSON) | {"him", "her", "them", "himself",
@@ -173,6 +354,11 @@ class HarmFrame:
     past_tense: bool
     post: str            # what follows the patient. "help me PICK A FONT"
     clause: str
+    #: How the frame was found: "self_harm_phrase" | "ideation" | "nominal"
+    #: | "verb" | "none". A gate needs this because an UNKNOWN patient means
+    #: different things for "kill the process" (verb) and a bare "suicidal"
+    #: typed on an AAC board (ideation).
+    shape: str = "verb"
 
     @property
     def identified(self) -> Dict[str, bool]:
@@ -217,6 +403,35 @@ class HarmFrame:
             and self.modality is not Modality.ABILITY
         )
 
+    @property
+    def live_risk(self) -> bool:
+        """
+        Not negated and not past — in ANY modality.
+
+        This is what the safety gate looks at for harm whose patient is the
+        speaker. `stated_intent` excluded hypothetical and ability, which is
+        the right distinction for an intent score and the wrong one for a
+        gate: "I might kill myself tonight" is hypothetical by grammar and a
+        crisis by any other reading. A gate that lets grammar decide that
+        does not reach a human when it should.
+        """
+        return not self.negated and not self.past_tense
+
+    @property
+    def speaker_may_be_patient(self) -> bool:
+        """
+        The patient is the speaker, or the shape makes the speaker the
+        default patient and no one else was named: a bare "suicidal" or
+        "want to die" typed on a board has no subject token and is still
+        about the person typing it.
+        """
+        if self.patient is Party.SPEAKER:
+            return True
+        return (
+            self.patient is Party.UNKNOWN
+            and self.shape in {"self_harm_phrase", "ideation"}
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "subject": self.subject.value, "subject_text": self.subject_text,
@@ -226,10 +441,13 @@ class HarmFrame:
             "patient": self.patient.value, "patient_text": self.patient_text,
             "negated": self.negated, "past_tense": self.past_tense,
             "post": self.post,
+            "shape": self.shape,
             "speaker_is_patient": self.speaker_is_patient,
+            "speaker_may_be_patient": self.speaker_may_be_patient,
             "speaker_is_agent": self.speaker_is_agent,
             "self_directed": self.self_directed,
             "stated_intent": self.stated_intent,
+            "live_risk": self.live_risk,
             "clause": self.clause,
         }
 
@@ -238,6 +456,9 @@ def _party(token: str) -> Tuple[Party, str]:
     t = token.lower().strip(".,!?;:")
     if t in _SELF_PATIENT or t in FIRST_PERSON:
         return Party.SPEAKER, t
+    if t in {"it", "its"}:
+        # "I'm going to kill it at the meeting" — a thing, not a person.
+        return Party.IMPERSONAL, t
     if t in _OTHER_PATIENT:
         return Party.THIRD_PARTY, t
     return Party.UNKNOWN, t
@@ -260,6 +481,52 @@ def _negated_before(tokens: List[str], index: int, reach: int = 4) -> bool:
     return False
 
 
+def _subject_before(btoks: List[str], reach: int = 6) -> Tuple[Party, str]:
+    """
+    Nearest party before a predicate, reading possessives correctly.
+
+    2026-10-11: the predecessor walked back from the predicate and returned
+    SPEAKER on the first first-person token it met. "my" is first person, so
+    "my son is going to commit suicide" pointed the patient at the SPEAKER —
+    a wrong patient, which the module docstring names as worse than no
+    patient. A first-person possessive followed by a noun points at the noun.
+    """
+    window = btoks[-reach:]
+    for i in range(len(window) - 1, -1, -1):
+        tok = window[i]
+        if tok in _POSSESSIVE_FIRST:
+            if i + 1 < len(window):
+                return Party.THIRD_PARTY, f"{tok} {window[i + 1]}"
+            return Party.SPEAKER, tok
+        p, ptext = _party(tok)
+        if p is not Party.UNKNOWN:
+            return p, ptext
+    return Party.UNKNOWN, ""
+
+
+def _patient_after(tokens: List[str], index: int, reach: int = 3) -> Tuple[Party, str]:
+    """
+    First person-ish token after a verb. A first-person possessive plus a
+    noun is that noun ("he hurt my son" — the son is the patient, not the
+    speaker; the predecessor read "my" as SPEAKER and hard-blocked
+    "he hurt my feelings").
+    """
+    for ahead in range(1, reach + 1):
+        k = index + ahead
+        if k >= len(tokens):
+            break
+        tok = tokens[k]
+        if tok in _POSSESSIVE_FIRST and k + 1 < len(tokens):
+            return Party.THIRD_PARTY, f"{tok} {tokens[k + 1]}"
+        p, ptext = _party(tok)
+        if p is not Party.UNKNOWN:
+            return p, ptext
+    if index + 1 < len(tokens):
+        # a following noun that is not a person -> impersonal object
+        return Party.IMPERSONAL, tokens[index + 1]
+    return Party.UNKNOWN, ""
+
+
 def extract_frames(text: str) -> List[HarmFrame]:
     """
     Pull every [subject][modality][predicate][patient] frame out of `text`.
@@ -267,10 +534,11 @@ def extract_frames(text: str) -> List[HarmFrame]:
     Returns [] when nothing matches. An empty list means no harm or help
     predicate was found — NOT that the utterance is safe.
     """
-    raw = (text or "").strip()
+    raw = normalize_apostrophes(text or "").strip()
     if not raw:
         return []
     lowered = raw.lower()
+    distanced = bool(_DISTANCING_IN_CLAUSE.search(lowered))
     frames: List[HarmFrame] = []
 
     # -- Fixed self-directed phrases first. Patient is the subject by
@@ -281,37 +549,85 @@ def extract_frames(text: str) -> List[HarmFrame]:
             continue
         before = lowered[:idx]
         tokens_before = _WORD.findall(before)
-        subj = Party.SPEAKER if (set(tokens_before) & set(FIRST_PERSON)) else Party.UNKNOWN
+        subj, subj_text = _subject_before(tokens_before)
+        if subj is Party.THIRD_PARTY:
+            # "she wants me to kill myself" is not a shape this handles;
+            # the reflexive says the speaker, and the speaker wins.
+            subj, subj_text = Party.SPEAKER, "i"
         negated = bool(tokens_before) and tokens_before[-1] in NEGATORS or bool(
             re.search(r"\b(?:never|not|don't|dont|won't|wont|wouldn't|wouldnt)\s+"
                       r"(?:want|going|gonna|plan|intend|need|have|got)?\s*(?:to\s+)?$", before)
         )
-        past = bool(re.search(r"\b(?:used to|tried to|wanted to|almost|once)\s*$", before))
+        past = distanced or bool(_PAST_BEFORE.search(before)) or bool(
+            re.search(r"\bwanted to\s*$", before)
+        )
         verb = phrase.split()[0]
         frames.append(HarmFrame(
-            subject=subj, subject_text="i" if subj is Party.SPEAKER else "",
+            subject=subj, subject_text=subj_text or ("i" if subj is Party.SPEAKER else ""),
             modality=_modality(before[-40:]),
             predicate=verb, polarity=Polarity.HARM,
             severity=HARM_PREDICATES.get(verb, 0.9),
             patient=Party.SPEAKER, patient_text=phrase.split()[-1],
             negated=negated, past_tense=past,
             post=raw[idx + len(phrase):].strip(" .,!?"), clause=raw,
+            shape="self_harm_phrase",
         ))
 
-    # -- Harm named as a noun: "died by suicide", "committed suicide".
-    for carrier in NOMINAL_CARRIERS:
+    # -- Ideation and death-wish phrases. The patient is the clause subject.
+    #    Longest phrase first, and a matched span is masked so "suicidal
+    #    thoughts" does not also fire "suicidal".
+    masked = lowered
+    ideation_table = {**IDEATION_PHRASES, **PAST_IDEATION_PHRASES}
+    for phrase in sorted(ideation_table, key=len, reverse=True):
+        m = re.search(rf"\b{re.escape(phrase)}\b", masked)
+        if not m:
+            continue
+        before = masked[:m.start()]
+        post = masked[m.end():].strip(" .,!?")
+        excluded_by = IDEATION_POST_EXCLUSIONS.get(phrase, ())
+        if any(post.startswith(marker) for marker in excluded_by):
+            # The idiom case: "want to die LAUGHING", "end it WITH HIM".
+            # Not a frame. The span is still masked so a shorter phrase
+            # cannot re-fire on it.
+            logger.debug("ideation phrase %r excluded by post %r", phrase, post)
+            masked = masked[:m.start()] + (" " * (m.end() - m.start())) + masked[m.end():]
+            continue
+        tokens_before = _WORD.findall(before)
+        subj, subj_text = _subject_before(tokens_before)
+        past = (
+            phrase in PAST_IDEATION_PHRASES
+            or distanced
+            or bool(_PAST_BEFORE.search(before))
+        )
+        negated = bool(tokens_before) and tokens_before[-1] in NEGATORS and not (
+            # "don't want to live" carries its own negator; it is not a
+            # negated wish, it IS the wish.
+            phrase.startswith(_SELF_NEGATED_PREFIXES)
+        )
+        frames.append(HarmFrame(
+            subject=subj, subject_text=subj_text,
+            modality=_modality(before[-40:]),
+            predicate=phrase, polarity=Polarity.HARM,
+            severity=ideation_table[phrase],
+            # Patient is whoever the clause is about. UNKNOWN stays UNKNOWN;
+            # the gate reads `speaker_may_be_patient` for this shape.
+            patient=subj, patient_text=subj_text,
+            negated=negated, past_tense=past,
+            post=post, clause=raw,
+            shape="ideation",
+        ))
+        masked = masked[:m.start()] + (" " * (m.end() - m.start())) + masked[m.end():]
+
+    # -- Harm named as a noun: "died by suicide", "committed suicide",
+    #    "thinking about suicide", "going to commit suicide".
+    for carrier in NOMINAL_CARRIERS_PAST + NOMINAL_CARRIERS_LIVE:
         for noun, sev in NOMINAL_HARM.items():
             m = re.search(rf"\b{re.escape(carrier)}\s+{re.escape(noun)}\b", lowered)
             if not m:
                 continue
             before = lowered[:m.start()]
             btoks = _WORD.findall(before)
-            subj, subj_text = (Party.UNKNOWN, "")
-            for tok in reversed(btoks[-6:]):
-                s, stext = _party(tok)
-                if s is not Party.UNKNOWN:
-                    subj, subj_text = s, stext
-                    break
+            subj, subj_text = _subject_before(btoks)
             if subj is Party.UNKNOWN and btoks:
                 subj, subj_text = Party.THIRD_PARTY, btoks[-1]
             frames.append(HarmFrame(
@@ -322,48 +638,26 @@ def extract_frames(text: str) -> List[HarmFrame]:
                 predicate=f"{carrier} {noun}", polarity=Polarity.HARM,
                 severity=sev, patient=subj, patient_text=subj_text,
                 negated=_negated_before(btoks, len(btoks)),
-                past_tense=True,
+                past_tense=(carrier in NOMINAL_CARRIERS_PAST)
+                           or distanced
+                           or bool(_PAST_BEFORE.search(before)),
                 post=raw[m.end():].strip(" .,!?"), clause=raw,
+                shape="nominal",
             ))
 
     # -- Verb + patient frames.
     tokens = _WORD.findall(lowered)
     for i, tok in enumerate(tokens):
-        stem = tok.rstrip("s") if tok.endswith("s") and tok[:-1] in (
-            HARM_PREDICATES | HELP_PREDICATES) else tok
-        stem = stem.rstrip("ing") if stem not in (HARM_PREDICATES | HELP_PREDICATES) \
-            and stem.endswith("ing") and stem[:-3] in (HARM_PREDICATES | HELP_PREDICATES) else stem
+        stem = _stem(tok)
+        if stem is None:
+            continue
         if stem in HARM_PREDICATES:
             polarity, severity = Polarity.HARM, HARM_PREDICATES[stem]
-        elif stem in HELP_PREDICATES:
-            polarity, severity = Polarity.HELP, HELP_PREDICATES[stem]
         else:
-            continue
+            polarity, severity = Polarity.HELP, HELP_PREDICATES[stem]
 
-        # patient: first person-ish token after the verb, within 3
-        patient, patient_text = Party.UNKNOWN, ""
-        for ahead in range(1, 4):
-            k = i + ahead
-            if k >= len(tokens):
-                break
-            p, ptext = _party(tokens[k])
-            if p is not Party.UNKNOWN:
-                patient, patient_text = p, ptext
-                break
-        if patient is Party.UNKNOWN and i + 1 < len(tokens):
-            # a following noun that is not a person -> impersonal object
-            patient, patient_text = Party.IMPERSONAL, tokens[i + 1]
-
-        # subject: nearest person-ish token before the verb, within 5
-        subject, subject_text = Party.UNKNOWN, ""
-        for back in range(1, 6):
-            k = i - back
-            if k < 0:
-                break
-            s, stext = _party(tokens[k])
-            if s is not Party.UNKNOWN:
-                subject, subject_text = s, stext
-                break
+        patient, patient_text = _patient_after(tokens, i)
+        subject, subject_text = _subject_before(tokens[:i], reach=5)
 
         seg = " ".join(tokens[max(0, i - 6):i + 1])
         frames.append(HarmFrame(
@@ -372,13 +666,17 @@ def extract_frames(text: str) -> List[HarmFrame]:
             predicate=stem, polarity=polarity, severity=severity,
             patient=patient, patient_text=patient_text,
             negated=_negated_before(tokens, i),
-            past_tense=bool(set(tokens[:i]) & {"was", "were", "had", "did",
-                                               "died", "ago", "yesterday"}),
+            # Past = a past auxiliary before the verb ("he WAS hitting me"),
+            # or a distancing marker in the clause ("stopped years ago").
+            # An -ed inflection alone is NOT past for the gate: "he choked
+            # me" is a report of an assault, not of history.
+            past_tense=bool(set(tokens[max(0, i - 4):i]) & _PAST_AUX) or distanced,
             # THE POST. "help me PICK A FONT" — what the act is for. It is what
             # separates "help me" from "help me pick a font", and the verb
             # cannot carry that difference.
             post=" ".join(tokens[i + (2 if patient_text else 1):]),
             clause=raw,
+            shape="verb",
         ))
 
     # de-dupe: a fixed phrase and its verb can both match
@@ -408,11 +706,14 @@ def extract_frames(text: str) -> List[HarmFrame]:
         modality=_modality(lowered), predicate="", polarity=Polarity.HELP,
         severity=0.0, patient=Party.UNKNOWN, patient_text="",
         negated=False, past_tense=False, post="", clause=raw,
+        shape="none",
     )]
 
 
 __all__ = ["HarmFrame", "Party", "Polarity", "Modality", "extract_frames",
-           "HARM_PREDICATES", "HELP_PREDICATES", "SELF_HARM_PHRASES"]
+           "HARM_PREDICATES", "HELP_PREDICATES", "SELF_HARM_PHRASES",
+           "IDEATION_PHRASES", "PAST_IDEATION_PHRASES",
+           "NOMINAL_CARRIERS_PAST", "NOMINAL_CARRIERS_LIVE"]
 
 # ==============================================================================
 # Patent Pending — The Christman AI Project / Luma Cognify AI

@@ -41,7 +41,7 @@ from .fusion_engine import (
     FusionEngine,
     SafetyResult,
 )
-from .harm_frame import HarmFrame, Polarity, extract_frames
+from .harm_frame import HarmFrame, Party, Polarity, extract_frames
 from .prosody import ProsodyAnalyzer, ProsodyReading
 from .structural_affect import AffectReading, StructuralAffectAnalyzer
 
@@ -53,40 +53,106 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
     """
     Aegis callback. Uses Everett's frame. Does not rewrite harm_frame.py.
 
-    Crisis shape: harm predicate, speaker is the patient, stated intent
-    (not past, not hypothetical, not negated). Grief with a third-party
-    patient — "my brother died by suicide" — is not that shape.
+    This is the ONLY crisis gate on the Corti path. What it returns:
+
+      hard_block     a harm frame whose patient is (or may be) the speaker,
+                     not negated, not history — in ANY modality. "I might
+                     kill myself tonight" is hypothetical by grammar and a
+                     crisis by every other reading. A hard block MUST reach
+                     a human (Aegis raises CrisisNotDelivered otherwise).
+      soft_redirect  someone else is named as at risk right now ("she wants
+                     to die", "he is going to kill her"), or the speaker's
+                     own history ("I used to want to kill myself"). Flagged,
+                     spoken unchanged, no human paged.
+      clear          grief and history about others ("my brother died by
+                     suicide"), negated harm ("I would never hurt myself"),
+                     or no harm predicate at all. Flags still carry what
+                     was seen; `reason` says which.
+
+    WHAT CHANGED 2026-10-11: the previous gate required `stated_intent`,
+    which excluded hypothetical and ability modalities, and returned a bare
+    `clear` for every other frame. Measured: "I am thinking about suicide",
+    "I might kill myself tonight", "I want to die", "I am suicidal" all
+    came back clear. Everett's MUST-CALL / MUST-NOT-CALL table is pinned in
+    tests/test_harm_frame_gate.py and this function is written to it.
     """
     del context
     original = text or ""
     frames = extract_frames(original)
+
     crisis: List[HarmFrame] = []
+    at_risk_other: List[HarmFrame] = []
+    history_self: List[HarmFrame] = []
+    history_other: List[HarmFrame] = []
+    negated: List[HarmFrame] = []
     for frame in frames:
         if not frame.identified["predicate"]:
             continue
         if frame.polarity is not Polarity.HARM:
             continue
-        if not frame.stated_intent:
+        if frame.negated:
+            negated.append(frame)
             continue
-        if frame.speaker_is_patient:
+        if frame.past_tense:
+            (history_self if frame.speaker_may_be_patient else history_other).append(frame)
+            continue
+        if frame.speaker_may_be_patient:
             crisis.append(frame)
+        elif frame.patient is Party.THIRD_PARTY:
+            at_risk_other.append(frame)
+
+    def _flags(prefix: str, items: List[HarmFrame]) -> List[str]:
+        out: List[str] = []
+        for f in items:
+            out += [f"{prefix}:{f.predicate}", f"patient:{f.patient.value}",
+                    f"subject:{f.subject.value}", f"shape:{f.shape}"]
+        return out
 
     if crisis:
-        lead = crisis[0]
         return SafetyResult(
             status="hard_block",
-            reason="harm_frame_stated_intent",
+            reason="harm_frame_speaker_at_risk",
             sanitized_text="",
-            flags=[
-                f"hard:{lead.predicate}",
-                f"patient:{lead.patient.value}",
-                f"subject:{lead.subject.value}",
-            ],
-            flagged_terms=[lead.predicate],
-            hold_marker="[SAFETY HOLD — stated harm, speaker is the patient]",
+            flags=_flags("hard", crisis),
+            flagged_terms=[f.predicate for f in crisis],
+            hold_marker="[SAFETY HOLD — harm with the speaker as patient]",
         )
 
-    return SafetyResult(status="clear", sanitized_text=original)
+    if at_risk_other:
+        return SafetyResult(
+            status="soft_redirect",
+            reason="harm_frame_third_party_at_risk",
+            sanitized_text=original,
+            flags=_flags("soft", at_risk_other),
+            flagged_terms=[f.predicate for f in at_risk_other],
+        )
+
+    if history_self:
+        return SafetyResult(
+            status="soft_redirect",
+            reason="harm_frame_history_self",
+            sanitized_text=original,
+            flags=_flags("history", history_self),
+            flagged_terms=[f.predicate for f in history_self],
+        )
+
+    if history_other:
+        return SafetyResult(
+            status="clear",
+            reason="harm_frame_history_third_party",
+            sanitized_text=original,
+            flags=_flags("history", history_other),
+        )
+
+    if negated:
+        return SafetyResult(
+            status="clear",
+            reason="harm_frame_negated",
+            sanitized_text=original,
+            flags=_flags("negated", negated),
+        )
+
+    return SafetyResult(status="clear", reason="no_harm_frame", sanitized_text=original)
 
 
 @dataclass(frozen=True)
