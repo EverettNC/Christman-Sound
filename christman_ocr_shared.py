@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import hashlib
+import subprocess
 import sys
-import os
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
@@ -19,17 +19,21 @@ import numpy as np
 import websockets
 
 try:
-    from christman_voice_sdk.audio.config import get_config
+    from christman_voice_sdk.audio.config import get_config, require_local_or_tls
     from christman_voice_sdk.utils.logger import get_logger
 except ImportError:
-    from audio.config import get_config
+    from audio.config import get_config, require_local_or_tls
     from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 # ── Config from SDK ─────────────────────────────────────────────────────────
 config = get_config()
-DEREK_WS_URI = config.get("derek.ws_uri", "ws://localhost:8000/ws/derek")
+# Rule 12: OCR'd text (medical letters, screens) goes over this socket.
+# Plaintext ws:// is accepted to loopback only; anything else must be wss://.
+DEREK_WS_URI = require_local_or_tls(
+    config.get("derek.ws_uri", "ws://localhost:8000/ws/derek"), what="derek.ws_uri"
+)
 CONFIDENCE_THRESHOLD = 0.50
 SCREEN_POLL_INTERVAL = 2.5
 PDF_DPI = 300
@@ -103,14 +107,18 @@ class ChristmanOCREngine:
                 "lines": lines,
                 "confidence": float(np.mean(confidences)),
                 "line_count": len(lines),
+                "error": None,
             }
         except Exception as e:
-            logger.warning(f"OCR extraction error: {e}")
-            return self._empty_result()
+            # Rule 6: an engine failure is not "no text on the page". The
+            # result carries the error so a caller can tell them apart.
+            logger.error(f"OCR extraction failed: {e}", exc_info=True)
+            return self._empty_result(error=f"{type(e).__name__}: {e}")
 
     @staticmethod
-    def _empty_result() -> Dict:
-        return {"text": "", "lines": [], "confidence": 0.0, "line_count": 0}
+    def _empty_result(error: Optional[str] = None) -> Dict:
+        return {"text": "", "lines": [], "confidence": None, "line_count": 0,
+                "error": error}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -134,7 +142,11 @@ class ScreenCapture:
         except Exception as e:
             if sys.platform.startswith("linux"):
                 tmp = "/tmp/christman_screen.png"
-                os.system(f"scrot {tmp} 2>/dev/null")
+                try:
+                    subprocess.run(["scrot", tmp], check=False,
+                                   stderr=subprocess.DEVNULL, timeout=10)
+                except (OSError, subprocess.TimeoutExpired) as scrot_exc:
+                    logger.warning(f"scrot fallback failed: {scrot_exc}")
                 if Path(tmp).exists():
                     screenshot = Image.open(tmp)
                     screen_hash = hashlib.md5(screenshot.tobytes()).hexdigest()
@@ -231,29 +243,60 @@ class DerekAudioRelay:
                 if parsed.get("status") == "ok":
                     logger.info(f"{being} → Derek spoke {len(text)} chars")
                     return True
-        except Exception:
-            pass
+                logger.warning(f"Derek answered without status=ok: {parsed!r}")
+        except Exception as exc:
+            # Rule 6. This was `except Exception: pass` — the reason Derek
+            # was unreachable never appeared anywhere.
+            logger.warning(f"Derek relay failed ({type(exc).__name__}: {exc}) — "
+                           "using local TTS fallback")
 
-        logger.info("Derek offline — using local TTS fallback")
-        self._local_speak(text)
+        spoken = self._local_speak(text)
+        if not spoken:
+            logger.error("Local TTS fallback did not speak. Text was NOT voiced.")
         return False
 
     @staticmethod
-    def _local_speak(text: str):
-        """System TTS fallback."""
-        safe_text = text.replace('"', '\\"').replace("'", "\\'")
-        if sys.platform == "darwin":
+    def _local_speak(text: str) -> bool:
+        """
+        System TTS fallback. Returns True only if a speaker ran to completion.
+
+        Rule 12. The previous version did
             os.system(f'say "{safe_text}"')
+        with only quotes escaped, so a page containing `$(…)` or backticks
+        executed on the machine the moment it was OCR'd and read aloud. The
+        text now goes to the speaker on STDIN — never into a shell, never as
+        an argument, so it can neither be parsed as a command nor as an
+        option.
+        """
+        data = text.encode("utf-8")
+        if sys.platform == "darwin":
+            cmd = ["say"]
         elif sys.platform.startswith("linux"):
-            os.system(f'espeak "{safe_text}" -s 150 2>/dev/null')
+            cmd = ["espeak", "--stdin", "-s", "150"]
         else:
+            cmd = None
+
+        if cmd is not None:
             try:
-                import pyttsx3
-                engine = pyttsx3.init()
-                engine.say(text)
-                engine.runAndWait()
-            except ImportError:
-                logger.warning(f"Text to speak: {text}")
+                proc = subprocess.run(cmd, input=data, check=False,
+                                      stderr=subprocess.DEVNULL, timeout=120)
+                if proc.returncode == 0:
+                    return True
+                logger.error(f"{cmd[0]} exited {proc.returncode}")
+            except FileNotFoundError:
+                logger.error(f"{cmd[0]} is not installed")
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                logger.error(f"{cmd[0]} failed: {exc}")
+
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.say(text)
+            engine.runAndWait()
+            return True
+        except Exception as exc:
+            logger.error(f"pyttsx3 fallback failed: {exc}")
+        return False
 
 
 # ═════════════════════════════════════════════════════════════════════════════

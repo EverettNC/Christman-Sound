@@ -5,7 +5,7 @@ MFA when it is installed and a transcript is present.
 Otherwise: energy onsets from the WAV (timing) + transcript-derived
 labels. Never invents a cycling SIL/AA viseme stream.
 
-Used by synthesis, nonverbal, and CHRISTMAN_EAR_CANAL.PHONEMES.
+Used by synthesis and nonverbal.
 """
 from __future__ import annotations
 

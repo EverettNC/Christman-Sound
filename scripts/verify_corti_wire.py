@@ -127,13 +127,13 @@ def main() -> None:
             base + EVENT_PATH,
             data=json.dumps(CARD).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "Origin": "http://localhost:8080"},
+            headers={"Content-Type": "application/json", "Origin": "http://localhost:5487"},
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             acao = resp.headers.get("Access-Control-Allow-Origin")
-            if acao != "http://localhost:8080":
+            if acao != "http://localhost:5487":
                 fail(f"allowed origin not echoed, got {acao!r}")
-        ok("allowed origin http://localhost:8080 gets CORS header")
+        ok("allowed origin http://localhost:5487 gets CORS header")
 
         code, body = post(base, EVENT_PATH, json.dumps(CARD).encode(), origin="https://evil.example")
         if code != 403:

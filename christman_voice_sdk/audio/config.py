@@ -126,3 +126,33 @@ class Config:
 
 def get_config(config_path: Optional[Path] = None) -> Config:
     return Config(config_path)
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def require_local_or_tls(uri: str, what: str = "endpoint") -> str:
+    """
+    Accept a WebSocket URI only if it cannot carry a user's voice off the
+    machine in the clear: `ws://` to a loopback host, or `wss://` anywhere.
+
+    Rule 12. Voice biometrics and OCR'd text go over these sockets. The
+    previous defaults were plain `ws://` with a config-overridable host, so
+    one edited YAML line sent them in plaintext to any address.
+
+    Raises:
+        ValueError: on any other scheme, or on plaintext to a non-loopback host.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(uri)
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").lower()
+    if scheme == "wss":
+        return uri
+    if scheme == "ws" and host in _LOOPBACK_HOSTS:
+        return uri
+    raise ValueError(
+        f"{what} {uri!r} is not allowed: plaintext ws:// is permitted only to "
+        f"loopback ({sorted(_LOOPBACK_HOSTS)}); anything else must be wss://."
+    )

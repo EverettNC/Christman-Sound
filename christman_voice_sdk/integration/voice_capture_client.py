@@ -2,40 +2,97 @@
 voice_capture_client.py
 The Christman AI Project — Luma Cognify AI
 Voice Frequency Capture + Stealth TTS Relay
+
+WHAT CHANGED AND WHY (2026-10-11, every line measured before it was changed)
+----------------------------------------------------------------------------
+
+1. THE SAFETY NET HAD A NameError IN IT.
+
+       os.system(f'say -v "Samantha" "{text}"')
+
+   `os` was never imported. The local fallback runs at exactly one moment —
+   when Derek is already unreachable — and at that moment it raised
+   NameError. It was also a shell string with the text interpolated into it.
+   The text now goes to `say` on stdin; nothing is parsed as a command.
+
+2. IT MEASURED NOTHING AND REPORTED 150 Hz.
+
+       else:
+           fundamental = 150.0
+           pitch_min = 100.0
+           pitch_max = 250.0
+       ...
+       spectral_centroid = ... if fft_mag.sum() > 0 else 1500.0
+       ...
+       if mask.sum() == 0:
+           return (low_hz + high_hz) / 2
+
+   Silence, or a recording with no voiced frames, came back as a complete
+   voice profile: F0 150 Hz, range 100–250, centroid 1500, formants at the
+   band midpoints. Saved under the person's name. Sent to Derek as their
+   voice. A value that was not measured is None (HANDOFF rule), and the
+   profile now says how many frames were voiced so the reader knows what the
+   number stands on.
+
+3. `speak_via_derek` filled the same gaps again on the way out:
+
+       "pitch_hz": signature.get("fundamental_hz", 150)
+
+   None now travels as null. Derek decides what to do without a reading;
+   this file does not invent one for it.
+
+4. `PROFILE_DIR.mkdir(...)` ran at import. Importing a module must not write
+   to the home directory. It runs when a profile is saved.
+
+5. The Derek socket default is plaintext `ws://` to a config-overridable
+   host. Rule 12: accepted only to loopback; anything else must be `wss://`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import time
-import threading
+import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
-import sounddevice as sd
-import scipy.io.wavfile as wavfile
 import scipy.signal as signal
 
 import argparse
 import websockets  # pyright: ignore[reportMissingImports]
 
-from ..audio.config import get_config
+# sounddevice needs the PortAudio system library. Only capture_audio() needs
+# sounddevice. Analysis, profiles and speaking must not die at import on a
+# machine with no microphone stack, so it is imported where it is used and
+# its absence is reported there, loudly.
+try:
+    import sounddevice as sd  # pyright: ignore[reportMissingImports]
+    _SOUNDDEVICE_ERROR: Optional[str] = None
+except (ImportError, OSError) as _exc:   # OSError: "PortAudio library not found"
+    sd = None  # type: ignore[assignment]
+    _SOUNDDEVICE_ERROR = f"{type(_exc).__name__}: {_exc}"
+
+from ..audio.config import get_config, require_local_or_tls
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 # ── Config from SDK ───────────────────────────────────────────────────────────
 config = get_config()
-DEREK_WS_URI = config.get("derek.ws_uri", "ws://localhost:8000/ws/derek")
+DEREK_WS_URI = require_local_or_tls(
+    config.get("derek.ws_uri", "ws://localhost:8000/ws/derek"), what="derek.ws_uri"
+)
 PROFILE_DIR = Path.home() / ".christman_ai" / "voice_profiles"
 SAMPLE_RATE = 44100
 CAPTURE_DURATION = 8
 DEFAULT_PROFILE = "default"
 
-PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+#: Autocorrelation peak below this is treated as unvoiced. A threshold, not a
+#: measurement — named so it can be argued with.
+VOICING_THRESHOLD = 0.1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -43,7 +100,12 @@ PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def capture_audio(duration: int = CAPTURE_DURATION) -> np.ndarray:
-    """Record microphone input."""
+    """Record microphone input. Raises RuntimeError if there is no capture stack."""
+    if sd is None:
+        raise RuntimeError(
+            "capture_audio() needs sounddevice and the PortAudio library, which "
+            f"did not load here ({_SOUNDDEVICE_ERROR}). Nothing was recorded."
+        )
     logger.info(f"Recording for {duration} seconds...")
     audio = sd.rec(
         int(duration * SAMPLE_RATE),
@@ -56,71 +118,110 @@ def capture_audio(duration: int = CAPTURE_DURATION) -> np.ndarray:
     return audio.flatten()
 
 
-def extract_frequency_signature(audio: np.ndarray) -> Dict:
-    """Extract real voice frequency signature."""
+def extract_frequency_signature(audio: np.ndarray) -> Dict[str, Any]:
+    """
+    Extract a voice frequency signature.
+
+    Every value is either measured from `audio` or None. `voiced_frames` and
+    `total_frames` say what the pitch numbers stand on; `measured` lists which
+    fields hold a reading.
+    """
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if audio.size == 0:
+        return _unmeasured_signature(0, 0)
+
     audio = audio - np.mean(audio)  # Remove DC offset
 
-    # Fundamental frequency (F0)
+    # Fundamental frequency (F0) — autocorrelation per 30 ms frame
     frame_len = int(0.030 * SAMPLE_RATE)
     hop_len = int(0.010 * SAMPLE_RATE)
     f0_values = []
+    total_frames = 0
 
     for start in range(0, len(audio) - frame_len, hop_len):
+        total_frames += 1
         frame = audio[start:start + frame_len]
         corr = np.correlate(frame, frame, mode="full")[len(frame):]
         min_lag = int(SAMPLE_RATE / 500)
         max_lag = int(SAMPLE_RATE / 80)
         corr_search = corr[min_lag:max_lag]
 
-        if len(corr_search) > 0 and corr_search.max() > 0.1:
+        if len(corr_search) > 0 and corr_search.max() > VOICING_THRESHOLD:
             peak_lag = np.argmax(corr_search) + min_lag
-            f0 = SAMPLE_RATE / peak_lag
-            f0_values.append(f0)
+            f0_values.append(SAMPLE_RATE / peak_lag)
 
     if f0_values:
-        f0_values = np.array(f0_values)
-        fundamental = float(np.median(f0_values))
-        pitch_min = float(np.percentile(f0_values, 10))
-        pitch_max = float(np.percentile(f0_values, 90))
+        f0_arr = np.array(f0_values)
+        fundamental: Optional[float] = float(np.median(f0_arr))
+        pitch_range: Optional[list] = [float(np.percentile(f0_arr, 10)),
+                                       float(np.percentile(f0_arr, 90))]
     else:
-        fundamental = 150.0
-        pitch_min = 100.0
-        pitch_max = 250.0
+        fundamental = None
+        pitch_range = None
 
     # Spectral analysis
     freqs = np.fft.rfftfreq(len(audio), 1.0 / SAMPLE_RATE)
     fft_mag = np.abs(np.fft.rfft(audio))
+    total_mag = float(fft_mag.sum())
+    silent = total_mag <= 0.0
 
-    spectral_centroid = float(np.sum(freqs * fft_mag) / fft_mag.sum()) if fft_mag.sum() > 0 else 1500.0
+    spectral_centroid = None if silent else float(np.sum(freqs * fft_mag) / total_mag)
 
-    # Simple formant estimation
-    def find_formant(low_hz: int, high_hz: int) -> float:
+    def find_formant(low_hz: int, high_hz: int) -> Optional[float]:
+        if silent:
+            return None
         mask = (freqs >= low_hz) & (freqs <= high_hz)
         if mask.sum() == 0:
-            return (low_hz + high_hz) / 2
+            return None
         return float(freqs[mask][np.argmax(fft_mag[mask])])
 
     formant_f1 = find_formant(200, 1000)
     formant_f2 = find_formant(700, 3000)
 
     # Zero Crossing Rate
-    zcr = float(np.mean(np.diff(np.signbit(audio).astype(int)) != 0))
+    zcr = float(np.mean(np.diff(np.signbit(audio).astype(int)) != 0)) if audio.size > 1 else None
 
-    # Speaking rate approximation
+    # Speaking rate approximation (energy envelope peaks per second)
     energy = audio ** 2
-    kernel = np.ones(int(0.020 * SAMPLE_RATE)) / int(0.020 * SAMPLE_RATE)
+    kernel_len = max(1, int(0.020 * SAMPLE_RATE))
+    kernel = np.ones(kernel_len) / kernel_len
     env = np.convolve(energy, kernel, mode="same")
-    peaks, _ = signal.find_peaks(env, height=np.mean(env) * 0.5, distance=int(0.05 * SAMPLE_RATE))
-    speaking_rate_norm = float(len(peaks) / (len(audio) / SAMPLE_RATE))
+    if silent or float(np.mean(env)) <= 0.0:
+        speaking_rate_norm = None
+    else:
+        peaks, _ = signal.find_peaks(env, height=np.mean(env) * 0.5,
+                                     distance=int(0.05 * SAMPLE_RATE))
+        speaking_rate_norm = float(len(peaks) / (len(audio) / SAMPLE_RATE))
 
-    return {
+    sig: Dict[str, Any] = {
         "fundamental_hz": fundamental,
-        "pitch_range_hz": [pitch_min, pitch_max],
+        "pitch_range_hz": pitch_range,
         "formant_f1_hz": formant_f1,
         "formant_f2_hz": formant_f2,
         "speaking_rate_norm": speaking_rate_norm,
         "spectral_centroid": spectral_centroid,
         "zcr_mean": zcr,
+        "voiced_frames": len(f0_values),
+        "total_frames": total_frames,
+        "duration_seconds": float(len(audio) / SAMPLE_RATE),
+    }
+    sig["measured"] = [k for k, v in sig.items() if v is not None and k != "measured"]
+    if fundamental is None:
+        logger.warning(
+            "No voiced frames in %d frames — fundamental_hz and pitch_range_hz "
+            "are None. This is not a 150 Hz voice; it is no reading.",
+            total_frames,
+        )
+    return sig
+
+
+def _unmeasured_signature(voiced: int, total: int) -> Dict[str, Any]:
+    return {
+        "fundamental_hz": None, "pitch_range_hz": None,
+        "formant_f1_hz": None, "formant_f2_hz": None,
+        "speaking_rate_norm": None, "spectral_centroid": None, "zcr_mean": None,
+        "voiced_frames": voiced, "total_frames": total, "duration_seconds": 0.0,
+        "measured": [],
     }
 
 
@@ -129,7 +230,8 @@ def extract_frequency_signature(audio: np.ndarray) -> Dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def save_profile(name: str, signature: Dict) -> Path:
-    """Save voice profile."""
+    """Save voice profile. Creates the profile directory on first use (0700)."""
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     profile_path = PROFILE_DIR / f"{name}.json"
     data = {
         "name": name,
@@ -155,6 +257,8 @@ def load_profile(name: str) -> Dict:
 
 def list_profiles() -> list[str]:
     """List saved profiles."""
+    if not PROFILE_DIR.exists():
+        return []
     return [p.stem for p in PROFILE_DIR.glob("*.json")]
 
 
@@ -163,16 +267,17 @@ def list_profiles() -> list[str]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def speak_via_derek(text: str, signature: Optional[Dict] = None) -> str:
-    """Send TTS request to Derek."""
+    """Send TTS request to Derek. Unmeasured profile fields travel as null."""
     try:
         async with websockets.connect(DEREK_WS_URI, open_timeout=5) as ws:
-            payload = {"text": text, "mode": "stealth"}
+            payload: Dict[str, Any] = {"text": text, "mode": "stealth"}
             if signature:
                 payload["voice_profile"] = {
-                    "pitch_hz": signature.get("fundamental_hz", 150),
-                    "pitch_range": signature.get("pitch_range_hz", [100, 250]),
+                    "pitch_hz": signature.get("fundamental_hz"),
+                    "pitch_range": signature.get("pitch_range_hz"),
                     "formant_f1": signature.get("formant_f1_hz"),
                     "formant_f2": signature.get("formant_f2_hz"),
+                    "voiced_frames": signature.get("voiced_frames"),
                 }
             await ws.send(json.dumps({"command": "tts", "payload": payload}))
             return await ws.recv()
@@ -181,13 +286,46 @@ async def speak_via_derek(text: str, signature: Optional[Dict] = None) -> str:
         return '{"status": "offline"}'
 
 
-def local_speak_fallback(text: str, signature: Optional[Dict] = None):
-    """Local TTS fallback."""
-    pitch = signature.get("fundamental_hz", 150) if signature else 150
+def local_speak_fallback(text: str, signature: Optional[Dict] = None) -> bool:
+    """
+    Local TTS fallback. Returns True only if a speaker ran to completion.
+
+    The text is handed to the speaker on stdin — not interpolated into a
+    shell string, not passed as an argument. `signature` is accepted for
+    API compatibility; no local speaker here applies a pitch profile, and
+    this function does not claim otherwise.
+    """
+    del signature
+    data = text.encode("utf-8")
     if sys.platform == "darwin":
-        os.system(f'say -v "Samantha" "{text}"')
+        cmd = ["say", "-v", "Samantha"]
+    elif sys.platform.startswith("linux"):
+        cmd = ["espeak", "--stdin", "-s", "150"]
     else:
-        logger.warning("Local TTS fallback not fully implemented on this platform.")
+        cmd = None
+
+    if cmd is not None:
+        try:
+            proc = subprocess.run(cmd, input=data, check=False,
+                                  stderr=subprocess.DEVNULL, timeout=120)
+            if proc.returncode == 0:
+                return True
+            logger.error(f"{cmd[0]} exited {proc.returncode}")
+        except FileNotFoundError:
+            logger.error(f"{cmd[0]} is not installed")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.error(f"{cmd[0]} failed: {exc}")
+
+    try:
+        import pyttsx3
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
+        return True
+    except Exception as exc:
+        logger.error(f"pyttsx3 fallback failed: {exc}")
+    logger.error("Local TTS fallback did not speak. Text was NOT voiced.")
+    return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
