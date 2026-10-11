@@ -92,6 +92,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
 from .recognition_result import RecognitionResult, RecognitionStatus
+from .sound_recognition_service import EscalationNotDelivered
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -169,6 +170,15 @@ class EnhancedSpeechRecognition:
 
         self._thread: Optional[threading.Thread] = None
         self._audio_cache_dir: Optional[str] = None  # created lazily, if ever
+
+        #: Set when the listening loop stopped because a help request could
+        #: not reach a human. 2026-10-11, measured: the loop's `except
+        #: Exception` caught the re-raised EscalationNotDelivered, logged it,
+        #: and kept polling — the request was consumed and lost. Now the loop
+        #: stops, this is set, `get_recognition_status()` reports it, and the
+        #: optional `fatal_callback` is told.
+        self.fatal_error: Optional[BaseException] = None
+        self.fatal_callback: Optional[Callable[[BaseException], None]] = None
 
         if recognizer is None:
             self.logger.warning(
@@ -329,23 +339,42 @@ class EnhancedSpeechRecognition:
             )
             return False
 
+        if self.sound_service is None:
+            # The loop below polls the sound service and nothing else. With
+            # only a recognizer attached there is no audio path for it to
+            # drive — audio reaches the recognizer through
+            # process_audio_data(). Measured 2026-10-11: this returned True
+            # and logged "started" with nothing listening.
+            self.logger.error(
+                "Cannot start the listening loop: no sound service attached. "
+                "A recognizer alone is driven by process_audio_data(), not by "
+                "this loop. Nothing started."
+            )
+            return False
+
         with self._lock:
             if speech_callback:
                 self.speech_callbacks.append(speech_callback)
             if sound_pattern_callback:
                 self.sound_pattern_callbacks.append(sound_pattern_callback)
 
-        if self.sound_service is not None:
+        start = getattr(self.sound_service, "start_listening", None)
+        if callable(start):
             try:
-                self.sound_service.start_listening()  # type: ignore[attr-defined]
-            except AttributeError:
-                pass  # not all services expose a lifecycle
+                started = start()
             except Exception as exc:
                 self.logger.error(
                     "Sound service failed to start: %s", exc, exc_info=True
                 )
                 return False
+            if started is False:
+                # The service said nothing started. Believe it.
+                self.logger.error(
+                    "Sound service reported that nothing started. Not listening."
+                )
+                return False
 
+        self.fatal_error = None
         self.is_listening = True
         self._thread = threading.Thread(
             target=self._listening_loop, name="speech_listener", daemon=True
@@ -370,11 +399,10 @@ class EnhancedSpeechRecognition:
 
         self.is_listening = False
 
-        if self.sound_service is not None:
+        stop = getattr(self.sound_service, "stop_listening", None)
+        if callable(stop):
             try:
-                self.sound_service.stop_listening()  # type: ignore[attr-defined]
-            except AttributeError:
-                pass
+                stop()
             except Exception as exc:
                 self.logger.error("Error stopping sound service: %s", exc, exc_info=True)
 
@@ -418,6 +446,26 @@ class EnhancedSpeechRecognition:
                     if detection is not None:
                         self._process_sound_pattern(detection)
                 consecutive_errors = 0
+            except EscalationNotDelivered as exc:
+                # A help request that reached nobody. This is not an error to
+                # ride through; the loop stops so the state is visibly dead
+                # and the failure is reported, not absorbed.
+                self.fatal_error = exc
+                self.logger.critical(
+                    "LISTENING STOPPED: a help request could not be delivered "
+                    "to a human. %s", exc, exc_info=True,
+                )
+                if self.fatal_callback is not None:
+                    try:
+                        self.fatal_callback(exc)
+                    except Exception as cb_exc:
+                        self.logger.error(
+                            "fatal_callback raised: %s", cb_exc, exc_info=True
+                        )
+                # Last, so anyone watching is_listening sees the callback
+                # already delivered when the flag drops.
+                self.is_listening = False
+                break
             except Exception as exc:
                 consecutive_errors += 1
                 # Log the first few in full, then stop flooding. A traceback
@@ -571,6 +619,7 @@ class EnhancedSpeechRecognition:
                 "has_recognizer": self.recognizer is not None,
                 "has_sound_service": self.sound_service is not None,
                 "generates_placeholder_text": False,
+                "fatal_error": None if self.fatal_error is None else repr(self.fatal_error),
                 "context": {
                     "recent_phrases_count": len(
                         self.recognition_context["recent_phrases"]

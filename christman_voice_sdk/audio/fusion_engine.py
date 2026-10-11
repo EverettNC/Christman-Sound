@@ -78,7 +78,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .structural_affect import (
     AffectCertainty,
@@ -175,9 +175,19 @@ class Silicon:
         nonverbal_active = bool(live_state.get("nonverbal_active", False))
         allow_silence = bool(live_state.get("allow_silence", True))
 
+        # 2026-10-11: an invalid live state was logged and then became
+        # `standard` with nothing on the result saying so. Measured:
+        # tone_score="garbage" -> mode=standard, knows=True. Rejections are
+        # now carried on the constraints and into delivery.
+        rejected: List[str] = []
+        source = "none"
+
         if response_mode is not None and response_mode not in VALID_LIVE_MODES:
+            rejected.append(f"response_mode={response_mode!r} is not a live mode")
             logger.error("Unknown response_mode %r; inferring instead.", response_mode)
             response_mode = None
+        elif response_mode is not None:
+            source = "live"
 
         if response_mode is None and tone_score is not None:
             try:
@@ -189,12 +199,15 @@ class Silicon:
                     else MODE_GENTLE_LIFT if ts < 35
                     else MODE_STANDARD
                 )
+                source = "tone_score"
             except (TypeError, ValueError) as exc:
+                rejected.append(f"tone_score={tone_score!r}: {exc}")
                 logger.error("Invalid tone_score %r: %s", tone_score, exc)
                 response_mode = None
 
         if response_mode is None:
             response_mode = MODE_STANDARD
+            source = "none"
 
         # Domain scoring runs on surviving affect terms — terms structure
         # cancelled (negated, volitional, impersonal) must not steer the domain
@@ -224,6 +237,10 @@ class Silicon:
 
         return {
             "response_mode": response_mode,
+            #: "live" | "tone_score" | "none" — where the mode came from. A
+            #: mode with source "none" is a default, not a reading.
+            "response_mode_source": source,
+            "live_state_rejected": rejected,
             "needs_grounding": needs_grounding or distressed,
             "crisis_flag": crisis_flag,
             "nonverbal_active": nonverbal_active,
@@ -270,6 +287,12 @@ class SafetyResult:
     flagged_terms: List[str] = field(default_factory=list)
     hold_marker: str = ""
     delivered_to_human: bool = False
+    #: True when the configured safety gate failed and this result came from
+    #: the substring floor instead. 2026-10-11: a raising callback fell back
+    #: to the floor silently, so "I want to die" came back {'status':
+    #: 'clear'} with nothing on it saying the real gate never ran.
+    degraded: bool = False
+    degraded_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -309,21 +332,30 @@ class Aegis:
         original = text or ""
 
         result: Optional[SafetyResult] = None
+        degraded_reason = ""
         if self.safety_callback is not None:
             try:
                 result = self.safety_callback(original, context)
                 if not isinstance(result, SafetyResult):
-                    logger.error(
-                        "safety_callback returned %s; using the local floor.",
-                        type(result).__name__,
+                    degraded_reason = (
+                        f"safety_callback returned {type(result).__name__}, "
+                        "not SafetyResult"
                     )
+                    logger.error("%s; using the local floor.", degraded_reason)
                     result = None
             except Exception as exc:
-                logger.error("External Aegis callback failed: %s", exc)
+                degraded_reason = f"safety_callback raised: {exc!r}"
+                logger.error("External Aegis callback failed: %s", exc, exc_info=True)
                 result = None
 
         if result is None:
             result = self._floor_check(original)
+            if degraded_reason:
+                # The floor is a substring match, not the gate that was
+                # configured. Say so on the result; the fusion engine will not
+                # claim a reading it cannot vouch for.
+                result.degraded = True
+                result.degraded_reason = degraded_reason
 
         if result.status == "hard_block":
             return self._deliver_crisis(result, context)
@@ -392,6 +424,8 @@ class Aegis:
             flagged_terms=list(result.flagged_terms),
             hold_marker=result.hold_marker,
             delivered_to_human=True,
+            degraded=result.degraded,
+            degraded_reason=result.degraded_reason,
         )
 
 
@@ -439,8 +473,19 @@ class Decision:
 
     @property
     def knows(self) -> bool:
-        """False when the engine could not resolve a reading."""
-        return self.mode != MODE_UNKNOWN
+        """
+        False when the engine could not resolve a reading.
+
+        2026-10-11: this was `mode != unknown`, so an utterance with no
+        affect vocabulary at all ("pass the salt", "fuck you") reported
+        knows=True — a confident reading of nothing. The mode may still be
+        `standard` for such input (there is nothing to act on), but the
+        engine does not KNOW the person's state, and now says so.
+        """
+        return (
+            self.mode != MODE_UNKNOWN
+            and self.affect.certainty is not AffectCertainty.NO_SIGNAL
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -526,9 +571,11 @@ class FusionEngine:
         )
 
         rec = reconcile(affect.valence, affect.is_self_distress, prosody)
-        mode = self._resolve_mode(safety, affect, constraints, rec)
+        mode, unknown_reason = self._resolve_mode(
+            safety, affect, constraints, rec, user_input
+        )
 
-        delivery = self._delivery(mode, constraints, rec, affect)
+        delivery = self._delivery(mode, constraints, rec, affect, safety, unknown_reason)
 
         dominant = constraints.get("dominant_domain")
         coherence = (
@@ -564,29 +611,44 @@ class FusionEngine:
         affect: AffectReading,
         constraints: Dict[str, Any],
         rec: Reconciliation,
-    ) -> str:
+        user_input: Optional[str] = None,
+    ) -> Tuple[str, str]:
         """
-        Decide the mode.
+        Decide the mode. Returns (mode, reason) — the reason is non-empty
+        only for MODE_UNKNOWN and names what actually produced it.
 
         Precedence, highest first:
           1. safety-hold — a crisis outranks everything
-          2. unknown     — the channels disagree, or affect did not resolve
+          2. unknown     — the safety gate is degraded, there was no
+                           utterance, the channels disagree, or affect did
+                           not resolve
           3. grounding / live-state modes
           4. standard
         """
         if safety.status == "hard_block":
-            return MODE_SAFETY_HOLD
+            return MODE_SAFETY_HOLD, ""
+
+        # A result from the substring floor because the real gate failed is
+        # not a reading the engine can act on as though it were clear.
+        if safety.degraded:
+            return MODE_UNKNOWN, f"safety gate degraded: {safety.degraded_reason}"
+
+        if not (user_input or "").strip():
+            return MODE_UNKNOWN, "no utterance — nothing was said"
 
         # Not knowing is its own answer, and it outranks acting on a guess.
         if rec.defer_to_human:
-            return MODE_UNKNOWN
+            return MODE_UNKNOWN, rec.reason
         if affect.certainty is AffectCertainty.AMBIGUOUS:
-            return MODE_UNKNOWN
+            return MODE_UNKNOWN, (
+                "; ".join(affect.notes)
+                or "Affect could not be resolved from sentence structure."
+            )
 
         mode = constraints.get("response_mode") or MODE_STANDARD
         if constraints.get("needs_grounding") and mode == MODE_STANDARD:
             mode = MODE_GENTLE_LIFT
-        return mode
+        return mode, ""
 
     @staticmethod
     def _delivery(
@@ -594,6 +656,8 @@ class FusionEngine:
         constraints: Dict[str, Any],
         rec: Reconciliation,
         affect: AffectReading,
+        safety: Optional[SafetyResult] = None,
+        unknown_reason: str = "",
     ) -> Dict[str, Any]:
         """
         Delivery constraints.
@@ -601,7 +665,18 @@ class FusionEngine:
         MODE_UNKNOWN is a careful posture, not a passive one: slower, silence
         permitted, no rush, and confirm before acting. Not knowing is a reason
         to move carefully rather than a reason to do nothing.
+
+        Every delivery carries `affect_reading` (the analyzer's certainty),
+        `response_mode_source` and `live_state_rejected`, so a `standard`
+        mode that came from a default is distinguishable from one that came
+        from a measurement.
         """
+        provenance = {
+            "affect_reading": affect.certainty.value,
+            "response_mode_source": constraints.get("response_mode_source", "none"),
+            "live_state_rejected": list(constraints.get("live_state_rejected", [])),
+            "safety_degraded": bool(safety.degraded) if safety is not None else False,
+        }
         if mode == MODE_UNKNOWN:
             return {
                 "pace": "slower",
@@ -612,14 +687,12 @@ class FusionEngine:
                 "confirm_before_acting": True,
                 "assert_nothing": True,
                 # The reason must name what ACTUALLY produced the unknown.
-                # Reporting the reconciliation's reason when the mode came from
-                # an ambiguous text reading gives a correct decision a wrong
-                # explanation, which is its own defect.
-                "reason": (
+                "reason": unknown_reason or (
                     rec.reason if rec.defer_to_human
-                    else "; ".join(affect.notes) or
-                         "Affect could not be resolved from sentence structure."
+                    else "; ".join(affect.notes)
+                    or "Affect could not be resolved from sentence structure."
                 ),
+                **provenance,
             }
 
         return {
@@ -630,6 +703,7 @@ class FusionEngine:
             "no_rush": mode in {MODE_HOLD_SPACE, MODE_GENTLE_LIFT, MODE_SAFETY_HOLD},
             "confirm_before_acting": False,
             "assert_nothing": False,
+            **provenance,
         }
 
     def _update_shared_state(self, update: Dict[str, Any]) -> None:

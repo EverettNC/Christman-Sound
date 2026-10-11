@@ -20,7 +20,7 @@ WHAT CHANGED AND WHY
 import numpy as np
 import torch
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Any, Optional, Dict, List
 import time
 
 from ..engines.xtts_engine import XTTSEngine

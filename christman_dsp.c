@@ -37,11 +37,18 @@ void christman_zcr(const float* audio, size_t length, float* out_zcr) {
 
 #include <stdlib.h> // Required for malloc/free
 
-// Bare-metal YIN Pitch Detection Algorithm
+// Bare-metal YIN Pitch Detection Algorithm (de Cheveigné & Kawahara, 2002)
+//
+// Operates on ONE analysis frame (e.g. 2048 samples). The difference
+// function is O(half_len^2); call it per frame from the contour wrapper,
+// never on a whole recording. Writes 0.0 for an unvoiced frame.
 void christman_yin(const float* audio, size_t length, int sample_rate, float threshold, float* out_pitch) {
-    int half_len = length / 2;
+    *out_pitch = 0.0f; // defined on every path, including early returns
+    if (length < 4 || sample_rate <= 0) {
+        return;
+    }
+    int half_len = (int)(length / 2);
     if (half_len <= 0) {
-        *out_pitch = 0.0f;
         return;
     }
 
@@ -98,17 +105,33 @@ void christman_yin(const float* audio, size_t length, int sample_rate, float thr
 // Add this to christman_dsp.c
 
 // Bare-metal Linear Predictive Coding (LPC) using Levinson-Durbin recursion
-void christman_lpc(const float* audio, size_t length, int order, float* out_a) {
-    if (length == 0 || order <= 0) {
-        out_a[0] = 1.0f;
-        for (int i = 1; i <= order; i++) out_a[i] = 0.0f;
-        return;
+//
+// Contract: out_a has order+1 slots. On ANY early return the caller gets
+// a[0] = 1 and a[1..order] = 0 — a flat (all-pole-free) filter — never
+// uninitialised memory. Returns 0 on success, nonzero when no coefficients
+// could be computed (too-short frame, silent frame, allocation failure, or
+// a numerically unstable recursion), so the caller can report "unmeasured"
+// instead of reading zeros as a measurement.
+int christman_lpc(const float* audio, size_t length, int order, float* out_a) {
+    if (order <= 0) {
+        return 1;
+    }
+    // Initialise FIRST (medical-grade review: out_a was left uninitialised
+    // on the malloc-failure path below).
+    out_a[0] = 1.0f;
+    for (int i = 1; i <= order; i++) out_a[i] = 0.0f;
+
+    // Guard the size_t underflow: with length < order+1, `length - lag`
+    // wrapped to ~2^64 and the autocorrelation loop read off the end of
+    // the buffer (segfault on any frame shorter than the LPC order).
+    if (length == 0 || (size_t)order >= length) {
+        return 2;
     }
 
     // 1. Calculate Autocorrelation
     float* r = (float*)malloc((order + 1) * sizeof(float));
-    if (!r) return;
-    
+    if (!r) return 3;
+
     for (int lag = 0; lag <= order; lag++) {
         r[lag] = 0.0f;
         for (size_t i = 0; i < length - lag; i++) {
@@ -117,18 +140,27 @@ void christman_lpc(const float* audio, size_t length, int order, float* out_a) {
     }
 
     // 2. Levinson-Durbin Recursion
-    out_a[0] = 1.0f; // a[0] is always 1.0
-    if (r[0] == 0.0f) {
-        for (int i = 1; i <= order; i++) out_a[i] = 0.0f;
+    if (r[0] <= 0.0f) {
+        // Silent frame: no energy, no spectrum to model.
         free(r);
-        return;
+        return 4;
     }
 
     float error = r[0];
     float* k = (float*)malloc((order + 1) * sizeof(float));
-    if (!k) { free(r); return; }
+    if (!k) { free(r); return 3; }
 
+    int status = 0;
     for (int i = 1; i <= order; i++) {
+        // Guard: prediction error must stay strictly positive. It reaches
+        // zero (or goes negative from float round-off) on a perfectly
+        // predictable or degenerate frame; dividing by it produced inf/NaN
+        // coefficients that were handed back as if measured.
+        if (error <= 0.0f) {
+            for (int j = i; j <= order; j++) out_a[j] = 0.0f;
+            status = 5;
+            break;
+        }
         float sum = 0.0f;
         for (int j = 1; j < i; j++) {
             sum += out_a[j] * r[i - j];
@@ -147,4 +179,5 @@ void christman_lpc(const float* audio, size_t length, int order, float* out_a) {
 
     free(k);
     free(r);
+    return status;
 }

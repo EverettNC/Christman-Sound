@@ -108,7 +108,7 @@ LEXICON: Dict[str, float] = {
     "scared": -0.8, "afraid": -0.8, "frightened": -0.85, "terrified": -0.95,
     "anxious": -0.7, "panic": -0.9, "panicking": -0.9, "worried": -0.6,
     "overwhelmed": -0.7, "exhausted": -0.6, "drained": -0.6,
-    "hurt": -0.8, "hurting": -0.8, "pain": -0.75, "aching": -0.6,
+    "hurt": -0.8, "hurting": -0.8, "hurts": -0.8, "pain": -0.75, "aching": -0.6,
     "sad": -0.7, "miserable": -0.85, "hopeless": -0.95, "despair": -0.95,
     "alone": -0.55, "lonely": -0.8, "isolated": -0.75, "abandoned": -0.85,
     "angry": -0.7, "furious": -0.85, "frustrated": -0.6, "upset": -0.65,
@@ -148,6 +148,12 @@ IDIOMS: Dict[str, float] = {
     "hanging in there": -0.2,
     "getting by": -0.15,
     "at a loss": -0.5,
+}
+
+#: Idiom match patterns that need more than word boundaries. "had enough TO
+#: EAT" is a meal, not distress (measured 2026-10-11: self_distress=True).
+IDIOM_PATTERNS: Dict[str, str] = {
+    "had enough": r"\bhad enough\b(?!\s+(?:to|food|money|time|sleep|rest)\b)",
 }
 
 #: Negators. Cancel the affect in their scope. They do NOT invert it —
@@ -235,7 +241,21 @@ PROFANITY = frozenset({
 })
 
 _CLAUSE_SPLIT = re.compile(r"[.!?;]+|,\s*(?=but|however|though|yet|so|and)\s*", re.I)
-_WORD = re.compile(r"[a-z']+")
+_WORD = re.compile(r"[a-z'_]+")
+
+#: Curly and typographic apostrophes, as phones and AAC boards emit them.
+#: Everett, 2026-10-11: "I don’t want to be here anymore" (U+2019) must read
+#: the same as the straight-quote form. Before this, `[a-z']` split "don’t"
+#: into "don" and "t" and the negator was never seen.
+_APOSTROPHES = str.maketrans({
+    "’": "'", "‘": "'", "ʼ": "'", "´": "'", "`": "'",
+    "“": '"', "”": '"',
+})
+
+
+def normalize_apostrophes(text: str) -> str:
+    """Fold typographic apostrophes and quotes to ASCII. Nothing else changes."""
+    return (text or "").translate(_APOSTROPHES)
 
 
 class AffectCertainty(str, Enum):
@@ -429,7 +449,7 @@ class StructuralAffectAnalyzer:
             prosody: Optional acoustic features. When None, every
                 prosody-derived value stays None.
         """
-        raw = (text or "").strip()
+        raw = normalize_apostrophes(text or "").strip()
         if not raw:
             return AffectReading(
                 valence=None,
@@ -443,8 +463,21 @@ class StructuralAffectAnalyzer:
         lowered = raw.lower()
         notes: List[str] = []
 
-        # PASS 1 — idioms, before anything is tokenized.
-        idiom_scores, idioms_found, masked = self._match_idioms(lowered)
+        # PASS 1 — idioms, before anything is tokenized. Each idiom becomes a
+        # single placeholder token carrying its weight, so passes 3-7 apply
+        # to it exactly as they apply to a lexicon word.
+        #
+        # 2026-10-11: the predecessor masked idioms OUT of the text and then
+        # appended their hits with attribution=SELF and final_weight=score,
+        # untouched by negation, tense, contrast or attribution. Measured:
+        #     "My mom is falling apart"                      self_distress=True
+        #     "she is fed up with her job"                   self_distress=True
+        #     "I am not at my limit"                         self_distress=True
+        #     "I was on edge yesterday but I am fine now"    self_distress=True
+        # Every one of those is somebody else's state, a negation, or a
+        # resolved past — and every one passed the single gate for a care
+        # response.
+        idiom_scores, idioms_found, masked, idiom_map = self._match_idioms(lowered)
         if idioms_found:
             notes.append(f"idioms matched: {idioms_found}")
 
@@ -466,48 +499,53 @@ class StructuralAffectAnalyzer:
         requests: List[str] = []
         profanity = 0
         for clause in clauses:
-            c_hits, c_requests, c_prof = self._score_clause(clause, clauses)
+            c_hits, c_requests, c_prof = self._score_clause(clause, clauses, idiom_map)
             hits.extend(c_hits)
             requests.extend(c_requests)
             profanity += c_prof
-
-        for score, phrase in idiom_scores:
-            hits.append(
-                AffectHit(
-                    term=phrase,
-                    base_weight=score,
-                    final_weight=score,
-                    clause_index=0,
-                    attribution=Attribution.SELF,
-                    note="multiword expression — not scored compositionally",
-                )
-            )
 
         return self._combine(hits, clauses, idioms_found, requests, profanity,
                              prosody, notes)
 
     # -- Pass 1 ---------------------------------------------------------------
 
+    @staticmethod
+    def _idiom_token(n: int) -> str:
+        letters = ""
+        n += 1
+        while n:
+            n, rem = divmod(n - 1, 26)
+            letters = chr(ord("a") + rem) + letters
+        return f"__idiom_{letters}__"
+
     def _match_idioms(
         self, lowered: str
-    ) -> Tuple[List[Tuple[float, str]], List[str], str]:
+    ) -> Tuple[List[Tuple[float, str]], List[str], str, Dict[str, Tuple[str, float]]]:
         """
-        Find multiword expressions and mask them out of the text.
+        Find multiword expressions and replace each with one placeholder token.
 
-        Masking matters: after matching "can't complain", the words "can't" and
-        "complain" must not also be scored individually, or the idiom's meaning
-        competes with its own parts.
+        Replacing matters: after matching "can't complain", the words "can't"
+        and "complain" must not also be scored individually, or the idiom's
+        meaning competes with its own parts. The placeholder stays IN the
+        clause so negation, tense, contrast and attribution still see it.
+
+        Returns (scores, names, rewritten_text, token -> (phrase, weight)).
         """
         found: List[Tuple[float, str]] = []
         names: List[str] = []
+        idiom_map: Dict[str, Tuple[str, float]] = {}
         masked = lowered
         # Longest first, so "can't stop laughing" wins over "can't stop".
-        for phrase in sorted(IDIOMS, key=len, reverse=True):
-            if phrase in masked:
-                found.append((IDIOMS[phrase], phrase))
-                names.append(phrase)
-                masked = masked.replace(phrase, " ░ ")
-        return found, names, masked
+        for n, phrase in enumerate(sorted(IDIOMS, key=len, reverse=True)):
+            pattern = IDIOM_PATTERNS.get(phrase) or rf"\b{re.escape(phrase)}\b"
+            if not re.search(pattern, masked):
+                continue
+            token = self._idiom_token(n)
+            idiom_map[token] = (phrase, IDIOMS[phrase])
+            found.append((IDIOMS[phrase], phrase))
+            names.append(phrase)
+            masked = re.sub(pattern, f" {token} ", masked)
+        return found, names, masked, idiom_map
 
     # -- Pass 2 ---------------------------------------------------------------
 
@@ -632,7 +670,8 @@ class StructuralAffectAnalyzer:
         verb. Named rather than left to be discovered.
         """
         subject = StructuralAffectAnalyzer._subject_region(tokens)
-        if not subject:
+        elliptical = not subject
+        if elliptical:
             subject = tokens
 
         subj = set(subject)
@@ -653,6 +692,20 @@ class StructuralAffectAnalyzer:
             return Attribution.OTHER
 
         if subj & FIRST_PERSON:
+            return Attribution.SELF
+
+        if elliptical:
+            # EVERETT'S RULING, 2026-10-11: "A lone feeling word with no
+            # subject is not nobody's experience. On an AAC board, 'scared'
+            # with no 'I' is the speaker's own fear, because the board
+            # doesn't need an 'I'. When an utterance has no subject and no
+            # other person named, the experiencer is the speaker."
+            #
+            # Measured on the committed version before this: a lone "scared"
+            # or "hurt" came back IMPERSONAL, "describes nobody's experience",
+            # and was cancelled to valence 0.0 MEASURED. "pain is the topic of
+            # the article" still has a subject and still reads impersonal.
+            # Pinned in tests/test_structural_affect.py.
             return Attribution.SELF
 
         return Attribution.IMPERSONAL
@@ -676,13 +729,17 @@ class StructuralAffectAnalyzer:
     # -- Passes 4, 5, 7 -------------------------------------------------------
 
     def _score_clause(
-        self, clause: Clause, all_clauses: List[Clause]
+        self,
+        clause: Clause,
+        all_clauses: List[Clause],
+        idiom_map: Optional[Dict[str, Tuple[str, float]]] = None,
     ) -> Tuple[List[AffectHit], List[str], int]:
         """Score one clause, applying negation, volition, tense, and degree."""
         hits: List[AffectHit] = []
         requests: List[str] = []
         profanity = 0
         tokens = clause.tokens
+        idiom_map = idiom_map or {}
 
         has_past = bool(set(tokens) & PAST_MARKERS)
         resolved_later = any(
@@ -697,12 +754,22 @@ class StructuralAffectAnalyzer:
             if tok in REQUEST_WORDS:
                 requests.append(tok)
                 continue
-            if tok not in LEXICON:
+            note_parts: List[str] = []
+            if tok in idiom_map:
+                term, base = idiom_map[tok]
+                note_parts.append("multiword expression — not scored compositionally")
+            elif tok in LEXICON:
+                term, base = tok, LEXICON[tok]
+            elif tok.endswith("s") and tok[:-1] in LEXICON:
+                # "hurts", "pains", "aches": a third-person-singular or
+                # plural form of a lexicon word. One letter must not hide a
+                # feeling word from an AAC board.
+                term, base = tok, LEXICON[tok[:-1]]
+                note_parts.append(f"inflected form of '{tok[:-1]}'")
+            else:
                 continue
 
-            base = LEXICON[tok]
             weight = base
-            note_parts: List[str] = []
 
             # -- degree modifiers, looking back two tokens
             modifier = 1.0
@@ -758,7 +825,7 @@ class StructuralAffectAnalyzer:
 
             hits.append(
                 AffectHit(
-                    term=tok,
+                    term=term,
                     base_weight=base,
                     final_weight=weight,
                     clause_index=clause.index,
@@ -953,8 +1020,10 @@ __all__ = [
     "ProsodyFeatures",
     "LEXICON",
     "IDIOMS",
+    "IDIOM_PATTERNS",
     "PROFANITY",
     "REQUEST_WORDS",
+    "normalize_apostrophes",
 ]
 
 # ==============================================================================

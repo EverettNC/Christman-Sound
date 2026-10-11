@@ -52,6 +52,12 @@ def _bind_hndl() -> Path:
 
 _HNDL_ROOT = _bind_hndl()
 
+# Evict a stale christman_crypto (AlphaVox copy has no HybridSigner).
+for _k in [k for k in list(sys.modules) if k == "christman_crypto" or k.startswith("christman_crypto.")]:
+    loc = getattr(sys.modules[_k], "__file__", "") or ""
+    if "Harvest-Now-Decrypt-Later" not in loc.replace("\\", "/"):
+        sys.modules.pop(_k, None)
+
 from christman_crypto import HybridPQCipher, HybridSigner  # noqa: E402
 
 

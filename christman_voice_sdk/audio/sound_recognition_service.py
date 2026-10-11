@@ -238,8 +238,20 @@ class SoundRecognitionService:
         self.escalation_callback = escalation_callback
         self.detection_ttl_seconds = float(detection_ttl_seconds)
 
-        self._pending: Optional[SoundDetection] = None
+        #: Queue, not a slot. 2026-10-11: a single `_pending` slot meant a
+        #: later utterance overwrote an unpolled distress detection, and a
+        #: distress detection older than the TTL was dropped at DEBUG level.
+        #: Now: FIFO, capped; stale non-distress is dropped with a WARNING;
+        #: distress is never dropped for age.
+        self._pending: List[SoundDetection] = []
+        self._pending_cap = 16
         self._is_listening = False
+
+        #: Backend failures are counted and the last one kept, so a crashed
+        #: detector is distinguishable from silence in get_status().
+        self.backend_failures = 0
+        self.last_backend_error: Optional[str] = None
+        self.dropped_detections = 0
 
         self.available = backend is not None or speech_engine is not None
 
@@ -293,8 +305,12 @@ class SoundRecognitionService:
         try:
             detection = self.backend.analyze(audio_data)
         except Exception as exc:
-            # A crashed backend is not a detection. Log and return nothing —
-            # never substitute a guess for a failed analysis.
+            # A crashed backend is not a detection. Log, count, return
+            # nothing — never substitute a guess for a failed analysis. The
+            # count is what makes this distinguishable from "no sound".
+            with self._lock:
+                self.backend_failures += 1
+                self.last_backend_error = f"{type(exc).__name__}: {exc}"
             logger.error("Sound detector backend failed: %s", exc, exc_info=True)
             return None
 
@@ -302,6 +318,11 @@ class SoundRecognitionService:
             return None
 
         if not isinstance(detection, SoundDetection):
+            with self._lock:
+                self.backend_failures += 1
+                self.last_backend_error = (
+                    f"contract violation: backend returned {type(detection).__name__}"
+                )
             logger.error(
                 "Backend returned %s, expected SoundDetection. Discarding.",
                 type(detection).__name__,
@@ -317,18 +338,59 @@ class SoundRecognitionService:
         return detection
 
     def _take_pending(self) -> Optional[SoundDetection]:
-        """Pop a fresh pending detection. Stale ones are dropped, not replayed."""
-        with self._lock:
-            pending = self._pending
-            if pending is None:
-                return None
-            self._pending = None
+        """
+        Pop the oldest fresh pending detection.
 
-        age = time.time() - pending.timestamp
-        if age > self.detection_ttl_seconds:
-            logger.debug("Dropping stale detection (%.2fs old).", age)
-            return None
-        return pending
+        Stale non-distress detections are dropped — with a WARNING and a
+        count, not at DEBUG. A `distress` detection is never dropped for
+        age: a help request three seconds old is still a help request.
+        """
+        while True:
+            with self._lock:
+                if not self._pending:
+                    return None
+                pending = self._pending.pop(0)
+
+            age = time.time() - pending.timestamp
+            if age > self.detection_ttl_seconds and pending.pattern != "distress":
+                with self._lock:
+                    self.dropped_detections += 1
+                logger.warning(
+                    "Dropping stale %s detection (%.2fs old, ttl %.2fs).",
+                    pending.pattern, age, self.detection_ttl_seconds,
+                )
+                continue
+            if age > self.detection_ttl_seconds:
+                logger.warning(
+                    "Delivering a %.2fs-old distress detection past the %.2fs "
+                    "ttl — a help request is not dropped for age.",
+                    age, self.detection_ttl_seconds,
+                )
+            return pending
+
+    def _queue_pending(self, detection: SoundDetection) -> None:
+        """
+        Enqueue. When full, the oldest NON-distress entry is evicted; a
+        distress detection is never evicted to make room.
+        """
+        with self._lock:
+            self._pending.append(detection)
+            if len(self._pending) > self._pending_cap:
+                for i, item in enumerate(self._pending):
+                    if item.pattern != "distress":
+                        del self._pending[i]
+                        self.dropped_detections += 1
+                        logger.warning(
+                            "Pending queue full (%d); evicted oldest %s detection.",
+                            self._pending_cap, item.pattern,
+                        )
+                        break
+                else:
+                    logger.error(
+                        "Pending queue holds %d undelivered distress detections. "
+                        "Nothing is polling detect_sound_pattern().",
+                        len(self._pending),
+                    )
 
     # -- Intent ---------------------------------------------------------------
 
@@ -471,7 +533,13 @@ class SoundRecognitionService:
 
         self._is_listening = False
         with self._lock:
-            self._pending = None
+            undelivered = [d for d in self._pending if d.pattern == "distress"]
+            self._pending.clear()
+        if undelivered:
+            logger.error(
+                "stop_listening() discarded %d undelivered distress detection(s).",
+                len(undelivered),
+            )
 
         if self.speech_engine is not None:
             try:
@@ -515,8 +583,7 @@ class SoundRecognitionService:
             metadata={"matched_from_text": True},
         )
 
-        with self._lock:
-            self._pending = detection
+        self._queue_pending(detection)
 
     @staticmethod
     def _pattern_from_text(text: str) -> str:
@@ -572,7 +639,11 @@ class SoundRecognitionService:
     def get_status(self) -> Dict[str, Any]:
         """Current service state, for health checks and audit."""
         with self._lock:
-            has_pending = self._pending is not None
+            pending_count = len(self._pending)
+            pending_distress = sum(1 for d in self._pending if d.pattern == "distress")
+            failures = self.backend_failures
+            last_error = self.last_backend_error
+            dropped = self.dropped_detections
 
         return {
             "available": self.available,
@@ -580,7 +651,12 @@ class SoundRecognitionService:
             "has_backend": self.backend is not None,
             "has_speech_engine": self.speech_engine is not None,
             "has_escalation_callback": self.escalation_callback is not None,
-            "has_pending_detection": has_pending,
+            "has_pending_detection": pending_count > 0,
+            "pending_detections": pending_count,
+            "pending_distress": pending_distress,
+            "backend_failures": failures,
+            "last_backend_error": last_error,
+            "dropped_detections": dropped,
             "simulation_supported": False,
         }
 
