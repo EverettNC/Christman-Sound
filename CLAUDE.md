@@ -54,6 +54,11 @@ Standing rulings from Everett (2026-10-11) that bind every session:
 - A subjectless utterance ("scared", "hurts") is the speaker's own. An AAC board does not need an "I".
 - The seven "Everett's call, do not decide these" items in `HANDOFF_2026-08-15.md` stay his.
 - Show him the diff before pushing changes to how the SDK reads a person.
+- `BaseSynthesizer.apply_emotion` resamples twice, so pitch and length move together. Everett is ruling on it
+  (true pitch shift via librosa, or rename it to what it does). **Do not change it before he rules.**
+- A test that cannot run in the current environment reports **NOT RUN** with the reason (`tests/conftest.py`).
+  It never passes and never silently skips. The XTTS test runs on his Mac, where the voice lives.
+- Requested playback plays or fails loud (`PlaybackFailed` / `NothingVoiced`). No silent success.
 
 Two remotes exist: `The-ChristmanAI-Project/Christman-Sound` (**canonical**, Everett's ruling 2026-10-11)
 and `EverettNC/Christman-Sound`. They diverged on 2026-08-16 and were re-joined by the merge on this branch.

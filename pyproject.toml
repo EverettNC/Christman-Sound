@@ -38,3 +38,9 @@ christman_voice_sdk = ["py.typed"]
 # The compiled DSP engine rides inside the package for wheel installs;
 # editable installs find it at the repo root (core.py checks both homes).
 christman_sound = ["*.so"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -ra: every non-pass outcome is listed with its reason. A test that could
+# not run is reported as NOT RUN (see tests/conftest.py), never as a bare "s".
+addopts = "-ra"

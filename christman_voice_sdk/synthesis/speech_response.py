@@ -10,14 +10,16 @@ WHAT CHANGED AND WHY
 """
 
 import logging
+import sys
 import pyttsx3
 
 logger = logging.getLogger(__name__)
 
 def _get_engine():
     try:
-        # macOS driver native
-        eng = pyttsx3.init(driverName="nsss")  
+        # 2026-10-11: driverName="nsss" was hardcoded — the macOS driver —
+        # so on Linux and Windows this "native fallback" could never start.
+        eng = pyttsx3.init(driverName="nsss") if sys.platform == "darwin" else pyttsx3.init()
         eng.setProperty("rate", 180)
         eng.setProperty("volume", 1.0)
         return eng
