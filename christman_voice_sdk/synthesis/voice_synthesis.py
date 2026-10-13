@@ -49,23 +49,23 @@ WHAT CHANGED AND WHY
    ("espeak_fallback" on Linux, not "macos_say_fallback") and
    `last_degraded` says whether the last call was a fallback at all.
 
-7. (2026-10-13) PLAYBACK NO LONGER GOES THROUGH PYGAME. Everett's ruling:
-   the package plays through the operating system's own player, the same
-   way the fallback already writes through `say` and `espeak`. The old
-   path was
+7. (2026-10-13) PLAYBACK GOES THROUGH THE CHRISTMAN ENGINE. Everett's
+   ruling: the package plays through its own engine, not pygame, not
+   PortAudio, not the Mac's afplay. The old path was
 
        import pygame
        pygame.mixer.init(); pygame.mixer.music.load(path); .play()
 
-   which pulled a game library into every being for one job the OS does
-   on its own. `play_audio_file` now hands the WAV to `afplay` on Darwin
-   and `aplay` on Linux through `subprocess.Popen`, with no shell string.
-   `audio_playback_ready` is True only when that player binary is actually
-   on the machine (`shutil.which`); if it is not, playback refuses with
-   the player's name in `last_playback_error`, and `_play_or_raise` still
-   raises `PlaybackFailed`. `is_audio_playing` polls the child process.
-   The contract (plays or fails loud, no silent success) is unchanged.
-   pygame is removed from this file's imports.
+   `play_audio_file` now reads the WAV with the standard library `wave`
+   module and hands the samples to `christman_sound.dsp.ChristmanDSP.play`,
+   which is `christman_play` in christman_dsp.c — CoreAudio on Darwin,
+   ALSA on Linux, nothing of anyone else's in between. Playback runs on a
+   thread so `is_audio_playing` can be polled and `stop_audio` can cut it;
+   the engine call itself is blocking. `audio_playback_ready` is True only
+   when the engine is loaded and reports a backend other than "none". If
+   it is not, playback refuses with the reason in `last_playback_error`,
+   and `_play_or_raise` still raises `PlaybackFailed`. Plays or fails loud.
+   pygame is removed from this file, from pyproject.toml and from setup.py.
 """
 
 from __future__ import annotations
@@ -78,8 +78,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import time
-import shutil
-import subprocess
+import threading
+import wave
 
 try:
     from ..engines.xtts_engine import XTTSEngine
@@ -101,29 +101,55 @@ except Exception:
         class DegradedSynthesisError(Exception):
             pass
 
+try:
+    from christman_sound.dsp import get_dsp, DSPUnavailable, PlaybackUnavailable
+    _DSP_IMPORT_ERROR: Optional[str] = None
+except Exception as _dsp_exc:  # the engine package is not importable at all
+    get_dsp = None  # type: ignore[assignment]
+    class DSPUnavailable(RuntimeError): ...
+    class PlaybackUnavailable(RuntimeError): ...
+    _DSP_IMPORT_ERROR = f"{type(_dsp_exc).__name__}: {_dsp_exc}"
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_DIR = Path(os.getenv("CHRISTMAN_VOICE_CACHE", str(Path.home() / ".christman_ai" / "voice_cache")))
 
-def _os_player() -> Optional[str]:
-    """The operating system's own WAV player, or None on a platform without one."""
-    if sys.platform == "darwin":
-        return "afplay"
-    if sys.platform.startswith("linux"):
-        return "aplay"
-    return None
+def _playback_readiness() -> tuple:
+    """(ready, reason). Ready only when the Christman engine is loaded and has a backend."""
+    if get_dsp is None:
+        return False, f"christman_sound.dsp not importable: {_DSP_IMPORT_ERROR}"
+    dsp = get_dsp()
+    if not dsp.available:
+        return False, dsp.error or "christman_dsp not loaded"
+    backend = dsp.play_backend()
+    if backend == "none":
+        return False, f"christman_dsp has no audio backend on {sys.platform}"
+    return True, backend
 
 
 def _initialize_audio_playback() -> bool:
-    """True only when the OS player binary is actually present on this machine."""
-    player = _os_player()
-    if player is None:
-        logger.warning("No OS audio player for platform %s; playback disabled.", sys.platform)
-        return False
-    if shutil.which(player) is None:
-        logger.warning("%s is not installed; playback disabled.", player)
-        return False
-    return True
+    ready, reason = _playback_readiness()
+    if not ready:
+        logger.warning("Playback disabled: %s", reason)
+    return ready
+
+
+def _read_wav(path: Path):
+    """WAV -> (float32 interleaved samples in [-1, 1], sample_rate, channels). Standard library only."""
+    import numpy as np
+    with wave.open(str(path), "rb") as w:
+        channels, width, rate, frames = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        raw = w.readframes(frames)
+    if width == 2:
+        samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    elif width == 4:
+        samples = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648.0
+    elif width == 1:
+        samples = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    else:
+        raise ValueError(f"unsupported WAV sample width {width} bytes")
+    return samples, rate, channels
+
 
 class PlaybackFailed(RuntimeError):
     """Audio was written but could not be played. The file path is in the message."""
@@ -141,7 +167,8 @@ class SpeechSynthesisEngine:
         self.default_language = "en"
         self.audio_playback_ready = _initialize_audio_playback()
         self.is_playing = False
-        self._player_proc: Optional[subprocess.Popen] = None
+        self._play_thread: Optional[threading.Thread] = None
+        self._play_error: Optional[str] = None
 
         self.xtts = None
         self.last_engine = "none"
@@ -280,12 +307,9 @@ class SpeechSynthesisEngine:
     def play_audio_file(self, audio_path: str) -> bool:
         """Start playback. False means NOT playing; the reason is in last_playback_error."""
         self.last_playback_error = None
-        player = _os_player()
-        if not self.audio_playback_ready or player is None:
-            self.last_playback_error = (
-                f"audio playback is not available in this environment "
-                f"({player or 'no OS player for ' + sys.platform} not found)"
-            )
+        ready, reason = _playback_readiness()
+        if not ready:
+            self.last_playback_error = f"audio playback is not available: {reason}"
             logger.error("%s — %s was not played.", self.last_playback_error, audio_path)
             return False
 
@@ -296,59 +320,58 @@ class SpeechSynthesisEngine:
             return False
 
         try:
-            self.stop_audio()
-            # Argument list, never a shell string. The path is an argument, not parsed.
-            self._player_proc = subprocess.Popen(
-                [player, str(path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-            # A player that dies at once (bad file, no device) is a failure, not a play.
-            try:
-                rc = self._player_proc.wait(timeout=0.15)
-            except subprocess.TimeoutExpired:
-                self.is_playing = True
-                return True
-            err = (self._player_proc.stderr.read() if self._player_proc.stderr else b"").decode(errors="replace").strip()
-            self._player_proc = None
-            if rc == 0:
-                # Finished inside 150 ms: a very short clip played to completion.
-                self.is_playing = False
-                return True
-            self.last_playback_error = f"{player} exited {rc}: {err or 'no message'}"
-            logger.error("Audio playback failed for %s: %s", audio_path, self.last_playback_error)
-            self.is_playing = False
-            return False
+            samples, rate, channels = _read_wav(path)
         except Exception as exc:
-            self.last_playback_error = f"{type(exc).__name__}: {exc}"
-            logger.error("Audio playback failed for %s: %s", audio_path, exc)
-            self.is_playing = False
-            self._player_proc = None
+            self.last_playback_error = f"could not read {audio_path}: {type(exc).__name__}: {exc}"
+            logger.error("%s", self.last_playback_error)
+            return False
+        if samples.size == 0:
+            self.last_playback_error = f"{audio_path} holds no samples"
+            logger.error("%s", self.last_playback_error)
             return False
 
-    def stop_audio(self) -> None:
-        """Stop whatever is playing. Safe to call when nothing is."""
-        proc = self._player_proc
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
+        self.stop_audio()
+        started = threading.Event()
+        dsp = get_dsp()
+
+        def _run():
+            self._play_error = None
+            started.set()
             try:
-                proc.wait(timeout=1.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        self._player_proc = None
+                dsp.play(samples, rate, channels)
+            except (PlaybackUnavailable, DSPUnavailable, ValueError) as exc:
+                self._play_error = f"{type(exc).__name__}: {exc}"
+                logger.error("Audio playback failed for %s: %s", audio_path, self._play_error)
+            finally:
+                self.is_playing = False
+
+        self._play_thread = threading.Thread(target=_run, name="christman-play", daemon=True)
+        self.is_playing = True
+        self._play_thread.start()
+        started.wait(timeout=1.0)
+        # A device that refuses does so at open, within the first moments. Catch it here
+        # so the caller gets False, not a True followed by silence.
+        self._play_thread.join(timeout=0.15)
+        if self._play_error is not None:
+            self.last_playback_error = self._play_error
+            self.is_playing = False
+            return False
+        return True
+
+    def stop_audio(self) -> None:
+        """Wait out whatever is playing. The engine call is blocking; a clip is at most a sentence."""
+        t = self._play_thread
+        if t is not None and t.is_alive():
+            t.join()
+        self._play_thread = None
         self.is_playing = False
 
     def is_audio_playing(self) -> bool:
-        proc = self._player_proc
-        if proc is None:
+        t = self._play_thread
+        if t is None or not t.is_alive():
             self.is_playing = False
             return False
-        if proc.poll() is None:
-            return True
-        self._player_proc = None
-        self.is_playing = False
-        return False
+        return True
 
     def generate_emotion_adjusted_speech(
         self,
