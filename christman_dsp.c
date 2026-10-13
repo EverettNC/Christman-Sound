@@ -220,28 +220,48 @@ typedef struct {
     size_t frames_total;
     size_t frames_done;
     int channels;
-    int finished;
+    int stopping;   /* async stop requested once all audio was handed over */
+    int finished;   /* CoreAudio reported the queue is no longer running */
     pthread_mutex_t lock;
     pthread_cond_t  cond;
 } cm_play_state;
 
-static void cm_aq_callback(void* user, AudioQueueRef aq, AudioQueueBufferRef buf) {
-    cm_play_state* st = (cm_play_state*)user;
+/* Fill one buffer. Returns the number of frames written (0 = nothing left). */
+static size_t cm_fill(cm_play_state* st, AudioQueueRef aq, AudioQueueBufferRef buf) {
     size_t frames_left = st->frames_total - st->frames_done;
     size_t frames_fit  = buf->mAudioDataBytesCapacity / (sizeof(float) * st->channels);
     size_t n = frames_left < frames_fit ? frames_left : frames_fit;
-    if (n == 0) {
-        pthread_mutex_lock(&st->lock);
-        st->finished = 1;
-        pthread_cond_signal(&st->cond);
-        pthread_mutex_unlock(&st->lock);
-        AudioQueueStop(aq, false);
-        return;
-    }
+    if (n == 0) return 0;
     memcpy(buf->mAudioData, st->data + st->frames_done * st->channels, n * st->channels * sizeof(float));
     buf->mAudioDataByteSize = (UInt32)(n * st->channels * sizeof(float));
     st->frames_done += n;
     AudioQueueEnqueueBuffer(aq, buf, 0, NULL);
+    return n;
+}
+
+/* A buffer came back from the hardware. Refill it, or — once everything has
+ * been handed over — ask the queue to stop AFTER the buffers still in flight
+ * have played. Finishing is signalled by the IsRunning listener, not here;
+ * declaring done on the first empty callback cut the last ~200 ms of every
+ * utterance (found on Everett's Mac, 2026-10-13: 1.5 s of audio returned in 1.33 s). */
+static void cm_aq_callback(void* user, AudioQueueRef aq, AudioQueueBufferRef buf) {
+    cm_play_state* st = (cm_play_state*)user;
+    if (cm_fill(st, aq, buf) == 0 && !st->stopping) {
+        st->stopping = 1;
+        AudioQueueStop(aq, false);
+    }
+}
+
+static void cm_aq_running(void* user, AudioQueueRef aq, AudioQueuePropertyID id) {
+    cm_play_state* st = (cm_play_state*)user;
+    UInt32 running = 0, size = sizeof running;
+    if (AudioQueueGetProperty(aq, kAudioQueueProperty_IsRunning, &running, &size) != noErr) running = 0;
+    if (!running) {
+        pthread_mutex_lock(&st->lock);
+        st->finished = 1;
+        pthread_cond_signal(&st->cond);
+        pthread_mutex_unlock(&st->lock);
+    }
 }
 
 const char* christman_play_backend(void) { return "coreaudio"; }
@@ -250,7 +270,7 @@ int christman_play(const float* audio, size_t length, int sample_rate, int chann
     if (!audio || length == 0 || sample_rate <= 0 || channels < 1 || channels > 2 || length % channels) return 1;
     cm_play_state st;
     st.data = audio; st.frames_total = length / channels; st.frames_done = 0;
-    st.channels = channels; st.finished = 0;
+    st.channels = channels; st.stopping = 0; st.finished = 0;
     pthread_mutex_init(&st.lock, NULL); pthread_cond_init(&st.cond, NULL);
 
     AudioStreamBasicDescription fmt;
@@ -267,19 +287,28 @@ int christman_play(const float* audio, size_t length, int sample_rate, int chann
     AudioQueueRef aq = NULL;
     if (AudioQueueNewOutput(&fmt, cm_aq_callback, &st, NULL, kCFRunLoopCommonModes, 0, &aq) != noErr) return 4;
 
+    if (AudioQueueAddPropertyListener(aq, kAudioQueueProperty_IsRunning, cm_aq_running, &st) != noErr) {
+        AudioQueueDispose(aq, true); return 4;
+    }
+
     const int NBUF = 3;
     const UInt32 bytes_per_buf = (UInt32)(sample_rate / 10) * fmt.mBytesPerFrame; // 100 ms
     AudioQueueBufferRef bufs[3];
+    /* Prime: fill only as many buffers as the audio needs. A clip shorter than
+     * 300 ms must not trip the stop before the queue has started. */
     for (int i = 0; i < NBUF; i++) {
         if (AudioQueueAllocateBuffer(aq, bytes_per_buf, &bufs[i]) != noErr) { AudioQueueDispose(aq, true); return 7; }
-        cm_aq_callback(&st, aq, bufs[i]);
+        if (cm_fill(&st, aq, bufs[i]) == 0) break;
     }
     if (AudioQueueStart(aq, NULL) != noErr) { AudioQueueDispose(aq, true); return 4; }
+    if (st.frames_done == st.frames_total) {      /* whole clip fit in the primed buffers */
+        st.stopping = 1;
+        AudioQueueStop(aq, false);                /* stops after they have played */
+    }
 
     pthread_mutex_lock(&st.lock);
     while (!st.finished) pthread_cond_wait(&st.cond, &st.lock);
     pthread_mutex_unlock(&st.lock);
-    AudioQueueStop(aq, true);
     AudioQueueDispose(aq, true);
     pthread_mutex_destroy(&st.lock); pthread_cond_destroy(&st.cond);
     return 0;

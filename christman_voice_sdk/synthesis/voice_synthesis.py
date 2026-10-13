@@ -134,12 +134,59 @@ def _initialize_audio_playback() -> bool:
     return ready
 
 
+def _read_riff_float(path: Path):
+    """
+    Read a WAV whose format tag is 3 (IEEE float) or a WAVE_FORMAT_EXTENSIBLE
+    wrapping float. The standard-library `wave` module refuses these, and the
+    macOS `say` fallback writes exactly this (found 2026-10-13: AlphaVox could
+    synthesize and then could not play its own file). Returns
+    (float32 samples, rate, channels) or raises ValueError.
+    """
+    import struct
+    import numpy as np
+    data = path.read_bytes()
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise ValueError(f"{path} is not a RIFF/WAVE file")
+    pos, fmt, pcm = 12, None, None
+    while pos + 8 <= len(data):
+        cid, size = data[pos:pos + 4], struct.unpack("<I", data[pos + 4:pos + 8])[0]
+        body = data[pos + 8:pos + 8 + size]
+        if cid == b"fmt ":
+            tag, channels, rate = struct.unpack("<HHI", body[:8])
+            bits = struct.unpack("<H", body[14:16])[0]
+            if tag == 0xFFFE and len(body) >= 26:  # extensible: real tag is in the sub-format GUID
+                tag = struct.unpack("<H", body[24:26])[0]
+            fmt = (tag, channels, rate, bits)
+        elif cid == b"data":
+            pcm = body
+        pos += 8 + size + (size & 1)
+    if fmt is None or pcm is None:
+        raise ValueError(f"{path}: missing fmt or data chunk")
+    tag, channels, rate, bits = fmt
+    if tag == 3 and bits == 32:
+        samples = np.frombuffer(pcm, dtype="<f4").astype(np.float32)
+    elif tag == 3 and bits == 64:
+        samples = np.frombuffer(pcm, dtype="<f8").astype(np.float32)
+    elif tag == 1 and bits == 16:
+        samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+    elif tag == 1 and bits == 32:
+        samples = np.frombuffer(pcm, dtype="<i4").astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"{path}: unsupported WAV format tag {tag} with {bits} bits")
+    return samples, rate, channels
+
+
 def _read_wav(path: Path):
     """WAV -> (float32 interleaved samples in [-1, 1], sample_rate, channels). Standard library only."""
     import numpy as np
-    with wave.open(str(path), "rb") as w:
-        channels, width, rate, frames = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
-        raw = w.readframes(frames)
+    try:
+        with wave.open(str(path), "rb") as w:
+            channels, width, rate, frames = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+            raw = w.readframes(frames)
+    except wave.Error as exc:
+        if "unknown format" in str(exc):
+            return _read_riff_float(path)
+        raise
     if width == 2:
         samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
     elif width == 4:
