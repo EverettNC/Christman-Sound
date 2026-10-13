@@ -137,6 +137,7 @@ _NO_SPEAKER = "not run: no OS fallback speaker on this platform"
 
 @pytest.mark.skipif(not _HAS_OS_SPEAKER, reason=_NO_SPEAKER)
 def test_fallback_plays_when_it_can_and_text_goes_on_stdin(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHRISTMAN_ALLOW_OS_VOICE", "1")  # the OS voice is opt-in
     calls = []
     monkeypatch.setattr("subprocess.run", _fake_subprocess_run(calls))
     vs, eng, played = _engine_with_xtts_down(tmp_path, play_result=True)
@@ -155,6 +156,7 @@ def test_fallback_plays_when_it_can_and_text_goes_on_stdin(tmp_path, monkeypatch
 
 @pytest.mark.skipif(not _HAS_OS_SPEAKER, reason=_NO_SPEAKER)
 def test_fallback_fails_loud_when_it_cannot_play(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHRISTMAN_ALLOW_OS_VOICE", "1")  # the OS voice is opt-in
     calls = []
     monkeypatch.setattr("subprocess.run", _fake_subprocess_run(calls))
     vs, eng, played = _engine_with_xtts_down(tmp_path, play_result=False)
@@ -170,6 +172,7 @@ def test_fallback_fails_loud_when_it_cannot_play(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(not _HAS_OS_SPEAKER, reason=_NO_SPEAKER)
 def test_nothing_voiced_raises_when_playback_was_requested(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHRISTMAN_ALLOW_OS_VOICE", "1")  # the OS voice is opt-in
     def no_speaker(cmd, input=None, check=False, timeout=None, stderr=None):
         raise FileNotFoundError(cmd[0])
 
@@ -244,3 +247,23 @@ def test_tts_service_binds_loopback_and_keys_emotion():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+@pytest.mark.skipif(not _HAS_OS_SPEAKER, reason=_NO_SPEAKER)
+def test_os_voice_is_refused_by_default(tmp_path, monkeypatch):
+    """2026-10-13: AlphaVox read every reply in Apple's voice because this ran by
+    default. The being's own voice or nothing, unless an operator opts in."""
+    monkeypatch.delenv("CHRISTMAN_ALLOW_OS_VOICE", raising=False)
+    calls = []
+    monkeypatch.setattr("subprocess.run", _fake_subprocess_run(calls))
+    vs, eng, played = _engine_with_xtts_down(tmp_path, play_result=True)
+
+    with pytest.raises(vs.NothingVoiced):
+        eng.generate_speech_audio("hello", play_audio=True)
+    assert calls == [], "the OS speaker must not even be invoked"
+    assert played == []
+    assert eng.last_engine == "none"
+    assert eng.last_degraded is True
+
+    assert eng.generate_speech_audio("hello", play_audio=False) is None
+    assert calls == []

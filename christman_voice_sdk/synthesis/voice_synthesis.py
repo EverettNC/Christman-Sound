@@ -114,6 +114,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_DIR = Path(os.getenv("CHRISTMAN_VOICE_CACHE", str(Path.home() / ".christman_ai" / "voice_cache")))
 
+def _os_voice_allowed() -> bool:
+    """The operating system's voice is used only when an operator says so."""
+    return os.getenv("CHRISTMAN_ALLOW_OS_VOICE", "0").strip().lower() in ("1", "true", "yes")
+
+
 def _playback_readiness() -> tuple:
     """(ready, reason). Ready only when the Christman engine is loaded and has a backend."""
     if get_dsp is None:
@@ -284,9 +289,27 @@ class SpeechSynthesisEngine:
 
         except Exception as exc:
             self.last_error = str(exc)
+            self.last_degraded = True
+            if not _os_voice_allowed():
+                # 2026-10-13, found on Everett's Mac: this fallback ran by default and
+                # AlphaVox read every reply in the operating system's voice while the
+                # caller was told "voice_synthesis OK". A voice that is not the being's
+                # own is not a fallback; it is an impostor. It now runs only when the
+                # operator sets CHRISTMAN_ALLOW_OS_VOICE=1 and accepts that on purpose.
+                self.last_engine = "none"
+                logger.error(
+                    "Nothing was voiced: the being's own voice failed (%s) and the OS voice "
+                    "is not permitted (set CHRISTMAN_ALLOW_OS_VOICE=1 to allow a voice that "
+                    "is not his).", exc,
+                )
+                if play_audio:
+                    raise NothingVoiced(
+                        f"nothing was voiced for {text[:40]!r}: the being's own voice failed "
+                        f"({exc}) and the OS voice is not permitted"
+                    )
+                return None
             logger.error(f"Local synthesis failed ({exc}). Falling back to OS native TTS.")
             native, engine_name = self._native_os_fallback(text, audio_output_path)
-            self.last_degraded = True
             if not native:
                 self.last_engine = "none"
                 logger.error("Nothing was voiced: XTTS failed and the OS fallback produced no file.")
