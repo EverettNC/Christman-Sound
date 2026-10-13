@@ -29,7 +29,13 @@ Build the library once per machine (the .so is a build artefact, not source):
     python3 scripts/build_dsp.py
 
 or let `pip install -e .` build it (setup.py declares it as an optional
-extension). The loader searches, in order: `$CHRISTMAN_DSP_LIB`, this package
+extension).
+
+(2026-10-13) OUTPUT SIDE. `christman_play` and `christman_play_backend`
+bind here alongside the four measurements. `play()` is blocking and
+either plays or raises `PlaybackUnavailable` with the engine's reason
+code spelled out — never a silent return. See christman_dsp.c, OUTPUT
+SIDE, for what sits beneath it (the OS audio layer and nothing else). The loader searches, in order: `$CHRISTMAN_DSP_LIB`, this package
 directory, the repository root, and `christman_voice_sdk/` (where the tone
 engines used to look).
 """
@@ -46,6 +52,7 @@ import numpy as np
 
 __all__ = [
     "DSPUnavailable",
+    "PlaybackUnavailable",
     "ChristmanDSP",
     "get_dsp",
     "candidate_paths",
@@ -63,6 +70,21 @@ BUILD_COMMAND = f"python3 {_REPO_ROOT / 'scripts' / 'build_dsp.py'}"
 
 class DSPUnavailable(RuntimeError):
     """The native engine is not loaded. No measurement is possible from it."""
+
+
+class PlaybackUnavailable(RuntimeError):
+    """The engine could not play. Nothing reached the speaker. The reason is in the message."""
+
+
+_PLAY_REASONS = {
+    1: "bad arguments (empty buffer, bad rate, or channels not 1 or 2)",
+    2: "no audio system on this platform",
+    3: "the operating system audio library is absent (libasound.so.2 on Linux)",
+    4: "the audio device could not be opened",
+    5: "the audio device rejected the format",
+    6: "the write to the device failed mid-stream",
+    7: "allocation failed",
+}
 
 
 def candidate_paths() -> List[Path]:
@@ -133,6 +155,10 @@ class ChristmanDSP:
         lib.christman_yin.restype = None
         lib.christman_lpc.argtypes = [_ARRAY_1D, ctypes.c_size_t, ctypes.c_int, _FLOAT_P]
         lib.christman_lpc.restype = ctypes.c_int
+        lib.christman_play.argtypes = [_ARRAY_1D, ctypes.c_size_t, ctypes.c_int, ctypes.c_int]
+        lib.christman_play.restype = ctypes.c_int
+        lib.christman_play_backend.argtypes = []
+        lib.christman_play_backend.restype = ctypes.c_char_p
 
     # -- guards ---------------------------------------------------------------
 
@@ -216,6 +242,30 @@ class ChristmanDSP:
         poly = -a
         poly[0] = 1.0
         return poly
+
+    # -- output -----------------------------------------------------------------
+
+    def play_backend(self) -> str:
+        """Which OS audio layer the engine will speak through: "coreaudio", "alsa", or "none"."""
+        lib = self._require()
+        return lib.christman_play_backend().decode()
+
+    def play(self, y: np.ndarray, sample_rate: int, channels: int = 1) -> None:
+        """
+        Play interleaved float32 samples in [-1, 1] through the engine. Blocks
+        until the last sample is handed to the device. Plays or raises
+        `PlaybackUnavailable`; there is no return value that means "maybe".
+        """
+        lib = self._require()
+        samples = self._as_frame(y)
+        if sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
+        status = lib.christman_play(samples, samples.size, int(sample_rate), int(channels))
+        if status != 0:
+            raise PlaybackUnavailable(
+                f"christman_play ({self.play_backend()}) refused with code {status}: "
+                f"{_PLAY_REASONS.get(status, 'unknown reason')}"
+            )
 
     # -- contours ---------------------------------------------------------------
 

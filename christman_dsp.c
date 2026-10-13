@@ -181,3 +181,176 @@ int christman_lpc(const float* audio, size_t length, int order, float* out_a) {
     free(r);
     return status;
 }
+// =============================================================================
+// OUTPUT SIDE — christman_play (added 2026-10-13)
+//
+// WHAT CHANGED AND WHY
+// Every speaker path the family ever had went through somebody else's
+// library: pygame (SDL) in the SDK, sounddevice (PortAudio) in the Voice
+// Creation Center. Everett's ruling: the engine measures AND plays, and
+// nothing in the chain belongs to anyone else. The only thing below this
+// function is the operating system's own audio layer — AudioToolbox on
+// Darwin, ALSA on Linux — which is where every player on earth ends,
+// including the ones we just removed. No pip package anywhere.
+//
+// On Linux, libasound is found at run time by dlopen with the handful of
+// symbols declared here, so the .so links against nothing and a machine
+// with no sound system still loads the measurement side. On Darwin the
+// AudioToolbox framework is linked by scripts/build_dsp.py.
+//
+// Contract: blocking. Plays `length` interleaved float32 samples at
+// `sample_rate` with `channels` channels and returns when the last sample
+// has been handed to the device. Returns 0 on success; nonzero means
+// NOTHING was played, with the reason in the code:
+//   1  bad arguments            2  no audio system on this platform
+//   3  OS audio library absent  4  device could not be opened
+//   5  device rejected format   6  write failed mid-stream
+//   7  allocation failed
+// `christman_play_backend` names the backend ("alsa", "coreaudio", or
+// "none") so a caller can report what it is about to use, not guess.
+// =============================================================================
+#include <string.h>
+
+#if defined(__APPLE__)
+#include <AudioToolbox/AudioToolbox.h>
+#include <pthread.h>
+
+typedef struct {
+    const float* data;
+    size_t frames_total;
+    size_t frames_done;
+    int channels;
+    int finished;
+    pthread_mutex_t lock;
+    pthread_cond_t  cond;
+} cm_play_state;
+
+static void cm_aq_callback(void* user, AudioQueueRef aq, AudioQueueBufferRef buf) {
+    cm_play_state* st = (cm_play_state*)user;
+    size_t frames_left = st->frames_total - st->frames_done;
+    size_t frames_fit  = buf->mAudioDataBytesCapacity / (sizeof(float) * st->channels);
+    size_t n = frames_left < frames_fit ? frames_left : frames_fit;
+    if (n == 0) {
+        pthread_mutex_lock(&st->lock);
+        st->finished = 1;
+        pthread_cond_signal(&st->cond);
+        pthread_mutex_unlock(&st->lock);
+        AudioQueueStop(aq, false);
+        return;
+    }
+    memcpy(buf->mAudioData, st->data + st->frames_done * st->channels, n * st->channels * sizeof(float));
+    buf->mAudioDataByteSize = (UInt32)(n * st->channels * sizeof(float));
+    st->frames_done += n;
+    AudioQueueEnqueueBuffer(aq, buf, 0, NULL);
+}
+
+const char* christman_play_backend(void) { return "coreaudio"; }
+
+int christman_play(const float* audio, size_t length, int sample_rate, int channels) {
+    if (!audio || length == 0 || sample_rate <= 0 || channels < 1 || channels > 2 || length % channels) return 1;
+    cm_play_state st;
+    st.data = audio; st.frames_total = length / channels; st.frames_done = 0;
+    st.channels = channels; st.finished = 0;
+    pthread_mutex_init(&st.lock, NULL); pthread_cond_init(&st.cond, NULL);
+
+    AudioStreamBasicDescription fmt;
+    memset(&fmt, 0, sizeof fmt);
+    fmt.mSampleRate = (Float64)sample_rate;
+    fmt.mFormatID = kAudioFormatLinearPCM;
+    fmt.mFormatFlags = kLinearPCMFormatFlagIsFloat | kLinearPCMFormatFlagIsPacked;
+    fmt.mBitsPerChannel = 32;
+    fmt.mChannelsPerFrame = (UInt32)channels;
+    fmt.mBytesPerFrame = 4 * (UInt32)channels;
+    fmt.mFramesPerPacket = 1;
+    fmt.mBytesPerPacket = fmt.mBytesPerFrame;
+
+    AudioQueueRef aq = NULL;
+    if (AudioQueueNewOutput(&fmt, cm_aq_callback, &st, NULL, kCFRunLoopCommonModes, 0, &aq) != noErr) return 4;
+
+    const int NBUF = 3;
+    const UInt32 bytes_per_buf = (UInt32)(sample_rate / 10) * fmt.mBytesPerFrame; // 100 ms
+    AudioQueueBufferRef bufs[3];
+    for (int i = 0; i < NBUF; i++) {
+        if (AudioQueueAllocateBuffer(aq, bytes_per_buf, &bufs[i]) != noErr) { AudioQueueDispose(aq, true); return 7; }
+        cm_aq_callback(&st, aq, bufs[i]);
+    }
+    if (AudioQueueStart(aq, NULL) != noErr) { AudioQueueDispose(aq, true); return 4; }
+
+    pthread_mutex_lock(&st.lock);
+    while (!st.finished) pthread_cond_wait(&st.cond, &st.lock);
+    pthread_mutex_unlock(&st.lock);
+    AudioQueueStop(aq, true);
+    AudioQueueDispose(aq, true);
+    pthread_mutex_destroy(&st.lock); pthread_cond_destroy(&st.cond);
+    return 0;
+}
+
+#elif defined(__linux__)
+#include <dlfcn.h>
+#include <stdint.h>
+
+// The few libasound symbols we use, declared here so no headers are needed.
+typedef struct _snd_pcm snd_pcm_t;
+typedef long snd_pcm_sframes_t;
+typedef int (*fn_open)(snd_pcm_t**, const char*, int, int);
+typedef int (*fn_set_params)(snd_pcm_t*, int, int, unsigned, unsigned, int, unsigned);
+typedef snd_pcm_sframes_t (*fn_writei)(snd_pcm_t*, const void*, unsigned long);
+typedef int (*fn_drain)(snd_pcm_t*);
+typedef int (*fn_close)(snd_pcm_t*);
+typedef int (*fn_recover)(snd_pcm_t*, int, int);
+enum { CM_SND_PCM_STREAM_PLAYBACK = 0, CM_SND_PCM_FORMAT_S16_LE = 2, CM_SND_PCM_ACCESS_RW_INTERLEAVED = 3 };
+
+const char* christman_play_backend(void) { return "alsa"; }
+
+int christman_play(const float* audio, size_t length, int sample_rate, int channels) {
+    if (!audio || length == 0 || sample_rate <= 0 || channels < 1 || channels > 2 || length % channels) return 1;
+    void* lib = dlopen("libasound.so.2", RTLD_NOW);
+    if (!lib) return 3;
+    fn_open  p_open  = (fn_open) dlsym(lib, "snd_pcm_open");
+    fn_set_params p_set = (fn_set_params) dlsym(lib, "snd_pcm_set_params");
+    fn_writei p_writei = (fn_writei) dlsym(lib, "snd_pcm_writei");
+    fn_drain p_drain = (fn_drain) dlsym(lib, "snd_pcm_drain");
+    fn_close p_close = (fn_close) dlsym(lib, "snd_pcm_close");
+    fn_recover p_recover = (fn_recover) dlsym(lib, "snd_pcm_recover");
+    if (!p_open || !p_set || !p_writei || !p_drain || !p_close || !p_recover) { dlclose(lib); return 3; }
+
+    snd_pcm_t* pcm = NULL;
+    if (p_open(&pcm, "default", CM_SND_PCM_STREAM_PLAYBACK, 0) < 0) { dlclose(lib); return 4; }
+    if (p_set(pcm, CM_SND_PCM_FORMAT_S16_LE, CM_SND_PCM_ACCESS_RW_INTERLEAVED,
+              (unsigned)channels, (unsigned)sample_rate, 1, 200000) < 0) { p_close(pcm); dlclose(lib); return 5; }
+
+    size_t frames_total = length / channels;
+    const size_t chunk = 1024;
+    int16_t* buf = (int16_t*)malloc(chunk * channels * sizeof(int16_t));
+    if (!buf) { p_close(pcm); dlclose(lib); return 7; }
+
+    int status = 0;
+    size_t done = 0;
+    while (done < frames_total) {
+        size_t n = frames_total - done < chunk ? frames_total - done : chunk;
+        for (size_t i = 0; i < n * channels; i++) {
+            float s = audio[done * channels + i];
+            if (s > 1.0f) s = 1.0f; else if (s < -1.0f) s = -1.0f;
+            buf[i] = (int16_t)(s * 32767.0f);
+        }
+        snd_pcm_sframes_t w = p_writei(pcm, buf, n);
+        if (w < 0) {
+            if (p_recover(pcm, (int)w, 1) < 0) { status = 6; break; }
+            continue; // underrun recovered; retry the same chunk
+        }
+        done += (size_t)w;
+    }
+    p_drain(pcm);
+    p_close(pcm);
+    free(buf);
+    dlclose(lib);
+    return status;
+}
+
+#else
+const char* christman_play_backend(void) { return "none"; }
+int christman_play(const float* audio, size_t length, int sample_rate, int channels) {
+    (void)audio; (void)length; (void)sample_rate; (void)channels;
+    return 2;
+}
+#endif

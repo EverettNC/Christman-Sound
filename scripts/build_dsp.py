@@ -35,6 +35,10 @@ def build(output: Path = OUTPUT) -> Path:
     if not SOURCE.is_file():
         sys.exit(f"Source not found: {SOURCE}")
     cmd = [compiler, "-shared", "-fPIC", "-O2", "-Wall", "-o", str(output), str(SOURCE), "-lm"]
+    if sys.platform == "darwin":
+        cmd += ["-framework", "AudioToolbox", "-framework", "CoreFoundation"]
+    elif sys.platform.startswith("linux"):
+        cmd += ["-ldl"]  # libasound is dlopen'd at run time; no link-time dependency
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
     print(f"built {output} ({output.stat().st_size} bytes)")

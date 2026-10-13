@@ -22,7 +22,6 @@ dependencies = [
     "torchaudio<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "transformers>=4.40,<5",
-    "pygame",
     "pyttsx3",
     "flask",
     "fastapi",
