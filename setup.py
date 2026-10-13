@@ -21,7 +21,6 @@ setup(
         # Intel Mac (torch tops out at 2.2.2 there) — pin <5 so the torch
         # backend stays enabled instead of silently disabling itself.
         "transformers>=4.40,<5",
-        "pygame",
         "pyttsx3",
         "flask",
         "fastapi",

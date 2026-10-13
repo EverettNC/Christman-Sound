@@ -48,6 +48,24 @@ WHAT CHANGED AND WHY
    (0700), created on first write. `last_engine` names the real fallback
    ("espeak_fallback" on Linux, not "macos_say_fallback") and
    `last_degraded` says whether the last call was a fallback at all.
+
+7. (2026-10-13) PLAYBACK NO LONGER GOES THROUGH PYGAME. Everett's ruling:
+   the package plays through the operating system's own player, the same
+   way the fallback already writes through `say` and `espeak`. The old
+   path was
+
+       import pygame
+       pygame.mixer.init(); pygame.mixer.music.load(path); .play()
+
+   which pulled a game library into every being for one job the OS does
+   on its own. `play_audio_file` now hands the WAV to `afplay` on Darwin
+   and `aplay` on Linux through `subprocess.Popen`, with no shell string.
+   `audio_playback_ready` is True only when that player binary is actually
+   on the machine (`shutil.which`); if it is not, playback refuses with
+   the player's name in `last_playback_error`, and `_play_or_raise` still
+   raises `PlaybackFailed`. `is_audio_playing` polls the child process.
+   The contract (plays or fails loud, no silent success) is unchanged.
+   pygame is removed from this file's imports.
 """
 
 from __future__ import annotations
@@ -60,8 +78,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import time
-
-import pygame
+import shutil
+import subprocess
 
 try:
     from ..engines.xtts_engine import XTTSEngine
@@ -87,14 +105,25 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_DIR = Path(os.getenv("CHRISTMAN_VOICE_CACHE", str(Path.home() / ".christman_ai" / "voice_cache")))
 
+def _os_player() -> Optional[str]:
+    """The operating system's own WAV player, or None on a platform without one."""
+    if sys.platform == "darwin":
+        return "afplay"
+    if sys.platform.startswith("linux"):
+        return "aplay"
+    return None
+
+
 def _initialize_audio_playback() -> bool:
-    try:
-        if not pygame.mixer.get_init():
-            pygame.mixer.init()
-        return True
-    except Exception as exc:
-        logger.warning("Audio playback initialization failed: %s", exc)
+    """True only when the OS player binary is actually present on this machine."""
+    player = _os_player()
+    if player is None:
+        logger.warning("No OS audio player for platform %s; playback disabled.", sys.platform)
         return False
+    if shutil.which(player) is None:
+        logger.warning("%s is not installed; playback disabled.", player)
+        return False
+    return True
 
 class PlaybackFailed(RuntimeError):
     """Audio was written but could not be played. The file path is in the message."""
@@ -112,6 +141,7 @@ class SpeechSynthesisEngine:
         self.default_language = "en"
         self.audio_playback_ready = _initialize_audio_playback()
         self.is_playing = False
+        self._player_proc: Optional[subprocess.Popen] = None
 
         self.xtts = None
         self.last_engine = "none"
@@ -250,30 +280,75 @@ class SpeechSynthesisEngine:
     def play_audio_file(self, audio_path: str) -> bool:
         """Start playback. False means NOT playing; the reason is in last_playback_error."""
         self.last_playback_error = None
-        if not self.audio_playback_ready:
+        player = _os_player()
+        if not self.audio_playback_ready or player is None:
             self.last_playback_error = (
-                "audio playback is not available in this environment "
-                "(pygame mixer failed to initialise)"
+                f"audio playback is not available in this environment "
+                f"({player or 'no OS player for ' + sys.platform} not found)"
             )
             logger.error("%s — %s was not played.", self.last_playback_error, audio_path)
             return False
 
+        path = Path(audio_path)
+        if not path.is_file() or path.stat().st_size == 0:
+            self.last_playback_error = f"no audio file at {audio_path}"
+            logger.error("%s — nothing to play.", self.last_playback_error)
+            return False
+
         try:
-            pygame.mixer.music.stop()
-            pygame.mixer.music.load(audio_path)
-            pygame.mixer.music.play()
-            self.is_playing = True
-            return True
+            self.stop_audio()
+            # Argument list, never a shell string. The path is an argument, not parsed.
+            self._player_proc = subprocess.Popen(
+                [player, str(path)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            # A player that dies at once (bad file, no device) is a failure, not a play.
+            try:
+                rc = self._player_proc.wait(timeout=0.15)
+            except subprocess.TimeoutExpired:
+                self.is_playing = True
+                return True
+            err = (self._player_proc.stderr.read() if self._player_proc.stderr else b"").decode(errors="replace").strip()
+            self._player_proc = None
+            if rc == 0:
+                # Finished inside 150 ms: a very short clip played to completion.
+                self.is_playing = False
+                return True
+            self.last_playback_error = f"{player} exited {rc}: {err or 'no message'}"
+            logger.error("Audio playback failed for %s: %s", audio_path, self.last_playback_error)
+            self.is_playing = False
+            return False
         except Exception as exc:
             self.last_playback_error = f"{type(exc).__name__}: {exc}"
             logger.error("Audio playback failed for %s: %s", audio_path, exc)
             self.is_playing = False
+            self._player_proc = None
             return False
 
+    def stop_audio(self) -> None:
+        """Stop whatever is playing. Safe to call when nothing is."""
+        proc = self._player_proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        self._player_proc = None
+        self.is_playing = False
+
     def is_audio_playing(self) -> bool:
-        if not self.audio_playback_ready:
+        proc = self._player_proc
+        if proc is None:
+            self.is_playing = False
             return False
-        return pygame.mixer.music.get_busy()
+        if proc.poll() is None:
+            return True
+        self._player_proc = None
+        self.is_playing = False
+        return False
 
     def generate_emotion_adjusted_speech(
         self,
