@@ -4,14 +4,23 @@
 # The Christman AI Project — Luma Cognify AI
 # ==============================================================================
 """
-Build the Christman Bare-Metal Audio Engine (christman_dsp.c) into the
-shared library that christman_sound.dsp loads.
+Build the Christman Bare-Metal Audio Engine (christman_dsp.c, and the
+sovereign synthesizer christman_synth.c) into the one shared library that
+christman_sound.dsp loads.
 
     python3 scripts/build_dsp.py            # -> christman_sound/christman_dsp.so
     python3 scripts/build_dsp.py --check    # build, then run the smoke test
 
 No shell string is ever constructed; the compiler is invoked with an argument
 list. The compiler comes from $CC, else `cc`.
+
+WHAT CHANGED AND WHY (2026-10-17)
+christman_synth.c (the C port of Codec War's synthesizer) is compiled into the
+same library. It is compiled on its own first, with -ffp-contract=off, so that
+no compiler fuses a multiply and an add into one rounding the original
+TypeScript does not make (clang on Apple Silicon does that by default). That
+keeps the output sample-for-sample with Codec War. christman_dsp.c is still
+compiled with exactly the flags it had, so no measurement changes.
 """
 
 from __future__ import annotations
@@ -21,10 +30,12 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "christman_dsp.c"
+SYNTH_SOURCE = ROOT / "christman_synth.c"
 OUTPUT = ROOT / "christman_sound" / "christman_dsp.so"
 
 
@@ -32,15 +43,23 @@ def build(output: Path = OUTPUT) -> Path:
     compiler = os.environ.get("CC") or shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not compiler:
         sys.exit("No C compiler found. Install Xcode Command Line Tools (macOS) or gcc/clang.")
-    if not SOURCE.is_file():
-        sys.exit(f"Source not found: {SOURCE}")
-    cmd = [compiler, "-shared", "-fPIC", "-O2", "-Wall", "-o", str(output), str(SOURCE), "-lm"]
-    if sys.platform == "darwin":
-        cmd += ["-framework", "AudioToolbox", "-framework", "CoreFoundation"]
-    elif sys.platform.startswith("linux"):
-        cmd += ["-ldl"]  # libasound is dlopen'd at run time; no link-time dependency
-    print("+", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    for src in (SOURCE, SYNTH_SOURCE):
+        if not src.is_file():
+            sys.exit(f"Source not found: {src}")
+    with tempfile.TemporaryDirectory() as tmp:
+        synth_obj = Path(tmp) / "christman_synth.o"
+        compile_synth = [compiler, "-c", "-fPIC", "-O2", "-Wall", "-ffp-contract=off",
+                         "-o", str(synth_obj), str(SYNTH_SOURCE)]
+        print("+", " ".join(compile_synth))
+        subprocess.run(compile_synth, check=True)
+        cmd = [compiler, "-shared", "-fPIC", "-O2", "-Wall", "-o", str(output), str(SOURCE),
+               str(synth_obj), "-lm"]
+        if sys.platform == "darwin":
+            cmd += ["-framework", "AudioToolbox", "-framework", "CoreFoundation"]
+        elif sys.platform.startswith("linux"):
+            cmd += ["-ldl"]  # libasound is dlopen'd at run time; no link-time dependency
+        print("+", " ".join(cmd))
+        subprocess.run(cmd, check=True)
     print(f"built {output} ({output.stat().st_size} bytes)")
     return output
 
