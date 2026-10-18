@@ -77,7 +77,7 @@ class SynthesisResult:
     synthesis_time: float = 0.0
     degraded: bool = False
     error_reason: Optional[str] = None
-
+    
     def save(self, path: Path):
         """Save audio to file. Raises if no audio was generated."""
         if self.audio is None or self.audio.size == 0:

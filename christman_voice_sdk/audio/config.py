@@ -3,6 +3,32 @@ Configuration for Christman Voice SDK (ICanHearYou voice cloning system).
 
 Tier structure kept for compatibility with existing beings.
 EVERY feature is turned ON for EVERYONE. No paywalls. No restrictions.
+
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
+------------------------------------------------------
+Everett's ruling: the AlphaVox rebuild cuts every outside speech engine.
+This file named outside synthesis models and carried their settings, though
+no code here loads F5-TTS or StyleTTS2 and GPT-SoVITS was never wired.
+Removed (quoted from main 99a6cce):
+
+        synthesis_engines=["gpt_sovits", "f5_tts", "style_tts2"]
+
+                "gpt_sovits_checkpoint": "models/gpt_sovits_v3.pth",
+                "f5_tts_checkpoint": "models/f5_tts.pth",
+                "style_tts2_checkpoint": "models/style_tts2.pth",
+
+            "synthesis": {
+                "max_length": 1000,
+                "temperature": 0.7,
+                "top_k": 50,
+                "top_p": 0.9,
+            },
+
+`synthesis_engines` is now an empty list: no engine is available until
+Everett's own synthesizer is wired, and the config does not claim one. The
+sampling block (temperature / top_k / top_p) was the outside models'
+generation setting; nothing in the package read it. The wav2vec2 model name
+stays — that is the ear side, not a voice.
 """
 
 from pathlib import Path
@@ -48,7 +74,7 @@ class TierFeatures:
 # All tiers get full access
 TIER_FEATURES: Dict[Tier, TierFeatures] = {
     tier: TierFeatures(
-        synthesis_engines=["gpt_sovits", "f5_tts", "style_tts2"]
+        synthesis_engines=[]
     )
     for tier in Tier
 }
@@ -91,15 +117,6 @@ class Config:
             },
             "models": {
                 "wav2vec2_model": "jonatasgrosman/wav2vec2-large-xlsr-53-english",
-                "gpt_sovits_checkpoint": "models/gpt_sovits_v3.pth",
-                "f5_tts_checkpoint": "models/f5_tts.pth",
-                "style_tts2_checkpoint": "models/style_tts2.pth",
-            },
-            "synthesis": {
-                "max_length": 1000,
-                "temperature": 0.7,
-                "top_k": 50,
-                "top_p": 0.9,
             },
         }
 

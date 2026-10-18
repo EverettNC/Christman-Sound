@@ -2,6 +2,15 @@
 Path helpers for Christman family projects.
 
 Portable relative path resolution. No hardcoded absolute paths.
+
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
+------------------------------------------------------
+The SDK directory was recognised by a marker file that moved to
+quarantine/2026-10_outside_voices/ with the XTTS engine. Removed:
+
+    if (candidate / "engines" / "xtts_engine.py").is_file():
+
+The marker is now the package's own `__init__.py`, which stays.
 """
 
 from __future__ import annotations
@@ -18,7 +27,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 def _resolve_sdk_dir() -> Path | None:
     """Find the christman_voice_sdk directory."""
     candidate = _ROOT / "christman_voice_sdk"
-    if (candidate / "engines" / "xtts_engine.py").is_file():
+    if (candidate / "__init__.py").is_file():
         return candidate.resolve()
     return None
 
