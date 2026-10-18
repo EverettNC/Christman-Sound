@@ -175,6 +175,24 @@ def test_play_audio_file_is_false_until_the_engine_says_otherwise(mouth, dsp, tm
     assert "code 6" in mouth.last_playback_error
 
 
+def test_failure_while_the_end_drains_raises(mouth, dsp):
+    """
+    Code 8 (christman_dsp.c, 2026-10-18): every frame was written and the
+    device failed while playing out the end. ALSA's file device aborts the
+    process inside snd_pcm_drain when its write fails there, so this code
+    cannot be forced through real ALSA here; it is simulated through the
+    binding as a failure code.
+    """
+    def fails_in_drain(ptr, n, rate, channels):
+        time.sleep(0.2)
+        return 8
+
+    dsp._lib.christman_play = _PLAY_PROTO(fails_in_drain)
+    with pytest.raises(vs.PlaybackFailed) as info:
+        mouth.generate_speech_audio("hello", play_audio=True)
+    assert "code 8" in str(info.value) and "playing out the end" in str(info.value)
+
+
 # ---------------------------------------------------------- through ALSA (Linux)
 
 _CHILD = r"""
