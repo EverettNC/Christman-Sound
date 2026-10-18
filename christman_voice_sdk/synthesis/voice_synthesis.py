@@ -159,13 +159,27 @@ EARLIER HISTORY OF THIS FILE
    `play_audio_file` now reads the WAV with the standard library `wave`
    module and hands the samples to `christman_sound.dsp.ChristmanDSP.play`,
    which is `christman_play` in christman_dsp.c — CoreAudio on Darwin,
-   ALSA on Linux, nothing of anyone else's in between. Playback runs on a
-   thread so `is_audio_playing` can be polled and `stop_audio` can cut it;
-   the engine call itself is blocking. `audio_playback_ready` is True only
+   ALSA on Linux, nothing of anyone else's in between. (Superseded by 8:
+   playback no longer runs on a thread.) `audio_playback_ready` is True only
    when the engine is loaded and reports a backend other than "none". If
    it is not, playback refuses with the reason in `last_playback_error`,
    and `_play_or_raise` still raises `PlaybackFailed`. Plays or fails loud.
    pygame is removed from this file, from pyproject.toml and from setup.py.
+
+8. (2026-10-18) PLAYBACK RETURNS TRUE ONLY WHEN IT HAS PLAYED. The thread
+   from 7 was joined for 0.15 s and then `play_audio_file` returned True. A
+   device that failed after that window was logged and kept in a field
+   nobody read; the caller had already been told the clip played, so
+   `_play_or_raise` returned as a success (review finding 3). Now
+   `play_audio_file` calls christman_play in the caller's thread and waits
+   for it. True means christman_play returned 0: every frame went to the
+   device and the device drained it. Any code the engine returns, at any
+   point in the clip, comes back as False with the reason, and requested
+   playback raises PlaybackFailed. An error the engine did not name is no
+   longer lost inside a thread; it reaches the caller. A lock keeps two
+   clips from playing over each other, as the old `stop_audio()` join did.
+   `stop_audio` waits; it never could cut a clip, and its docstring no
+   longer says it can. tests/test_playback_honest.py holds this.
 """
 
 from __future__ import annotations
@@ -397,8 +411,8 @@ class SpeechSynthesisEngine:
         self.default_language = "en"
         self.audio_playback_ready = _initialize_audio_playback()
         self.is_playing = False
-        self._play_thread: Optional[threading.Thread] = None
-        self._play_error: Optional[str] = None
+        #: Held for the whole of a christman_play call, so clips never overlap.
+        self._play_lock = threading.Lock()
 
         self.last_engine = "none"
         self.last_error = None
@@ -532,7 +546,14 @@ class SpeechSynthesisEngine:
         raise PlaybackFailed(f"audio written to {path} but NOT played: {reason}")
 
     def play_audio_file(self, audio_path: str) -> bool:
-        """Start playback. False means NOT playing; the reason is in last_playback_error."""
+        """
+        Play the file through christman_play and return when it is finished.
+
+        True only when christman_play returned 0: the whole buffer was given
+        to the device and the device drained it. False means NOT played in
+        full, with the engine's reason in last_playback_error. Blocking, for
+        the length of the clip. Two calls at once play one after the other.
+        """
         self.last_playback_error = None
         ready, reason = _playback_readiness()
         if not ready:
@@ -557,48 +578,29 @@ class SpeechSynthesisEngine:
             logger.error("%s", self.last_playback_error)
             return False
 
-        self.stop_audio()
-        started = threading.Event()
         dsp = get_dsp()
-
-        def _run():
-            self._play_error = None
-            started.set()
+        with self._play_lock:
+            self.is_playing = True
             try:
                 dsp.play(samples, rate, channels)
             except (PlaybackUnavailable, DSPUnavailable, ValueError) as exc:
-                self._play_error = f"{type(exc).__name__}: {exc}"
-                logger.error("Audio playback failed for %s: %s", audio_path, self._play_error)
+                self.last_playback_error = f"{type(exc).__name__}: {exc}"
+                logger.error("Audio playback failed for %s: %s", audio_path, self.last_playback_error)
+                return False
             finally:
                 self.is_playing = False
-
-        self._play_thread = threading.Thread(target=_run, name="christman-play", daemon=True)
-        self.is_playing = True
-        self._play_thread.start()
-        started.wait(timeout=1.0)
-        # A device that refuses does so at open, within the first moments. Catch it here
-        # so the caller gets False, not a True followed by silence.
-        self._play_thread.join(timeout=0.15)
-        if self._play_error is not None:
-            self.last_playback_error = self._play_error
-            self.is_playing = False
-            return False
         return True
 
     def stop_audio(self) -> None:
-        """Wait out whatever is playing. The engine call is blocking; a clip is at most a sentence."""
-        t = self._play_thread
-        if t is not None and t.is_alive():
-            t.join()
-        self._play_thread = None
-        self.is_playing = False
+        """
+        Wait out whatever is playing. There is no cut: christman_play has no
+        stop entry, and a clip is at most a sentence.
+        """
+        with self._play_lock:
+            pass
 
     def is_audio_playing(self) -> bool:
-        t = self._play_thread
-        if t is None or not t.is_alive():
-            self.is_playing = False
-            return False
-        return True
+        return self.is_playing
 
     def generate_emotion_adjusted_speech(
         self,
