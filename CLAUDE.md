@@ -18,8 +18,9 @@ being.** A real, vulnerable person depends on this code being both correct and h
   If a real engine isn't wired, the code must return an explicit `unavailable`/`degraded` — never a
   plausible fake. If you don't know, say "I don't know."
 - **Rule 15 — Never spend what Everett hasn't approved.** No paid APIs (ElevenLabs, OpenAI, Polly,
-  Replicate, paid AWS). Use what's built: local XTTS / GPT-SoVITS, local ASR (VOSK / faster-whisper),
-  Ollama. `gtts` and `recognize_google` are **cloud** dependencies and offline-first violations — remove
+  Replicate, paid AWS). Use what's built: his own synthesizer (Codec War's, ported in as christman_synth.c), local ASR
+  (his Vosk), Ollama. **No outside speech engine** — XTTS / Coqui, GPT-SoVITS, say, espeak, pyttsx3, gTTS
+  and pygame are cut (Everett's ruling, 2026-10-17; the cut engines sit in quarantine/2026-10_outside_voices/). `gtts` and `recognize_google` are **cloud** dependencies and offline-first violations — remove
   or gate them, do not add more.
 - **No stubs. No shortcuts. Nothing marked done without proof it works.**
 
@@ -57,11 +58,12 @@ Standing rulings from Everett (2026-10-11) that bind every session:
 - `BaseSynthesizer.apply_emotion` resamples twice, so pitch and length move together. Everett is ruling on it
   (true pitch shift via librosa, or rename it to what it does). **Do not change it before he rules.**
 - A test that cannot run in the current environment reports **NOT RUN** with the reason (`tests/conftest.py`).
-  It never passes and never silently skips. The XTTS test runs on his Mac, where the voice lives.
+  It never passes and never silently skips. Playback through christman_play is checked on his Mac, where the sound card is.
 - Requested playback plays or fails loud (`PlaybackFailed` / `NothingVoiced`). No silent success.
 
-Two remotes exist: `The-ChristmanAI-Project/Christman-Sound` (**canonical**, Everett's ruling 2026-10-11)
-and `EverettNC/Christman-Sound`. They diverged on 2026-08-16 and were re-joined by the merge on this branch.
+Two remotes exist. `EverettNC/Christman-Sound` is where all work is done first; it goes to
+`The-ChristmanAI-Project/Christman-Sound` only once tested and proven (Everett's ruling 2026-10-17, replacing
+the 2026-10-11 line that called the org copy canonical). They diverged on 2026-08-16 and were re-joined by the merge on this branch.
 
 The org copy (canonical, Everett's ruling 2026-10-11) removed `christman_preflight.py`, both tracers and
 `REMEDIATION.md` on 2026-08-24 and added `INSTALL_REVIEW_2026-08-22.md`. This branch merges that in; the

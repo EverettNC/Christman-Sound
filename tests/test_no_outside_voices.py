@@ -15,6 +15,12 @@ the reason).
 The scan reads the real source tree with the `ast` module. It does not
 import anything it scans. quarantine/ is outside the scan on purpose: that is
 where the cut engines are kept for the record.
+
+christman_sound/core.py is outside the scan on purpose too. Everett's
+standing ruling: core.py is the symbolic header of the SDK's innovations, is
+called by nothing, is never to be wired into anything, and is not to be
+touched. Its old import lines stay as he wrote them; nothing imports core.py,
+so nothing it names can run.
 """
 
 from __future__ import annotations
@@ -43,7 +49,8 @@ def _scanned_files():
     files = [ROOT / "christman_ocr_shared.py", ROOT / "crypto_bridge.py", ROOT / "_paths.py"]
     for pkg in ("christman_voice_sdk", "christman_sound", "scripts"):
         files.extend(sorted((ROOT / pkg).rglob("*.py")))
-    return [f for f in files if f.is_file()]
+    core = ROOT / "christman_sound" / "core.py"  # never touched, never wired (ruling above)
+    return [f for f in files if f.is_file() and f != core]
 
 
 def _first_word(part: ast.AST):
