@@ -1,6 +1,48 @@
 """
 Speech synthesis module ("the mouth").
 
+WHAT CHANGED AND WHY (2026-10-18) — THE SOVEREIGN MOUTH IS WIRED
+----------------------------------------------------------------
+`_render()` no longer raises "sovereign synthesizer not wired yet". It is
+now: free text -> christman_sound.lexicon (Everett's Vosk align_lexicon, at
+the path given to the engine or in $CHRISTMAN_LEXICON_PATH) ->
+christman_synth (the C port of Codec War's synthesizer, through
+christman_sound.synth) -> float samples -> the same cache file and the same
+christman_play playback this module already had. The engine name reported
+in every result, in `last_engine`, is "christman".
+
+  - Pitch is one named constant, EVERETT_F0_MEDIAN_HZ = 149.3, with its
+    source written beside it. Per-phrase contours replace it later.
+  - Formants are NOT fed into the synthesizer. christman_sound.formants
+    measures them; feeding them into christman_synth's table is the next
+    step and is Everett's call. Nothing in the synth table was changed here.
+  - Lexicon failures reach the caller unchanged: LexiconUnavailable,
+    LexiconFormatError, WordNotInLexicon (naming every missing word) and
+    PhoneNotMapped are re-raised as the same objects, not wrapped. So are
+    the synthesizer's own refusals (NothingToSay, UnknownPhone,
+    SynthRefused). There is no letter-by-letter spelling and no silence
+    returned as success.
+  - When the C library or its synthesizer symbols are not loaded, `_render`
+    raises SynthesisUnavailable carrying the loader's own reason (with the
+    rebuild command), and `generate_speech_audio` turns that into
+    NothingVoiced as before.
+  - The lexicon is English (vosk-model-en-us-0.22). A request for another
+    language raises SynthesisUnavailable naming it; English is not passed
+    off as another language.
+  - christman_synth has no emotion input and no reference-voice input.
+    `emotion_params` are not applied; the engine logs that at WARNING and
+    keeps them in `last_emotion_unapplied`. `load_voice` still returns
+    False. Mapping emotion onto pitch or rate would be an invented
+    mapping; that is Everett's call.
+  - `synthesis_readiness()` reports the real state: True only when the
+    library, the synthesizer symbols and the lexicon all load.
+  - The WAV reader that feeds christman_play is standard library now (it
+    used numpy). Every sample value it returns is the same float32 the
+    numpy reader returned; tests/test_sovereign_voice.py checks that.
+
+The 2026-10-17 notes below describe the cut; where they say `_render`
+raises, that is what it did until this change.
+
 WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
 ------------------------------------------------------
 Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. No
@@ -135,12 +177,13 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
+import array
 import time
 import threading
 import wave
 
 from ..engines.synthesis_result import (
-    SOVEREIGN_NOT_WIRED,
+    SOVEREIGN_NOT_WIRED,  # noqa: F401  (re-exported; the other cut paths still give it)
     DegradedSynthesisError,  # noqa: F401  (re-exported for callers that caught it here)
     SynthesisResult,
     SynthesisUnavailable,
@@ -155,7 +198,40 @@ except Exception as _dsp_exc:  # the engine package is not importable at all
     class PlaybackUnavailable(RuntimeError): ...
     _DSP_IMPORT_ERROR = f"{type(_dsp_exc).__name__}: {_dsp_exc}"
 
+try:
+    from christman_sound.lexicon import LexiconError, load_lexicon
+    from christman_sound.synth import (
+        NothingToSay,
+        SynthRefused,
+        SynthUnavailable,
+        UnknownPhone,
+        synthesize as christman_synthesize,
+    )
+    _SYNTH_IMPORT_ERROR: Optional[str] = None
+except Exception as _synth_exc:  # christman_sound itself is not importable
+    christman_synthesize = None  # type: ignore[assignment]
+    load_lexicon = None  # type: ignore[assignment]
+    class LexiconError(RuntimeError): ...  # type: ignore[no-redef]
+    class NothingToSay(ValueError): ...  # type: ignore[no-redef]
+    class SynthRefused(ValueError): ...  # type: ignore[no-redef]
+    class SynthUnavailable(RuntimeError): ...  # type: ignore[no-redef]
+    class UnknownPhone(ValueError): ...  # type: ignore[no-redef]
+    _SYNTH_IMPORT_ERROR = f"{type(_synth_exc).__name__}: {_synth_exc}"
+
 logger = logging.getLogger(__name__)
+
+#: The name every result from this mouth reports.
+ENGINE_NAME = "christman"
+
+#: Everett's measured pitch median, in Hz. Source: median F0 measured from his
+#: 26 recorded phrases in AlphaVox data/phrases/alphavox_verified, with
+#: christman_yin and formants.py, 2026-10-18. A chosen starting value, held
+#: until per-phrase contours replace it.
+EVERETT_F0_MEDIAN_HZ = 149.3
+
+#: Failures from the lexicon and the synthesizer that reach the caller as the
+#: same object they were raised as — never wrapped, never spelled, never silent.
+_SURFACE_UNCHANGED = (LexiconError, NothingToSay, UnknownPhone, SynthRefused)
 
 DEFAULT_CACHE_DIR = Path(os.getenv("CHRISTMAN_VOICE_CACHE", str(Path.home() / ".christman_ai" / "voice_cache")))
 
@@ -172,12 +248,31 @@ def _playback_readiness() -> tuple:
     return True, backend
 
 
-def synthesis_readiness() -> tuple:
+def _is_english(language: Optional[str]) -> bool:
+    return language is None or language.lower().replace("_", "-").split("-")[0] == "en"
+
+
+def synthesis_readiness(lexicon_path: Optional[str] = None) -> tuple:
     """
-    (ready, reason) for making speech from text. False until Everett's own
-    synthesizer is wired into `SpeechSynthesisEngine._render`.
+    (ready, reason) for making speech from text through christman_synth.
+    Ready only when the C library is loaded, its synthesizer symbols are
+    bound, and the lexicon (`lexicon_path`, else $CHRISTMAN_LEXICON_PATH)
+    loads. The reason is the real one from whichever piece is missing.
     """
-    return False, SOVEREIGN_NOT_WIRED
+    if christman_synthesize is None:
+        return False, f"christman_sound.synth not importable: {_SYNTH_IMPORT_ERROR}"
+    if get_dsp is None:
+        return False, f"christman_sound.dsp not importable: {_DSP_IMPORT_ERROR}"
+    dsp = get_dsp()
+    if not dsp.available:
+        return False, dsp.error or "christman_dsp not loaded"
+    if not dsp.synth_available:
+        return False, dsp.synth_error or "christman_synth not bound"
+    try:
+        lex = load_lexicon(lexicon_path)
+    except LexiconError as exc:
+        return False, str(exc)
+    return True, f"{ENGINE_NAME}: christman_synth, lexicon {lex.path} ({len(lex)} words), f0 {EVERETT_F0_MEDIAN_HZ} Hz"
 
 
 def _initialize_audio_playback() -> bool:
@@ -193,10 +288,10 @@ def _read_riff_float(path: Path):
     wrapping float. The standard-library `wave` module refuses these, and the
     macOS `say` fallback writes exactly this (found 2026-10-13: AlphaVox could
     synthesize and then could not play its own file). Returns
-    (float32 samples, rate, channels) or raises ValueError.
+    (float32 samples as array('f'), rate, channels) or raises ValueError.
+    Standard library only (2026-10-18; it used numpy).
     """
     import struct
-    import numpy as np
     data = path.read_bytes()
     if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         raise ValueError(f"{path} is not a RIFF/WAVE file")
@@ -217,21 +312,54 @@ def _read_riff_float(path: Path):
         raise ValueError(f"{path}: missing fmt or data chunk")
     tag, channels, rate, bits = fmt
     if tag == 3 and bits == 32:
-        samples = np.frombuffer(pcm, dtype="<f4").astype(np.float32)
+        samples = _little_endian("f", pcm)
     elif tag == 3 and bits == 64:
-        samples = np.frombuffer(pcm, dtype="<f8").astype(np.float32)
-    elif tag == 1 and bits == 16:
-        samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
-    elif tag == 1 and bits == 32:
-        samples = np.frombuffer(pcm, dtype="<i4").astype(np.float32) / 2147483648.0
+        samples = array.array("f", _little_endian("d", pcm))
+    elif tag == 1 and bits in (16, 32):
+        samples = _pcm_to_float(pcm, bits // 8)
     else:
         raise ValueError(f"{path}: unsupported WAV format tag {tag} with {bits} bits")
     return samples, rate, channels
 
 
+def _little_endian(typecode: str, raw: bytes) -> array.array:
+    """Little-endian bytes -> array of `typecode`. Raises ValueError on a partial item."""
+    out = array.array(typecode)
+    out.frombytes(raw)
+    if sys.byteorder != "little":
+        out.byteswap()
+    return out
+
+
+def _int32_typecode() -> str:
+    for code in ("i", "l"):
+        if array.array(code).itemsize == 4:
+            return code
+    raise ValueError("this platform has no 4-byte integer array type")
+
+
+def _pcm_to_float(raw: bytes, width: int) -> array.array:
+    """
+    Integer PCM -> float32 in [-1, 1], the same scaling the numpy reader used:
+    16-bit / 32768, 32-bit / 2147483648, 8-bit unsigned (x - 128) / 128.
+    Division by a power of two is exact, so each value is the float32 the
+    numpy reader produced.
+    """
+    if width == 2:
+        return array.array("f", (s / 32768.0 for s in _little_endian("h", raw)))
+    if width == 4:
+        return array.array("f", (s / 2147483648.0 for s in _little_endian(_int32_typecode(), raw)))
+    if width == 1:
+        return array.array("f", ((b - 128) / 128.0 for b in raw))
+    raise ValueError(f"unsupported WAV sample width {width} bytes")
+
+
 def _read_wav(path: Path):
-    """WAV -> (float32 interleaved samples in [-1, 1], sample_rate, channels). Standard library only."""
-    import numpy as np
+    """
+    WAV -> (float32 interleaved samples in [-1, 1] as array('f'), sample_rate,
+    channels). Standard library only — it said so before 2026-10-18 and
+    imported numpy anyway; now it is true.
+    """
     try:
         with wave.open(str(path), "rb") as w:
             channels, width, rate, frames = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
@@ -240,15 +368,7 @@ def _read_wav(path: Path):
         if "unknown format" in str(exc):
             return _read_riff_float(path)
         raise
-    if width == 2:
-        samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-    elif width == 4:
-        samples = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648.0
-    elif width == 1:
-        samples = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
-    else:
-        raise ValueError(f"unsupported WAV sample width {width} bytes")
-    return samples, rate, channels
+    return _pcm_to_float(raw, width), rate, channels
 
 
 class PlaybackFailed(RuntimeError):
@@ -265,8 +385,15 @@ class NothingVoiced(SynthesisUnavailable):
 class SpeechSynthesisEngine:
     """Local, offline speech synthesis engine."""
 
-    def __init__(self, cache_dir: Optional[str] = None, reference_audio: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        cache_dir: Optional[str] = None,
+        reference_audio: Optional[str] = None,
+        lexicon_path: Optional[str] = None,
+    ) -> None:
         self.cache_dir = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
+        #: The align_lexicon.txt to read words from. None: $CHRISTMAN_LEXICON_PATH.
+        self.lexicon_path = lexicon_path
         self.default_language = "en"
         self.audio_playback_ready = _initialize_audio_playback()
         self.is_playing = False
@@ -279,17 +406,20 @@ class SpeechSynthesisEngine:
         #: so nothing is ever "degraded output" — it is audio or a raise.
         self.last_degraded = False
         self.last_playback_error: Optional[str] = None
+        #: emotion_params from the last call that christman_synth could not
+        #: apply (it has no emotion input). None when none were passed.
+        self.last_emotion_unapplied: Optional[Dict] = None
         self.reference_audio = Path(reference_audio) if reference_audio else None
 
-        ready, reason = synthesis_readiness()
+        ready, reason = synthesis_readiness(self.lexicon_path)
         if not ready:
             logger.warning("Speech from text is unavailable: %s. Recorded audio still plays.", reason)
         logger.info("Speech synthesis engine initialized (local only).")
 
     def load_voice(self, reference_audio: str) -> bool:
         """
-        Record the reference clip for the voice. Returns False: there is no
-        renderer to point at it until the sovereign synthesizer is wired.
+        Record the reference clip for the voice. Returns False: christman_synth
+        has no reference-voice input, so nothing is pointed at the clip.
         """
         self.reference_audio = Path(reference_audio)
         return False
@@ -300,10 +430,46 @@ class SpeechSynthesisEngine:
 
     def _render(self, text: str, emotion_params: Optional[Dict], language: str) -> SynthesisResult:
         """
-        The one place audio would be made from text. Everett's own
-        synthesizer plugs in here. Until it does, this raises.
+        The one place audio is made from text: lexicon -> christman_synth ->
+        samples, at EVERETT_F0_MEDIAN_HZ. Lexicon and synthesizer refusals
+        are raised unchanged (see _SURFACE_UNCHANGED). A missing engine
+        raises SynthesisUnavailable with the loader's reason.
         """
-        raise SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="SpeechSynthesisEngine._render")
+        where = "SpeechSynthesisEngine._render"
+        if christman_synthesize is None:
+            raise SynthesisUnavailable(f"christman_sound.synth not importable: {_SYNTH_IMPORT_ERROR}", where=where)
+        if get_dsp is None:
+            raise SynthesisUnavailable(f"christman_sound.dsp not importable: {_DSP_IMPORT_ERROR}", where=where)
+        if not _is_english(language):
+            raise SynthesisUnavailable(
+                f"the lexicon is English (vosk-model-en-us-0.22); there is none for language {language!r}",
+                where=where,
+            )
+        if emotion_params:
+            # christman_synth has no emotion input. Not applied, and said so.
+            self.last_emotion_unapplied = dict(emotion_params)
+            logger.warning("emotion_params %r not applied: christman_synth has no emotion input", emotion_params)
+        else:
+            self.last_emotion_unapplied = None
+
+        started = time.perf_counter()
+        try:
+            # Formants stay measured-only: feeding christman_sound.formants into
+            # the synth table is the next step and is Everett's call.
+            made = christman_synthesize(
+                text, f0=EVERETT_F0_MEDIAN_HZ, lexicon_path=self.lexicon_path, engine=get_dsp()
+            )
+        except _SURFACE_UNCHANGED:
+            raise
+        except (SynthUnavailable, DSPUnavailable) as exc:
+            raise SynthesisUnavailable(str(exc), where=where) from exc
+        return SynthesisResult(
+            audio=made.samples,
+            sample_rate=made.sample_rate,
+            duration=made.duration,
+            engine=ENGINE_NAME,
+            synthesis_time=time.perf_counter() - started,
+        )
 
     def generate_speech_audio(
         self,
@@ -327,11 +493,18 @@ class SpeechSynthesisEngine:
 
         try:
             result = self._render(text, emotion_params, selected_language)
-            if result.degraded or result.audio is None:
+            if result.degraded or result.audio is None or len(result.audio) == 0:
                 raise SynthesisUnavailable(
                     result.error_reason or "the renderer returned no audio",
                     where=f"renderer {result.engine}",
                 )
+        except _SURFACE_UNCHANGED as exc:
+            # The typed failure goes to the caller as it was raised.
+            self.last_engine = "none"
+            self.last_error = str(exc)
+            self.last_degraded = False
+            logger.error("Nothing was voiced for %r: %s", text[:40], exc)
+            raise
         except SynthesisUnavailable as exc:
             self.last_engine = "none"
             self.last_error = str(exc)
@@ -379,7 +552,7 @@ class SpeechSynthesisEngine:
             self.last_playback_error = f"could not read {audio_path}: {type(exc).__name__}: {exc}"
             logger.error("%s", self.last_playback_error)
             return False
-        if samples.size == 0:
+        if len(samples) == 0:
             self.last_playback_error = f"{audio_path} holds no samples"
             logger.error("%s", self.last_playback_error)
             return False

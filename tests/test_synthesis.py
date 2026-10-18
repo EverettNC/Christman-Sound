@@ -43,47 +43,73 @@ def _tone(freq: float, seconds: float = 1.0) -> np.ndarray:
 
 
 # -----------------------------------------------------------------------------
-# The mouth after the 2026-10-17 cut: no outside voice, a typed failure.
-# The XTTS and say/espeak tests that stood here are in
+# The mouth: no outside voice. Since 2026-10-18 it renders through
+# christman_synth (tests/test_sovereign_voice.py holds the real-run tests);
+# here, what it does when a piece is missing. The XTTS and say/espeak tests
+# that stood here are in
 # quarantine/2026-10_outside_voices/tests/test_synthesis_outside_engines.py.
 # -----------------------------------------------------------------------------
 
-def test_mouth_refuses_with_a_typed_failure_and_writes_nothing(tmp_path):
-    """No outside voice and no sovereign renderer yet: it raises and says why."""
-    from christman_voice_sdk.engines.synthesis_result import (
-        SOVEREIGN_NOT_WIRED, SynthesisUnavailable,
-    )
+def test_mouth_without_a_lexicon_raises_the_lexicon_failure_and_writes_nothing(tmp_path, monkeypatch):
+    """No lexicon configured: the lexicon's own typed failure, unchanged, and no file."""
+    from christman_sound.lexicon import LexiconUnavailable
+    from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
+    monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
     eng = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path))
     for play in (False, True):
-        with pytest.raises(vs.NothingVoiced) as excinfo:
+        with pytest.raises(LexiconUnavailable) as excinfo:
             eng.generate_speech_audio("hello", play_audio=play)
-        err = excinfo.value
-        assert isinstance(err, SynthesisUnavailable)
-        assert err.available is False
-        assert err.reason == SOVEREIGN_NOT_WIRED
+        assert type(excinfo.value) is LexiconUnavailable, "not wrapped"
+        assert not isinstance(excinfo.value, SynthesisUnavailable)
         assert eng.last_engine == "none"
-        assert SOVEREIGN_NOT_WIRED in (eng.last_error or "")
+        assert "no lexicon configured" in (eng.last_error or "")
     assert list(tmp_path.iterdir()) == [], "no empty WAV may be left behind"
 
 
-def test_synthesize_speech_raises_instead_of_returning_none(tmp_path, monkeypatch):
+def test_mouth_without_the_engine_raises_nothing_voiced_with_the_loaders_reason(tmp_path, monkeypatch):
+    """The C library cannot load: NothingVoiced carrying the loader's reason, and no file."""
+    import christman_sound.dsp as dsp_mod
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
+    lex = tmp_path / "lex.txt"
+    lex.write_text("hello hello h_B @_I l_I oU_E\n", encoding="utf-8")
+    broken = dsp_mod.ChristmanDSP(tmp_path / "no_such_library.so")
+    assert not broken.available
+    monkeypatch.setattr(dsp_mod, "_instance", broken)
+    cache = tmp_path / "cache"
+    eng = vs.SpeechSynthesisEngine(cache_dir=str(cache), lexicon_path=str(lex))
+    ready, reason = vs.synthesis_readiness(str(lex))
+    assert ready is False and "no_such_library.so" in reason
+    with pytest.raises(vs.NothingVoiced) as excinfo:
+        eng.generate_speech_audio("hello", play_audio=False)
+    err = excinfo.value
+    assert err.available is False and "no_such_library.so" in err.reason
+    assert eng.last_engine == "none"
+    assert not cache.exists() or list(cache.iterdir()) == []
+
+
+def test_synthesize_speech_raises_instead_of_returning_none(tmp_path, monkeypatch):
+    from christman_sound.lexicon import LexiconUnavailable
+    from christman_voice_sdk.synthesis import voice_synthesis as vs
+
+    monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
     monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path)
     monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
-    with pytest.raises(vs.NothingVoiced):
+    with pytest.raises(LexiconUnavailable):
         vs.synthesize_speech("hello")
     assert vs.synthesize_speech("   ") is None, "empty text is not a synthesis request"
 
 
-def test_mouth_has_no_outside_engine_left():
+def test_mouth_has_no_outside_engine_left(monkeypatch):
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
     for gone in ("XTTSEngine", "_XTTS_IMPORT_ERROR", "_native_os_fallback"):
         assert not hasattr(vs, gone) and not hasattr(vs.SpeechSynthesisEngine, gone), gone
-    assert vs.synthesis_readiness()[0] is False
+    monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
+    ready, reason = vs.synthesis_readiness()
+    assert ready is False and "no lexicon configured" in reason
 
 
 def _torch_stack_missing():
@@ -160,6 +186,7 @@ def test_tts_service_reports_real_state_and_503s_without_a_voice(tmp_path, monke
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)  # no lexicon: no voice
     monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
     client = ts.app.test_client()
