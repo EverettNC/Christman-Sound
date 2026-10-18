@@ -38,21 +38,50 @@ code spelled out — never a silent return. See christman_dsp.c, OUTPUT
 SIDE, for what sits beneath it (the OS audio layer and nothing else). The loader searches, in order: `$CHRISTMAN_DSP_LIB`, this package
 directory, the repository root, and `christman_voice_sdk/` (where the tone
 engines used to look).
+
+(2026-10-17) THE SOVEREIGN MOUTH, AND NO NUMPY ON THE LOADER.
+Everett's ruling for Christman-Sound: pure C plus the Python standard
+library — no numpy, scipy, soundfile, sounddevice, pygame or librosa.
+This module imported numpy at the top and bound every C function through
+`numpy.ctypeslib.ndpointer`, so nothing could load the engine — not the
+speaker, not the new synthesizer — without numpy. Now:
+
+  * The C functions are bound with plain ctypes float pointers. Input is
+    taken from a numpy array (copied to contiguous float32, exactly as
+    before), an `array.array('f')` (no copy), or any sequence of numbers.
+    The C code and the float32 data it sees are the same, so every
+    measurement is the same number it was; `build_dsp.py --check` proves it.
+  * numpy is imported only inside the methods that already RETURN numpy
+    arrays (`lpc`, `lpc_polynomial`, the three contours). Their callers in
+    christman_voice_sdk expect numpy arrays; changing those return types is
+    a separate step for Everett to see, not a side effect of this one.
+  * `rms`, `zcr`, `yin`, `play` and the synthesizer need nothing but the
+    standard library.
+
+The synthesizer (christman_synth.c, the C port of Codec War) binds as its
+own group: `synth_available` / `synth_error`. A library built before
+2026-10-17 lacks those symbols; that must not take the measurements and
+the speaker down with it, so the synthesizer reports `SynthUnavailable`
+with the rebuild command and everything else keeps working. The friendly
+entry point is `christman_sound.synth`; it reaches the library only
+through `get_dsp()` here — there is still one loader.
 """
 
 from __future__ import annotations
 
+import array
 import ctypes
 import glob
 import os
+import sys
 from pathlib import Path
-from typing import List, Optional
-
-import numpy as np
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 __all__ = [
     "DSPUnavailable",
     "PlaybackUnavailable",
+    "SynthUnavailable",
+    "SynthRefused",
     "ChristmanDSP",
     "get_dsp",
     "candidate_paths",
@@ -74,6 +103,31 @@ class DSPUnavailable(RuntimeError):
 
 class PlaybackUnavailable(RuntimeError):
     """The engine could not play. Nothing reached the speaker. The reason is in the message."""
+
+
+class SynthUnavailable(DSPUnavailable):
+    """The synthesizer symbols are not in the loaded library. Nothing can be voiced by it."""
+
+
+class SynthRefused(ValueError):
+    """christman_synth refused the request. Nothing was synthesized. The reason is in the message."""
+
+    def __init__(self, code: int, reason: str) -> None:
+        super().__init__(f"christman_synth refused with code {code}: {reason}")
+        self.code = code
+        self.reason = reason
+
+
+_SYNTH_REASONS = {
+    1: "bad arguments (no phones)",
+    2: "unknown phone id",
+    3: "a duration is not greater than zero and finite",
+    4: "f0 is not greater than zero, finite and below half the sample rate",
+    5: "rate is outside Codec War's range 0.6 to 1.6 (refused, not clamped)",
+    6: "sample rate is not 16000 (Codec War) or 22050 (christman_sound)",
+    7: "output length does not match christman_synth_length",
+    8: "allocation failed",
+}
 
 
 _PLAY_REASONS = {
@@ -102,7 +156,29 @@ def candidate_paths() -> List[Path]:
 
 
 _FLOAT_P = ctypes.POINTER(ctypes.c_float)
-_ARRAY_1D = np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags="C_CONTIGUOUS")
+_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
+_INT_P = ctypes.POINTER(ctypes.c_int)
+
+
+def _c_floats(x: Any) -> Tuple[Any, Any, int]:
+    """
+    (keepalive, float*, length) for a mono float signal, with no numpy
+    required. A numpy array is flattened and copied to contiguous float32,
+    exactly as the old ndpointer binding demanded; an array('f') is used in
+    place; anything else is converted with array('f', x), which raises
+    TypeError on a non-number instead of guessing.
+    """
+    np = sys.modules.get("numpy")
+    if np is not None and isinstance(x, np.ndarray):
+        arr = np.ascontiguousarray(np.asarray(x, dtype=np.float32).reshape(-1))
+        return arr, arr.ctypes.data_as(_FLOAT_P), int(arr.size)
+    buf = x if isinstance(x, array.array) and x.typecode == "f" else array.array("f", x)
+    n = len(buf)
+    if n == 0:
+        holder = (ctypes.c_float * 1)()
+        return holder, ctypes.cast(holder, _FLOAT_P), 0
+    cbuf = (ctypes.c_float * n).from_buffer(buf)
+    return (buf, cbuf), ctypes.cast(cbuf, _FLOAT_P), n
 
 
 class ChristmanDSP:
@@ -120,6 +196,8 @@ class ChristmanDSP:
         self.available = False
         self.path: Optional[Path] = None
         self.error: Optional[str] = None
+        self.synth_available = False
+        self.synth_error: Optional[str] = None
         self._lib: Optional[ctypes.CDLL] = None
 
         paths = [library_path] if library_path else candidate_paths()
@@ -142,23 +220,48 @@ class ChristmanDSP:
             self._lib = lib
             self.path = Path(path)
             self.available = True
+            self._bind_synth(lib)
             return
         self.error = f"christman_dsp failed to load ({last_error}). Rebuild: {BUILD_COMMAND}"
 
     @staticmethod
     def _bind(lib: ctypes.CDLL) -> None:
-        lib.christman_rms.argtypes = [_ARRAY_1D, ctypes.c_size_t, _FLOAT_P]
+        lib.christman_rms.argtypes = [_FLOAT_P, ctypes.c_size_t, _FLOAT_P]
         lib.christman_rms.restype = None
-        lib.christman_zcr.argtypes = [_ARRAY_1D, ctypes.c_size_t, _FLOAT_P]
+        lib.christman_zcr.argtypes = [_FLOAT_P, ctypes.c_size_t, _FLOAT_P]
         lib.christman_zcr.restype = None
-        lib.christman_yin.argtypes = [_ARRAY_1D, ctypes.c_size_t, ctypes.c_int, ctypes.c_float, _FLOAT_P]
+        lib.christman_yin.argtypes = [_FLOAT_P, ctypes.c_size_t, ctypes.c_int, ctypes.c_float, _FLOAT_P]
         lib.christman_yin.restype = None
-        lib.christman_lpc.argtypes = [_ARRAY_1D, ctypes.c_size_t, ctypes.c_int, _FLOAT_P]
+        lib.christman_lpc.argtypes = [_FLOAT_P, ctypes.c_size_t, ctypes.c_int, _FLOAT_P]
         lib.christman_lpc.restype = ctypes.c_int
-        lib.christman_play.argtypes = [_ARRAY_1D, ctypes.c_size_t, ctypes.c_int, ctypes.c_int]
+        lib.christman_play.argtypes = [_FLOAT_P, ctypes.c_size_t, ctypes.c_int, ctypes.c_int]
         lib.christman_play.restype = ctypes.c_int
         lib.christman_play_backend.argtypes = []
         lib.christman_play_backend.restype = ctypes.c_char_p
+
+    def _bind_synth(self, lib: ctypes.CDLL) -> None:
+        try:
+            lib.christman_synth_phone_count.argtypes = []
+            lib.christman_synth_phone_count.restype = ctypes.c_int
+            lib.christman_synth_phone_name.argtypes = [ctypes.c_int]
+            lib.christman_synth_phone_name.restype = ctypes.c_char_p
+            lib.christman_synth_phone_id.argtypes = [ctypes.c_char_p]
+            lib.christman_synth_phone_id.restype = ctypes.c_int
+            lib.christman_synth_phone_dur.argtypes = [ctypes.c_int]
+            lib.christman_synth_phone_dur.restype = ctypes.c_double
+            lib.christman_synth_length.argtypes = [_DOUBLE_P, ctypes.c_size_t, ctypes.c_double, ctypes.c_int]
+            lib.christman_synth_length.restype = ctypes.c_size_t
+            lib.christman_synth.argtypes = [
+                _INT_P, _DOUBLE_P, ctypes.c_size_t, _DOUBLE_P, ctypes.c_double,
+                ctypes.c_double, ctypes.c_int, _FLOAT_P, ctypes.c_size_t,
+            ]
+            lib.christman_synth.restype = ctypes.c_int
+        except AttributeError as exc:
+            self.synth_error = (
+                f"{self.path} was built without christman_synth.c ({exc}). Rebuild: {BUILD_COMMAND}"
+            )
+            return
+        self.synth_available = True
 
     # -- guards ---------------------------------------------------------------
 
@@ -167,32 +270,31 @@ class ChristmanDSP:
             raise DSPUnavailable(self.error or "christman_dsp not loaded")
         return self._lib
 
-    @staticmethod
-    def _as_frame(x: np.ndarray) -> np.ndarray:
-        arr = np.ascontiguousarray(np.asarray(x, dtype=np.float32).reshape(-1))
-        if arr.ndim != 1:
-            raise ValueError("expected a 1-D mono float array")
-        return arr
+    def _require_synth(self) -> ctypes.CDLL:
+        lib = self._require()
+        if not self.synth_available:
+            raise SynthUnavailable(self.synth_error or "christman_synth not bound")
+        return lib
 
     # -- single-frame measurements -------------------------------------------
 
-    def rms(self, x: np.ndarray) -> float:
+    def rms(self, x: Any) -> float:
         """Root-mean-square energy of one frame."""
         lib = self._require()
-        frame = self._as_frame(x)
+        _keep, ptr, n = _c_floats(x)
         out = ctypes.c_float(0.0)
-        lib.christman_rms(frame, frame.size, ctypes.byref(out))
+        lib.christman_rms(ptr, n, ctypes.byref(out))
         return float(out.value)
 
-    def zcr(self, x: np.ndarray) -> float:
+    def zcr(self, x: Any) -> float:
         """Zero-crossing rate (crossings per sample) of one frame."""
         lib = self._require()
-        frame = self._as_frame(x)
+        _keep, ptr, n = _c_floats(x)
         out = ctypes.c_float(0.0)
-        lib.christman_zcr(frame, frame.size, ctypes.byref(out))
+        lib.christman_zcr(ptr, n, ctypes.byref(out))
         return float(out.value)
 
-    def yin(self, x: np.ndarray, sample_rate: int, threshold: float = 0.15) -> float:
+    def yin(self, x: Any, sample_rate: int, threshold: float = 0.15) -> float:
         """
         YIN fundamental frequency of ONE frame in Hz. 0.0 means unvoiced.
 
@@ -200,12 +302,12 @@ class ChristmanDSP:
         2048 samples and build contours with `pitch_contour`.
         """
         lib = self._require()
-        frame = self._as_frame(x)
+        _keep, ptr, n = _c_floats(x)
         out = ctypes.c_float(0.0)
-        lib.christman_yin(frame, frame.size, int(sample_rate), float(threshold), ctypes.byref(out))
+        lib.christman_yin(ptr, n, int(sample_rate), float(threshold), ctypes.byref(out))
         return float(out.value)
 
-    def lpc(self, x: np.ndarray, order: int) -> Optional[np.ndarray]:
+    def lpc(self, x: Any, order: int) -> "Optional[Any]":
         """
         Linear PREDICTOR coefficients a[0..order] with a[0] == 1, such that
 
@@ -223,15 +325,17 @@ class ChristmanDSP:
         sign error is recorded in the vault for Corti's TypeScript LPC
         (2026-09-01). Use `lpc_polynomial()` for root-finding.
         """
+        import numpy as np  # returns a numpy array; see module docstring (2026-10-17)
+
         lib = self._require()
-        frame = self._as_frame(x)
+        _keep, ptr, n = _c_floats(x)
         out = np.zeros(order + 1, dtype=np.float32)
-        status = lib.christman_lpc(frame, frame.size, int(order), out.ctypes.data_as(_FLOAT_P))
+        status = lib.christman_lpc(ptr, n, int(order), out.ctypes.data_as(_FLOAT_P))
         if status != 0:
             return None
         return out
 
-    def lpc_polynomial(self, x: np.ndarray, order: int) -> Optional[np.ndarray]:
+    def lpc_polynomial(self, x: Any, order: int) -> "Optional[Any]":
         """
         A(z) coefficients [1, -a[1], ..., -a[order]] — the librosa/MATLAB
         convention, the one whose roots are the formant resonances.
@@ -250,27 +354,77 @@ class ChristmanDSP:
         lib = self._require()
         return lib.christman_play_backend().decode()
 
-    def play(self, y: np.ndarray, sample_rate: int, channels: int = 1) -> None:
+    def play(self, y: Any, sample_rate: int, channels: int = 1) -> None:
         """
         Play interleaved float32 samples in [-1, 1] through the engine. Blocks
         until the last sample is handed to the device. Plays or raises
         `PlaybackUnavailable`; there is no return value that means "maybe".
         """
         lib = self._require()
-        samples = self._as_frame(y)
+        _keep, ptr, n = _c_floats(y)
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")
-        status = lib.christman_play(samples, samples.size, int(sample_rate), int(channels))
+        status = lib.christman_play(ptr, n, int(sample_rate), int(channels))
         if status != 0:
             raise PlaybackUnavailable(
                 f"christman_play ({self.play_backend()}) refused with code {status}: "
                 f"{_PLAY_REASONS.get(status, 'unknown reason')}"
             )
 
+    # -- synthesizer (christman_synth.c, the C port of Codec War) ---------------
+
+    def synth_phone_table(self) -> Dict[str, Tuple[int, float]]:
+        """Codec War's phone table as {name: (id, table duration in seconds)}, read from the C."""
+        lib = self._require_synth()
+        table: Dict[str, Tuple[int, float]] = {}
+        for i in range(lib.christman_synth_phone_count()):
+            table[lib.christman_synth_phone_name(i).decode()] = (i, float(lib.christman_synth_phone_dur(i)))
+        return table
+
+    def synth(
+        self,
+        phone_ids: Sequence[int],
+        durations: Sequence[float],
+        f0: float,
+        rate: float,
+        sample_rate: int,
+        f0_contour: Optional[Sequence[float]] = None,
+    ) -> array.array:
+        """
+        Raw call into christman_synth. Returns array('f') of float PCM, or
+        raises `SynthRefused` with the engine's reason. `christman_sound.synth`
+        is the friendly entry point; this is the binding.
+        """
+        lib = self._require_synth()
+        n = len(phone_ids)
+        if len(durations) != n:
+            raise ValueError(f"{n} phones but {len(durations)} durations")
+        if f0_contour is not None and len(f0_contour) != n:
+            raise ValueError(f"{n} phones but {len(f0_contour)} f0 values in the contour")
+        ids_c = (ctypes.c_int * max(n, 1))(*phone_ids)
+        durs_c = (ctypes.c_double * max(n, 1))(*durations)
+        contour_c = (ctypes.c_double * n)(*f0_contour) if f0_contour is not None else None
+        length = lib.christman_synth_length(durs_c, n, float(rate), int(sample_rate))
+        if length == 0:
+            # Let the engine name the reason: the length helper only says "refused".
+            status = lib.christman_synth(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                         int(sample_rate), (ctypes.c_float * 1)(), 0)
+            raise SynthRefused(status, _SYNTH_REASONS.get(status, "unknown reason"))
+        out = array.array("f", bytes(4 * length))
+        out_c = (ctypes.c_float * length).from_buffer(out)
+        status = lib.christman_synth(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                     int(sample_rate), out_c, length)
+        del out_c
+        if status != 0:
+            raise SynthRefused(status, _SYNTH_REASONS.get(status, "unknown reason"))
+        return out
+
     # -- contours ---------------------------------------------------------------
 
-    def _frames(self, y: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
-        signal = self._as_frame(y)
+    def _frames(self, y: Any, frame_length: int, hop_length: int) -> "Any":
+        import numpy as np  # returns numpy frames; see module docstring (2026-10-17)
+
+        signal = np.ascontiguousarray(np.asarray(y, dtype=np.float32).reshape(-1))
         if frame_length <= 0 or hop_length <= 0:
             raise ValueError("frame_length and hop_length must be positive")
         if signal.size < frame_length:
@@ -282,31 +436,37 @@ class ChristmanDSP:
         idx = np.arange(frame_length)[None, :] + hop_length * np.arange(n_frames)[:, None]
         return np.ascontiguousarray(signal[idx])
 
-    def rms_contour(self, y: np.ndarray, frame_length: int = 2048, hop_length: int = 512) -> np.ndarray:
+    def rms_contour(self, y: Any, frame_length: int = 2048, hop_length: int = 512) -> "Any":
         """Per-frame RMS energy."""
+        import numpy as np
+
         frames = self._frames(y, frame_length, hop_length)
         return np.array([self.rms(f) for f in frames], dtype=np.float32)
 
-    def zcr_contour(self, y: np.ndarray, frame_length: int = 2048, hop_length: int = 512) -> np.ndarray:
+    def zcr_contour(self, y: Any, frame_length: int = 2048, hop_length: int = 512) -> "Any":
         """Per-frame zero-crossing rate."""
+        import numpy as np
+
         frames = self._frames(y, frame_length, hop_length)
         return np.array([self.zcr(f) for f in frames], dtype=np.float32)
 
     def pitch_contour(
         self,
-        y: np.ndarray,
+        y: Any,
         sample_rate: int,
         frame_length: int = 2048,
         hop_length: int = 512,
         fmin: float = 50.0,
         fmax: float = 600.0,
         threshold: float = 0.15,
-    ) -> np.ndarray:
+    ) -> "Any":
         """
         Per-frame F0 in Hz; 0.0 where the frame is unvoiced or the estimate
         falls outside [fmin, fmax]. A zero is "no pitch here", never a
         measurement of 0 Hz — downstream must mask it, not average it.
         """
+        import numpy as np
+
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")
         # YIN can only resolve periods up to half the frame.
