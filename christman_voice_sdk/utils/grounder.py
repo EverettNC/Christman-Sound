@@ -78,7 +78,10 @@ except ImportError:
 #: else. Imported, not hardcoded — see note 1 in the module docstring.
 BREATHING_FIRST_THRESHOLD = _BREATHING_RISE
 
-#: Grounding-score thresholds. HEURISTIC, chosen not derived.
+#: Thresholds for choosing a technique: two grounding-score cutoffs and one
+#: stress-rise cutoff. Fixed thresholds, chosen not derived (reason: carried
+#: over from the original grounder; no client data behind them yet). Held
+#: until client data replaces them.
 FEET_FIRST_GROUNDING = 0.30
 COMPANION_GROUNDING = 0.50
 SENSORY_STRESS_RISE = 0.04
