@@ -374,3 +374,16 @@ def test_generate_speech_audio_plays_through_christman_play(mouth, dsp):
                     f"playback is checked on Everett's Mac: {exc}")
     mouth.stop_audio()
     assert mouth.last_engine == "christman" and mouth.last_playback_error is None
+
+
+def test_lexicon_that_is_not_utf8_is_reported_not_crashed(dsp, tmp_path):
+    """A non-UTF-8 byte used to escape as a bare UnicodeDecodeError and crash readiness."""
+    from christman_sound.lexicon import LexiconFormatError
+
+    bad = tmp_path / "bad_lexicon.txt"
+    bad.write_bytes(b"hello hello h_B @_I l_I oU_E\ncaf\xe9 caf\xe9 k_B {_I f_I eI_E\n")
+    ready, reason = vs.synthesis_readiness(str(bad))
+    assert ready is False and ":2: not UTF-8" in reason
+    mouth = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), lexicon_path=str(bad))
+    with pytest.raises(LexiconFormatError, match=":2:"):
+        mouth.generate_speech_audio("hello", play_audio=False)
