@@ -2,6 +2,41 @@
 christman_ocr_shared.py
 The Christman AI Project — Luma Cognify AI
 Shared OCR Engine for Brockston, AlphaVox, and Seraphenia
+
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
+------------------------------------------------------
+Everett's ruling: the AlphaVox rebuild cuts every outside speech engine.
+When Derek could not be reached, the read-aloud fell back to the operating
+system's voice. Removed (quoted from main 99a6cce):
+
+        spoken = self._local_speak(text)
+        if not spoken:
+            logger.error("Local TTS fallback did not speak. Text was NOT voiced.")
+        return False
+
+    @staticmethod
+    def _local_speak(text: str) -> bool:
+        ...
+        if sys.platform == "darwin":
+            cmd = ["say"]
+        elif sys.platform.startswith("linux"):
+            cmd = ["espeak", "--stdin", "-s", "150"]
+        ...
+                proc = subprocess.run(cmd, input=data, check=False,
+                                      stderr=subprocess.DEVNULL, timeout=120)
+        ...
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.say(text)
+            engine.runAndWait()
+
+`DerekAudioRelay.speak` still sends the text to Derek first (a Christman
+being, not an outside engine). When Derek does not answer ok, it now raises
+`SynthesisUnavailable` naming why Derek failed and that there is no local
+voice ("sovereign synthesizer not wired yet"). `read_screen` and
+`read_document` let that typed failure through; `watch_screen` already logs
+any error and stops. `subprocess` and `sys` stay: the scrot screen grab and
+the platform checks there use them.
 """
 
 from __future__ import annotations
@@ -20,9 +55,11 @@ import websockets
 
 try:
     from christman_voice_sdk.audio.config import get_config, require_local_or_tls
+    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
     from christman_voice_sdk.utils.logger import get_logger
 except ImportError:
     from audio.config import get_config, require_local_or_tls
+    from engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
     from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -216,13 +253,16 @@ class DocumentLoader:
 # DEREK AUDIO RELAY
 # ═════════════════════════════════════════════════════════════════════════════
 class DerekAudioRelay:
-    """Routes text to Derek for synthesis with fallback."""
+    """Routes text to Derek for synthesis. No outside fallback voice."""
 
     def __init__(self, derek_uri: str = DEREK_WS_URI):
         self.derek_uri = derek_uri
 
     async def speak(self, text: str, voice_profile: str = "default", being: str = "Brockston") -> bool:
-        """Send text to Derek. Returns True if successful."""
+        """
+        Send text to Derek. Returns True when Derek answered ok, False for
+        empty text. Raises `SynthesisUnavailable` when Derek did not speak it.
+        """
         if not text.strip():
             return False
 
@@ -244,59 +284,19 @@ class DerekAudioRelay:
                     logger.info(f"{being} → Derek spoke {len(text)} chars")
                     return True
                 logger.warning(f"Derek answered without status=ok: {parsed!r}")
+                derek_reason = f"Derek answered without status=ok: {parsed!r}"
         except Exception as exc:
             # Rule 6. This was `except Exception: pass` — the reason Derek
             # was unreachable never appeared anywhere.
-            logger.warning(f"Derek relay failed ({type(exc).__name__}: {exc}) — "
-                           "using local TTS fallback")
+            derek_reason = f"Derek relay failed ({type(exc).__name__}: {exc})"
+            logger.warning(derek_reason)
 
-        spoken = self._local_speak(text)
-        if not spoken:
-            logger.error("Local TTS fallback did not speak. Text was NOT voiced.")
-        return False
-
-    @staticmethod
-    def _local_speak(text: str) -> bool:
-        """
-        System TTS fallback. Returns True only if a speaker ran to completion.
-
-        Rule 12. The previous version did
-            os.system(f'say "{safe_text}"')
-        with only quotes escaped, so a page containing `$(…)` or backticks
-        executed on the machine the moment it was OCR'd and read aloud. The
-        text now goes to the speaker on STDIN — never into a shell, never as
-        an argument, so it can neither be parsed as a command nor as an
-        option.
-        """
-        data = text.encode("utf-8")
-        if sys.platform == "darwin":
-            cmd = ["say"]
-        elif sys.platform.startswith("linux"):
-            cmd = ["espeak", "--stdin", "-s", "150"]
-        else:
-            cmd = None
-
-        if cmd is not None:
-            try:
-                proc = subprocess.run(cmd, input=data, check=False,
-                                      stderr=subprocess.DEVNULL, timeout=120)
-                if proc.returncode == 0:
-                    return True
-                logger.error(f"{cmd[0]} exited {proc.returncode}")
-            except FileNotFoundError:
-                logger.error(f"{cmd[0]} is not installed")
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                logger.error(f"{cmd[0]} failed: {exc}")
-
-        try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.say(text)
-            engine.runAndWait()
-            return True
-        except Exception as exc:
-            logger.error(f"pyttsx3 fallback failed: {exc}")
-        return False
+        err = SynthesisUnavailable(
+            f"{derek_reason}; no local voice: {SOVEREIGN_NOT_WIRED}",
+            where=f"{being} read-aloud",
+        )
+        logger.error(f"Text was NOT voiced: {err}")
+        raise err
 
 
 # ═════════════════════════════════════════════════════════════════════════════
