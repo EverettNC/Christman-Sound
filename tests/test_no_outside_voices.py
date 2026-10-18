@@ -46,40 +46,40 @@ def _scanned_files():
     return [f for f in files if f.is_file()]
 
 
-def _first_word(node: ast.AST):
+def _first_word(part: ast.AST):
     """The program name a launcher call starts, when it is written as a literal."""
-    if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
-        head = node.elts[0]
+    if isinstance(part, (ast.List, ast.Tuple)) and part.elts:
+        head = part.elts[0]
         if isinstance(head, ast.Constant) and isinstance(head.value, str):
             return head.value
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value.strip().split(" ")[0] if node.value.strip() else None
+    if isinstance(part, ast.Constant) and isinstance(part.value, str):
+        return part.value.strip().split(" ")[0] if part.value.strip() else None
     return None
 
 
 def _violations(path: Path):
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     found = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
+    for part in ast.walk(tree):
+        if isinstance(part, ast.Import):
+            for alias in part.names:
                 if alias.name.split(".")[0] in OUTSIDE_MODULES:
-                    found.append(f"{path.relative_to(ROOT)}:{node.lineno} import {alias.name}")
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            if node.module.split(".")[0] in OUTSIDE_MODULES:
-                found.append(f"{path.relative_to(ROOT)}:{node.lineno} from {node.module} import")
-        elif isinstance(node, ast.Call):
-            func = node.func
+                    found.append(f"{path.relative_to(ROOT)}:{part.lineno} import {alias.name}")
+        elif isinstance(part, ast.ImportFrom) and part.module and part.level == 0:
+            if part.module.split(".")[0] in OUTSIDE_MODULES:
+                found.append(f"{path.relative_to(ROOT)}:{part.lineno} from {part.module} import")
+        elif isinstance(part, ast.Call):
+            func = part.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name in LAUNCHERS and node.args:
-                word = _first_word(node.args[0])
+            if name in LAUNCHERS and part.args:
+                word = _first_word(part.args[0])
                 if word and os.path.basename(word) in OUTSIDE_PROGRAMS:
-                    found.append(f"{path.relative_to(ROOT)}:{node.lineno} launches {word!r}")
-        elif isinstance(node, ast.Assign):
+                    found.append(f"{path.relative_to(ROOT)}:{part.lineno} launches {word!r}")
+        elif isinstance(part, ast.Assign):
             # cmd = ["say", ...] then subprocess.run(cmd, ...)
-            word = _first_word(node.value)
-            if isinstance(node.value, (ast.List, ast.Tuple)) and word and os.path.basename(word) in OUTSIDE_PROGRAMS:
-                found.append(f"{path.relative_to(ROOT)}:{node.lineno} builds a {word!r} command")
+            word = _first_word(part.value)
+            if isinstance(part.value, (ast.List, ast.Tuple)) and word and os.path.basename(word) in OUTSIDE_PROGRAMS:
+                found.append(f"{path.relative_to(ROOT)}:{part.lineno} builds a {word!r} command")
     return found
 
 
