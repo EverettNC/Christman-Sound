@@ -14,7 +14,7 @@ from ..tone.emotion_embedder import EmotionEmbedder
 from ..engines.xtts_engine import XTTSEngine
 # Re-exported: consumers (AlphaVox voice_stack) import SynthesisResult from
 # this module, as the pre-migration package did.
-from ..engines.base_synthesizer import SynthesisResult  # noqa: F401
+from ..engines.synthesis_result import SynthesisResult  # noqa: F401
 from ..tone.tonescore_engine import ToneScoreEngine
 from ..audio.config import Config, Tier, get_config
 from ..utils.logger import get_logger
