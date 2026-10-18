@@ -23,15 +23,33 @@ bodies below are copied from base_synthesizer.py as they stood on main
 used to reach an outside engine now raises. It carries `available = False`
 and the real reason, so a caller can show the client a plain notice. It is
 never a plausible default and never silence pretending to be success.
+
+(2026-10-18) THE SOVEREIGN MOUTH SAVES WITHOUT NUMPY OR SOUNDFILE
+-----------------------------------------------------------------
+`SpeechSynthesisEngine._render` now returns the samples christman_synth made,
+as the `array('f')` that christman_sound.synth hands back. Two lines here
+would have dragged numpy and soundfile into that path, against Everett's
+ruling that the voice is C plus the Python standard library:
+
+    import numpy as np                       (at the top of this module)
+    import soundfile as sf; sf.write(...)    (in SynthesisResult.save)
+
+So numpy is now only named for type checkers, and `save()` writes an
+`array.array` with christman_sound.synth.write_wav (stdlib `wave`, 16-bit
+PCM, refuses to clip). For any other audio object — a numpy array from an
+older caller — `save()` runs exactly the lines it ran before, soundfile and
+all. Nothing else in the class changed.
 """
 
 from __future__ import annotations
 
+import array
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-import numpy as np
+if TYPE_CHECKING:  # named for type checkers only; the sovereign path never imports numpy
+    import numpy as np
 
 
 #: The reason every cut speaking path gives until Everett's own synthesizer
@@ -68,7 +86,7 @@ class SynthesisUnavailable(DegradedSynthesisError):
 @dataclass
 class SynthesisResult:
     """Result from voice synthesis."""
-    audio: Optional[np.ndarray]
+    audio: "Optional[Any]"  # np.ndarray from older callers; array('f') from christman_synth
     sample_rate: int
     duration: float
     speaker_similarity: Optional[float] = None
@@ -80,6 +98,13 @@ class SynthesisResult:
     
     def save(self, path: Path):
         """Save audio to file. Raises if no audio was generated."""
+        if isinstance(self.audio, array.array):
+            # christman_synth's own output: standard library only (2026-10-18).
+            if len(self.audio) == 0:
+                raise ValueError("No audio data to save.")
+            from christman_sound.synth import write_wav
+            write_wav(path, self.audio, self.sample_rate)
+            return
         if self.audio is None or self.audio.size == 0:
             raise ValueError("No audio data to save.")
         import soundfile as sf
