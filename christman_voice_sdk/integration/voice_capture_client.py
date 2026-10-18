@@ -3,8 +3,34 @@ voice_capture_client.py
 The Christman AI Project — Luma Cognify AI
 Voice Frequency Capture + Stealth TTS Relay
 
-WHAT CHANGED AND WHY (2026-10-11, every line measured before it was changed)
-----------------------------------------------------------------------------
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
+------------------------------------------------------
+Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. The
+local fallback spoke in the operating system's voice. Removed from
+`local_speak_fallback` (quoted from main 99a6cce):
+
+    if sys.platform == "darwin":
+        cmd = ["say", "-v", "Samantha"]
+    elif sys.platform.startswith("linux"):
+        cmd = ["espeak", "--stdin", "-s", "150"]
+    ...
+            proc = subprocess.run(cmd, input=data, check=False,
+                                  stderr=subprocess.DEVNULL, timeout=120)
+    ...
+        import pyttsx3
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
+
+`local_speak_fallback` keeps its name and raises
+`SynthesisUnavailable("sovereign synthesizer not wired yet")`. When Derek is
+offline, `run_speak` now ends in that typed failure instead of a stranger's
+voice. The Derek relay (`speak_via_derek`) — a Christman being, not an
+outside engine — and voice-profile capture are unchanged. `import
+subprocess` and `import sys` went with the fallback; nothing else used them.
+
+EARLIER HISTORY (2026-10-11, every line measured before it was changed)
+----------------------------------------------------------------------
 
 1. THE SAFETY NET HAD A NameError IN IT.
 
@@ -52,8 +78,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -76,6 +100,7 @@ except (ImportError, OSError) as _exc:   # OSError: "PortAudio library not found
     _SOUNDDEVICE_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 from ..audio.config import get_config, require_local_or_tls
+from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -288,44 +313,14 @@ async def speak_via_derek(text: str, signature: Optional[Dict] = None) -> str:
 
 def local_speak_fallback(text: str, signature: Optional[Dict] = None) -> bool:
     """
-    Local TTS fallback. Returns True only if a speaker ran to completion.
-
-    The text is handed to the speaker on stdin — not interpolated into a
-    shell string, not passed as an argument. `signature` is accepted for
-    API compatibility; no local speaker here applies a pitch profile, and
-    this function does not claim otherwise.
+    There is no local voice until the sovereign synthesizer is wired. This
+    raises `SynthesisUnavailable` with the reason; it never speaks in an
+    outside voice and never returns as if it had spoken.
     """
     del signature
-    data = text.encode("utf-8")
-    if sys.platform == "darwin":
-        cmd = ["say", "-v", "Samantha"]
-    elif sys.platform.startswith("linux"):
-        cmd = ["espeak", "--stdin", "-s", "150"]
-    else:
-        cmd = None
-
-    if cmd is not None:
-        try:
-            proc = subprocess.run(cmd, input=data, check=False,
-                                  stderr=subprocess.DEVNULL, timeout=120)
-            if proc.returncode == 0:
-                return True
-            logger.error(f"{cmd[0]} exited {proc.returncode}")
-        except FileNotFoundError:
-            logger.error(f"{cmd[0]} is not installed")
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            logger.error(f"{cmd[0]} failed: {exc}")
-
-    try:
-        import pyttsx3
-        engine = pyttsx3.init()
-        engine.say(text)
-        engine.runAndWait()
-        return True
-    except Exception as exc:
-        logger.error(f"pyttsx3 fallback failed: {exc}")
-    logger.error("Local TTS fallback did not speak. Text was NOT voiced.")
-    return False
+    err = SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="voice_capture_client.local_speak_fallback")
+    logger.error(f"Text was NOT voiced ({(text or '')[:40]!r}): {err}")
+    raise err
 
 
 # ══════════════════════════════════════════════════════════════════════════════

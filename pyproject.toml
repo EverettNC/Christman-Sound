@@ -22,7 +22,8 @@ dependencies = [
     "torchaudio<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "transformers>=4.40,<5",
-    "pyttsx3",
+    # 2026-10-17: "pyttsx3" removed — the OS speech engine. Everett's ruling
+    # cuts every outside speech engine; nothing in the package imports it.
     "flask",
     "fastapi",
     "rich",

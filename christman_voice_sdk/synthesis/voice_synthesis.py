@@ -1,8 +1,66 @@
 """
-Speech synthesis module.
+Speech synthesis module ("the mouth").
 
-WHAT CHANGED AND WHY
---------------------
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
+------------------------------------------------------
+Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. No
+Coqui TTS / XTTS, no Apple `say`, no espeak. The being speaks in its own
+voice through Christman-Sound, or it does not speak and says so with a typed
+failure. His own synthesizer is being built on the claude/sovereign-synth
+branch; until it is wired in, this module produces no audio and raises.
+
+Removed from this file (quoted from main 99a6cce):
+
+    try:
+        from ..engines.xtts_engine import XTTSEngine
+        _XTTS_IMPORT_ERROR: Optional[str] = None
+    except Exception as _exc:
+        try:
+            from engines.xtts_engine import XTTSEngine  # legacy: christman_voice_sdk/ on sys.path
+            ...
+            XTTSEngine = None
+
+    if XTTSEngine is not None:
+        try:
+            self.xtts = XTTSEngine()
+            if self.reference_audio and self.reference_audio.exists():
+                self.xtts.load_voice(self.reference_audio)
+
+    result = self.xtts.synthesize(text, emotion_params=emotion_params, language=selected_language)
+
+    def _native_os_fallback(self, text: str, output_path: Path) -> tuple:
+        ...
+        if sys.platform == "darwin":
+            cmd = ["say", "-o", str(output_path), "--data-format=LEF32@24000"]
+            engine_name = "macos_say_fallback"
+        elif sys.platform.startswith("linux"):
+            cmd = ["espeak", "-w", str(output_path), "--stdin"]
+            engine_name = "espeak_fallback"
+        ...
+        subprocess.run(cmd, input=data, check=True, timeout=120, stderr=subprocess.DEVNULL)
+
+What happens now:
+  - `_render()` is the one place audio would be made. It raises
+    `SynthesisUnavailable("sovereign synthesizer not wired yet")`. That is
+    where Everett's synthesizer plugs in.
+  - `generate_speech_audio` raises `NothingVoiced` (a `SynthesisUnavailable`,
+    `available = False`, with the reason) whether or not playback was asked
+    for. It no longer returns None for "nothing was made" — None was quiet.
+    It still returns None for empty text, which is not a synthesis request.
+  - No temp file is created before there is audio to put in it. The old
+    path created an empty WAV in the cache on every failed call.
+  - `last_degraded` stays as an attribute for callers that read it; there is
+    no fallback voice any more, so it is always False.
+  - Kept whole: the cache directory (~/.christman_ai/voice_cache, 0700), the
+    WAV readers, `PlaybackFailed`, and playback through `christman_play`
+    (`christman_sound.dsp`). Recorded audio still plays through
+    `play_audio_file` / `play_audio`.
+  - `synthesis_readiness()` is new: (False, reason) until a sovereign
+    renderer exists. tts_service's /status reports it instead of the fixed
+    string "xtts_v2_local".
+
+EARLIER HISTORY OF THIS FILE
+----------------------------
 1. REMOVED CLOUD TETHER (gTTS).
    The predecessor relied on `gTTS`, sending user text to Google Cloud.
    This violates the offline-first mandate. It now requires the local `XTTSEngine`
@@ -81,25 +139,12 @@ import time
 import threading
 import wave
 
-try:
-    from ..engines.xtts_engine import XTTSEngine
-    _XTTS_IMPORT_ERROR: Optional[str] = None
-except Exception as _exc:  # torch / TTS missing — do not take the whole module down
-    try:
-        from engines.xtts_engine import XTTSEngine  # legacy: christman_voice_sdk/ on sys.path
-        _XTTS_IMPORT_ERROR = None
-    except Exception as _exc2:
-        XTTSEngine = None  # type: ignore[misc, assignment]
-        _XTTS_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
-
-try:
-    from ..engines.base_synthesizer import DegradedSynthesisError
-except Exception:
-    try:
-        from engines.base_synthesizer import DegradedSynthesisError
-    except Exception:
-        class DegradedSynthesisError(Exception):
-            pass
+from ..engines.synthesis_result import (
+    SOVEREIGN_NOT_WIRED,
+    DegradedSynthesisError,  # noqa: F401  (re-exported for callers that caught it here)
+    SynthesisResult,
+    SynthesisUnavailable,
+)
 
 try:
     from christman_sound.dsp import get_dsp, DSPUnavailable, PlaybackUnavailable
@@ -125,6 +170,14 @@ def _playback_readiness() -> tuple:
     if backend == "none":
         return False, f"christman_dsp has no audio backend on {sys.platform}"
     return True, backend
+
+
+def synthesis_readiness() -> tuple:
+    """
+    (ready, reason) for making speech from text. False until Everett's own
+    synthesizer is wired into `SpeechSynthesisEngine._render`.
+    """
+    return False, SOVEREIGN_NOT_WIRED
 
 
 def _initialize_audio_playback() -> bool:
@@ -202,8 +255,11 @@ class PlaybackFailed(RuntimeError):
     """Audio was written but could not be played. The file path is in the message."""
 
 
-class NothingVoiced(RuntimeError):
-    """Neither XTTS nor the OS fallback produced audio, and playback was requested."""
+class NothingVoiced(SynthesisUnavailable):
+    """
+    No audio could be produced for the text. `available` is False and
+    `reason` says why. Raised whether or not playback was requested.
+    """
 
 
 class SpeechSynthesisEngine:
@@ -217,40 +273,37 @@ class SpeechSynthesisEngine:
         self._play_thread: Optional[threading.Thread] = None
         self._play_error: Optional[str] = None
 
-        self.xtts = None
         self.last_engine = "none"
         self.last_error = None
+        #: Kept for callers that read it. There is no fallback voice any more,
+        #: so nothing is ever "degraded output" — it is audio or a raise.
         self.last_degraded = False
         self.last_playback_error: Optional[str] = None
         self.reference_audio = Path(reference_audio) if reference_audio else None
-        if XTTSEngine is not None:
-            try:
-                self.xtts = XTTSEngine()
-                if self.reference_audio and self.reference_audio.exists():
-                    self.xtts.load_voice(self.reference_audio)
-                else:
-                    logger.warning(
-                        "No reference audio provided. XTTS will require load_voice() before synthesis."
-                    )
-            except Exception as exc:
-                logger.warning("XTTSEngine unavailable: %s", exc)
-                self.xtts = None
-        else:
-            logger.warning("XTTSEngine not importable (%s). Native fallback only.", _XTTS_IMPORT_ERROR)
 
+        ready, reason = synthesis_readiness()
+        if not ready:
+            logger.warning("Speech from text is unavailable: %s. Recorded audio still plays.", reason)
         logger.info("Speech synthesis engine initialized (local only).")
 
     def load_voice(self, reference_audio: str) -> bool:
-        """Point XTTS at a (new) reference clip. False if XTTS is not available."""
+        """
+        Record the reference clip for the voice. Returns False: there is no
+        renderer to point at it until the sovereign synthesizer is wired.
+        """
         self.reference_audio = Path(reference_audio)
-        if self.xtts is None:
-            return False
-        self.xtts.load_voice(self.reference_audio)
-        return True
+        return False
 
     def _new_output_path(self) -> Path:
         self.cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         return Path(tempfile.NamedTemporaryFile(suffix=".wav", dir=self.cache_dir, delete=False).name)
+
+    def _render(self, text: str, emotion_params: Optional[Dict], language: str) -> SynthesisResult:
+        """
+        The one place audio would be made from text. Everett's own
+        synthesizer plugs in here. Until it does, this raises.
+        """
+        raise SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="SpeechSynthesisEngine._render")
 
     def generate_speech_audio(
         self,
@@ -260,6 +313,11 @@ class SpeechSynthesisEngine:
         play_audio: bool = True,
         output_path: Optional[str] = None,
     ) -> Optional[str]:
+        """
+        Text -> WAV path (and playback when asked). Raises `NothingVoiced`
+        with the real reason when no audio can be made. Returns None only
+        for empty text.
+        """
         if not text or not text.strip():
             logger.warning("No text provided for speech generation.")
             return None
@@ -267,39 +325,26 @@ class SpeechSynthesisEngine:
         selected_language = language or self.default_language
         logger.info(f"Generating local speech audio: language={selected_language}")
 
-        audio_output_path = Path(output_path) if output_path else self._new_output_path()
-
         try:
-            if self.xtts is None:
-                raise DegradedSynthesisError(f"XTTS not loaded ({_XTTS_IMPORT_ERROR or 'engine failed to initialise'})")
-            result = self.xtts.synthesize(text, emotion_params=emotion_params, language=selected_language)
+            result = self._render(text, emotion_params, selected_language)
             if result.degraded or result.audio is None:
-                raise DegradedSynthesisError(result.error_reason or "XTTS returned degraded status.")
-
-            result.save(audio_output_path)
-            self.last_engine = "christman_voice_sdk"
-            self.last_error = None
-            self.last_degraded = False
-            logger.info(f"Audio saved locally to {audio_output_path}")
-
-        except Exception as exc:
+                raise SynthesisUnavailable(
+                    result.error_reason or "the renderer returned no audio",
+                    where=f"renderer {result.engine}",
+                )
+        except SynthesisUnavailable as exc:
+            self.last_engine = "none"
             self.last_error = str(exc)
-            logger.error(f"Local synthesis failed ({exc}). Falling back to OS native TTS.")
-            native, engine_name = self._native_os_fallback(text, audio_output_path)
-            self.last_degraded = True
-            if not native:
-                self.last_engine = "none"
-                logger.error("Nothing was voiced: XTTS failed and the OS fallback produced no file.")
-                if play_audio:
-                    raise NothingVoiced(
-                        f"nothing was voiced for {text[:40]!r}: XTTS failed ({exc}) and the OS "
-                        f"fallback produced no file"
-                    )
-                return None
-            self.last_engine = engine_name
-            if play_audio:
-                self._play_or_raise(native)
-            return native
+            self.last_degraded = False
+            logger.error("Nothing was voiced for %r: %s", text[:40], exc)
+            raise NothingVoiced(exc.reason, where=exc.where) from exc
+
+        audio_output_path = Path(output_path) if output_path else self._new_output_path()
+        result.save(audio_output_path)
+        self.last_engine = result.engine
+        self.last_error = None
+        self.last_degraded = False
+        logger.info(f"Audio saved locally to {audio_output_path}")
 
         if play_audio:
             self._play_or_raise(str(audio_output_path))
@@ -312,44 +357,6 @@ class SpeechSynthesisEngine:
             return
         reason = getattr(self, "last_playback_error", None) or "playback unavailable"
         raise PlaybackFailed(f"audio written to {path} but NOT played: {reason}")
-
-    def _native_os_fallback(self, text: str, output_path: Path) -> tuple:
-        """
-        Native OS fallback. Writes a WAV with the system voice.
-
-        Returns (path or None, engine_name). The text goes to the speaker on
-        STDIN — never as an argument, so a sentence that starts with "-" is
-        not read as an option.
-        """
-        logger.warning("Executing Native OS Fallback TTS. This is degraded output.")
-
-        import subprocess
-
-        data = text.encode("utf-8")
-        if sys.platform == "darwin":
-            cmd = ["say", "-o", str(output_path), "--data-format=LEF32@24000"]
-            engine_name = "macos_say_fallback"
-        elif sys.platform.startswith("linux"):
-            cmd = ["espeak", "-w", str(output_path), "--stdin"]
-            engine_name = "espeak_fallback"
-        else:
-            logger.error("No OS native TTS on platform %s.", sys.platform)
-            return None, "none"
-
-        try:
-            subprocess.run(cmd, input=data, check=True, timeout=120,
-                           stderr=subprocess.DEVNULL)
-        except FileNotFoundError:
-            logger.error("%s is not installed.", cmd[0])
-            return None, "none"
-        except Exception as exc:
-            logger.error("%s failed: %s", cmd[0], exc)
-            return None, "none"
-        if output_path.exists() and output_path.stat().st_size > 0:
-            return str(output_path), engine_name
-
-        logger.error("OS native fallback failed to produce an audio file.")
-        return None, "none"
 
     def play_audio_file(self, audio_path: str) -> bool:
         """Start playback. False means NOT playing; the reason is in last_playback_error."""
@@ -450,7 +457,11 @@ def get_speech_synthesis_engine(reference_audio: Optional[str] = None) -> Speech
 
 
 def synthesize_speech(text: str, params: Optional[Dict] = None, reference_audio: Optional[str] = None):
-    """Returns a Path or None. Never mutates text. Reuses the shared engine."""
+    """
+    Returns a Path, or None for empty text. Raises `NothingVoiced` (a
+    `SynthesisUnavailable`) with the reason when no audio can be made.
+    Never mutates text. Reuses the shared engine.
+    """
     engine = get_speech_synthesis_engine(reference_audio=reference_audio)
     path = engine.generate_speech_audio(
         text,

@@ -1,3 +1,10 @@
+# WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
+# Everett's ruling: every outside speech engine is cut. Removed from
+# install_requires:
+#         "pyttsx3",
+# pyttsx3 is the operating system's speech engine; nothing in the package
+# imports it any more. (pygame was removed on 2026-10-13. Coqui TTS was never
+# a declared dependency here.)
 from setuptools import setup, find_packages
 
 setup(
@@ -21,7 +28,6 @@ setup(
         # Intel Mac (torch tops out at 2.2.2 there) — pin <5 so the torch
         # backend stays enabled instead of silently disabling itself.
         "transformers>=4.40,<5",
-        "pyttsx3",
         "flask",
         "fastapi",
         "rich",

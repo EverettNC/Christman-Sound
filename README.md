@@ -82,16 +82,16 @@ Sound does not import grunt, tick, or stimming. Two organs, one job.
 - `recognition_result.py` — Honest recognition contract
 
 #### Engines (`engines/`)
-- `base_synthesizer.py` — Abstract TTS engine
-- `xtts_engine.py` — Coqui XTTS voice synthesis
-- `gpt_sovits_engine.py` — GPT-SoVITS synthesis engine
+- `synthesis_result.py` — The result contract (`SynthesisResult`) and the typed failure (`SynthesisUnavailable`) every speaking path raises when no voice can be made
+
+On 2026-10-17 Everett ruled that every outside speech engine is cut. `base_synthesizer.py`, `xtts_engine.py` (Coqui XTTS) and `gpt_sovits_engine.py` are in `quarantine/2026-10_outside_voices/`; see `WHY.md` there. Speech from text is unavailable until his own synthesizer is wired in.
 
 #### Synthesis (`synthesis/`)
 - `voice_synthesis.py` — Core synthesis pipeline
 - `voice_synthesis_orchestrator.py` — Synthesis coordination
 - `tts_service.py` — TTS service layer
 - `phoneme_labeler.py` — Phoneme timing and alignment
-- `speech_response.py` — Response generation and streaming
+- `speech_response.py` — `speak()`; raises `SynthesisUnavailable` (it was a pyttsx3 wrapper, now quarantined)
 
 #### Tone (`tone/`)
 - `tone_analyzer.py` — Tone and emotion detection
@@ -170,12 +170,15 @@ print(f"Recognized: {text}")
 ```python
 from christman_voice_sdk.synthesis import voice_synthesis
 
-synthesizer = voice_synthesis.VoiceSynthesizer(engine="xtts")
-wav = synthesizer.synthesize(
-    text="Hello, I am Seraphinia",
-    voice_profile="seraphinia",
-    emotion="curious"
-)
+from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable
+
+try:
+    wav_path = voice_synthesis.synthesize_speech("Hello, I am Seraphinia")
+except SynthesisUnavailable as err:
+    # No outside voice is ever substituted. Until the sovereign synthesizer
+    # is wired, this is where every call lands: err.available is False and
+    # err.reason says why. Show the client a plain notice.
+    print(err.reason)
 ```
 
 ### Speech-to-Speech
@@ -213,9 +216,6 @@ export DEREK_ROOT=/path/to/DerekMCPServer
 # Voice SDK root
 export CHRISTMAN_VOICE_SDK_ROOT=/path/to/christman_voice_sdk
 
-# TTS Engine preference (xtts, gpt-sovits)
-export CHRISTMAN_TTS_ENGINE=xtts
-
 # Audio device settings
 export CHRISTMAN_AUDIO_DEVICE=0
 export CHRISTMAN_SAMPLE_RATE=16000
@@ -247,7 +247,7 @@ User Output (Speech, Sound, Feedback)
 
 ## Key Features
 
-- **Multi-Engine Support** — XTTS, GPT-SoVITS, macOS fallback
+- **Own Voice Only** — No outside speech engine (no XTTS, GPT-SoVITS, `say`, espeak, pyttsx3, gTTS or pygame). A being speaks in its own voice or raises `SynthesisUnavailable` with the reason
 - **Real-Time Processing** — Streaming speech recognition and synthesis
 - **Honesty Rule** — Truthful reporting of engine capabilities
 - **No Fakes** — Fallback modes clearly indicated, never pretending
@@ -268,8 +268,6 @@ Each being can have custom voice profiles, emotional ranges, and personality set
 ## Requirements
 
 - Python 3.8+
-- macOS 11+ (for fallback speech synthesis)
-- XTTS models (auto-downloaded on first use)
 - FFmpeg (for audio encoding)
 
 ## Installation
@@ -308,7 +306,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 ## Honesty Rule — Cardinal Rule 13
 
-This system never fakes capabilities. When speech synthesis falls back to macOS `say`, the returned result explicitly states `engine = "macos_say_fallback"`. No pretending. No deception.
+This system never fakes capabilities. When no voice can be made, every speaking path raises `SynthesisUnavailable` (`available` is False, `reason` says why). There is no fallback voice. No pretending. No deception.
 
 ## License
 

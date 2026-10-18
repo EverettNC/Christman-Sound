@@ -5,11 +5,13 @@
 """
 The speak path.
 
-Rulings these tests are written to (Everett, 2026-10-11):
-  - The XTTS test must report "not run: TTS not installed" where TTS is
-    absent. It never passes there and never silently skips. The real XTTS
-    run happens on the Mac, where the voice lives.
-  - A fallback that makes audio plays it or fails loud. No silent success.
+Rulings these tests are written to:
+  - (Everett, 2026-10-17) Every outside speech engine is cut: no XTTS, no
+    `say`, no espeak. The being speaks in its own voice through
+    Christman-Sound or raises a typed failure that says why. The XTTS and
+    fallback tests that stood here moved to
+    quarantine/2026-10_outside_voices/ with the engines.
+  - (Everett, 2026-10-11) Requested playback plays or fails loud.
   - apply_emotion (pitch moves length) is NOT changed until Everett rules.
     No test here touches it.
 
@@ -40,9 +42,53 @@ def _tone(freq: float, seconds: float = 1.0) -> np.ndarray:
     return (0.5 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
 
 
-def _xtts_stack_missing():
-    """Name the first missing piece of the XTTS stack, or None if all present."""
-    for module in ("torch", "torchaudio", "TTS"):
+# -----------------------------------------------------------------------------
+# The mouth after the 2026-10-17 cut: no outside voice, a typed failure.
+# The XTTS and say/espeak tests that stood here are in
+# quarantine/2026-10_outside_voices/tests/test_synthesis_outside_engines.py.
+# -----------------------------------------------------------------------------
+
+def test_mouth_refuses_with_a_typed_failure_and_writes_nothing(tmp_path):
+    """No outside voice and no sovereign renderer yet: it raises and says why."""
+    from christman_voice_sdk.engines.synthesis_result import (
+        SOVEREIGN_NOT_WIRED, SynthesisUnavailable,
+    )
+    from christman_voice_sdk.synthesis import voice_synthesis as vs
+
+    eng = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path))
+    for play in (False, True):
+        with pytest.raises(vs.NothingVoiced) as excinfo:
+            eng.generate_speech_audio("hello", play_audio=play)
+        err = excinfo.value
+        assert isinstance(err, SynthesisUnavailable)
+        assert err.available is False
+        assert err.reason == SOVEREIGN_NOT_WIRED
+        assert eng.last_engine == "none"
+        assert SOVEREIGN_NOT_WIRED in (eng.last_error or "")
+    assert list(tmp_path.iterdir()) == [], "no empty WAV may be left behind"
+
+
+def test_synthesize_speech_raises_instead_of_returning_none(tmp_path, monkeypatch):
+    from christman_voice_sdk.synthesis import voice_synthesis as vs
+
+    monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
+    with pytest.raises(vs.NothingVoiced):
+        vs.synthesize_speech("hello")
+    assert vs.synthesize_speech("   ") is None, "empty text is not a synthesis request"
+
+
+def test_mouth_has_no_outside_engine_left():
+    from christman_voice_sdk.synthesis import voice_synthesis as vs
+
+    for gone in ("XTTSEngine", "_XTTS_IMPORT_ERROR", "_native_os_fallback"):
+        assert not hasattr(vs, gone) and not hasattr(vs.SpeechSynthesisEngine, gone), gone
+    assert vs.synthesis_readiness()[0] is False
+
+
+def _torch_stack_missing():
+    """Name the first missing piece of the torch stack Shorty and the orchestrator import."""
+    for module in ("torch", "torchaudio", "transformers"):
         try:
             __import__(module)
         except ImportError:
@@ -50,161 +96,83 @@ def _xtts_stack_missing():
     return None
 
 
-# -----------------------------------------------------------------------------
-# XTTS: reachable through the package. NOT RUN where TTS is not installed.
-# -----------------------------------------------------------------------------
-
-def test_xtts_is_reachable_through_the_package():
-    """
-    Runs only where the XTTS stack is installed (Everett's Mac). Elsewhere it
-    reports NOT RUN — it does not pass on a None engine and it does not
-    vanish into a bare skip.
-    """
-    missing = _xtts_stack_missing()
+def test_shorty_quantifies_then_refuses_to_render():
+    """Everett's emotion quantification still runs; only the outside render is gone."""
+    missing = _torch_stack_missing()
     if missing is not None:
-        pytest.skip(
-            f"not run: TTS not installed ({missing} is absent in this environment). "
-            "The real XTTS run happens on the Mac, where the voice lives."
-        )
-    from christman_voice_sdk.synthesis import voice_synthesis as vs
+        pytest.skip(f"not run: {missing} is not installed here; shorty_voice_engine_v3 and its emotion detector import it at module top")
+    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+    from christman_voice_sdk.synthesis.shorty_voice_engine_v3 import ShortyVoiceEngineV3
 
-    assert vs.XTTSEngine is not None, vs._XTTS_IMPORT_ERROR
-    assert vs.XTTSEngine.__module__ == "christman_voice_sdk.engines.xtts_engine"
-
-
-def test_import_failure_names_the_real_missing_dependency():
-    """
-    Regression for the import-path defect, and it CAN run here. When the
-    engine is unavailable the recorded reason must name torch/torchaudio/TTS,
-    never the `engines` package. This makes no claim that XTTS works.
-    """
-    from christman_voice_sdk.synthesis import voice_synthesis as vs
-
-    if vs.XTTSEngine is not None:
-        assert vs._XTTS_IMPORT_ERROR is None
-        return
-    reason = vs._XTTS_IMPORT_ERROR or ""
-    assert "No module named 'engines'" not in reason, reason
-    assert any(dep in reason for dep in ("torch", "torchaudio", "TTS")), reason
-
-
-# -----------------------------------------------------------------------------
-# Fallback: plays or fails loud.
-# -----------------------------------------------------------------------------
-
-def _engine_with_xtts_down(tmp_path, play_result):
-    """A SpeechSynthesisEngine with XTTS absent and playback stubbed."""
-    from christman_voice_sdk.synthesis import voice_synthesis as vs
-
-    played = []
-    eng = vs.SpeechSynthesisEngine.__new__(vs.SpeechSynthesisEngine)
-    eng.cache_dir = tmp_path
-    eng.default_language = "en"
-    eng.audio_playback_ready = True
-    eng.is_playing = False
-    eng.xtts = None
-    eng.last_engine = "none"
-    eng.last_error = None
-    eng.last_degraded = False
-    eng.last_playback_error = None if play_result else "stubbed: no audio device"
+    # __new__: the constructor builds the wav2vec2 emotion detector, which
+    # downloads a model. This test makes no network call. The baseline below
+    # is test input to reach the render step, not a measurement of anyone.
+    eng = ShortyVoiceEngineV3.__new__(ShortyVoiceEngineV3)
+    eng.emotion_baseline = {"happy": 0.6}
     eng.reference_audio = None
-
-    def fake_play(path):
-        played.append(path)
-        return play_result
-
-    eng.play_audio_file = fake_play
-    return vs, eng, played
-
-
-def _fake_subprocess_run(calls):
-    def fake_run(cmd, input=None, check=False, timeout=None, stderr=None):
-        calls.append((list(cmd), input))
-        out = Path(cmd[cmd.index("-o") + 1] if "-o" in cmd else cmd[cmd.index("-w") + 1])
-        out.write_bytes(b"RIFF....WAVE")
-
-        class R:
-            returncode = 0
-
-        return R()
-
-    return fake_run
+    assert not hasattr(eng, "xtts")
+    with pytest.raises(SynthesisUnavailable) as excinfo:
+        eng.synthesize("hello", emotion_params={"emotion": "happy", "exaggeration": 0.0})
+    err = excinfo.value
+    assert err.available is False and err.reason == SOVEREIGN_NOT_WIRED
+    assert err.voice_params == eng.quantify_emotion("hello", "happy", 0.0)["voice_params"]
 
 
-_HAS_OS_SPEAKER = sys.platform.startswith("linux") or sys.platform == "darwin"
-_NO_SPEAKER = "not run: no OS fallback speaker on this platform"
+def test_orchestrator_embeds_emotion_then_refuses_to_render(tmp_path, monkeypatch):
+    # VoicepackBuilder creates data/voicepacks relative to the working directory.
+    monkeypatch.chdir(tmp_path)
+    missing = _torch_stack_missing()
+    if missing is not None:
+        pytest.skip(f"not run: {missing} is not installed here; the orchestrator and its timbre and tone modules import it at module top")
+    from christman_voice_sdk.audio.config import Tier
+    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+    from christman_voice_sdk.synthesis.voice_synthesis_orchestrator import VoiceSynthesisOrchestrator
+    from christman_voice_sdk.tone.emotion_embedder import EmotionEmbedder
+
+    orch = VoiceSynthesisOrchestrator.__new__(VoiceSynthesisOrchestrator)
+    orch.engine = None
+    orch.tier = Tier.ELITE
+    orch.emotion_embedder = EmotionEmbedder(tier=Tier.ELITE)
+    orch.current_voicepack = {"metadata": {}}
+    with pytest.raises(SynthesisUnavailable) as excinfo:
+        orch.synthesize("hello", emotion="happy")
+    err = excinfo.value
+    assert err.reason == SOVEREIGN_NOT_WIRED
+    assert err.emotion_params == orch.emotion_embedder.embed_emotion("happy", 1.0).to_dict()
+    with pytest.raises(SynthesisUnavailable):
+        VoiceSynthesisOrchestrator(tier=Tier.ELITE, auto_load_engine=True)
 
 
-@pytest.mark.skipif(not _HAS_OS_SPEAKER, reason=_NO_SPEAKER)
-def test_fallback_plays_when_it_can_and_text_goes_on_stdin(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr("subprocess.run", _fake_subprocess_run(calls))
-    vs, eng, played = _engine_with_xtts_down(tmp_path, play_result=True)
+def test_speech_response_raises_instead_of_using_the_os_voice():
+    from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable
+    from christman_voice_sdk.synthesis import speech_response
 
-    text = "-v Alex; rm -rf /"  # starts with "-" on purpose
-    path = eng.generate_speech_audio(text, play_audio=True)
-
-    assert path and Path(path).exists()
-    assert played == [path], "fallback output must be played"
-    assert eng.last_degraded is True
-    assert eng.last_engine in ("espeak_fallback", "macos_say_fallback")
-    cmd, stdin = calls[0]
-    assert text not in cmd, "text must not be an argument"
-    assert stdin == text.encode("utf-8")
+    with pytest.raises(SynthesisUnavailable):
+        speech_response.speak("hello")
 
 
-@pytest.mark.skipif(not _HAS_OS_SPEAKER, reason=_NO_SPEAKER)
-def test_fallback_fails_loud_when_it_cannot_play(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr("subprocess.run", _fake_subprocess_run(calls))
-    vs, eng, played = _engine_with_xtts_down(tmp_path, play_result=False)
-
-    with pytest.raises(vs.PlaybackFailed) as excinfo:
-        eng.generate_speech_audio("hello", play_audio=True)
-
-    assert played, "playback must have been attempted"
-    written = played[0]
-    assert written in str(excinfo.value), "the error must name the file that was written"
-    assert Path(written).exists(), "the audio is not thrown away; the caller is told where it is"
-
-
-@pytest.mark.skipif(not _HAS_OS_SPEAKER, reason=_NO_SPEAKER)
-def test_nothing_voiced_raises_when_playback_was_requested(tmp_path, monkeypatch):
-    def no_speaker(cmd, input=None, check=False, timeout=None, stderr=None):
-        raise FileNotFoundError(cmd[0])
-
-    monkeypatch.setattr("subprocess.run", no_speaker)
-    vs, eng, played = _engine_with_xtts_down(tmp_path, play_result=True)
-
-    with pytest.raises(vs.NothingVoiced):
-        eng.generate_speech_audio("hello", play_audio=True)
-    assert played == []
-    # A file-only request still returns None rather than inventing a file.
-    assert eng.generate_speech_audio("hello", play_audio=False) is None
-
-
-def test_xtts_path_also_fails_loud_when_it_cannot_play(tmp_path):
-    """The rule is not fallback-specific: requested playback plays or raises."""
+def test_tts_service_reports_real_state_and_503s_without_a_voice(tmp_path, monkeypatch):
+    try:
+        import flask  # noqa: F401
+    except ImportError:
+        pytest.skip("not run: flask not installed in this environment")
+    from christman_voice_sdk.synthesis import tts_service as ts
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
-    class FakeResult:
-        degraded = False
-        audio = np.zeros(10, dtype=np.float32)
-        error_reason = None
-
-        def save(self, path):
-            Path(path).write_bytes(b"RIFF....WAVE")
-
-    class FakeXTTS:
-        def synthesize(self, text, emotion_params=None, language="en"):
-            return FakeResult()
-
-    vs_, eng, played = _engine_with_xtts_down(tmp_path, play_result=False)
-    eng.xtts = FakeXTTS()
-    with pytest.raises(vs.PlaybackFailed):
-        eng.generate_speech_audio("hello", play_audio=True)
-    assert eng.last_engine == "christman_voice_sdk"
-    assert eng.last_degraded is False
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
+    client = ts.app.test_client()
+    status = client.get("/status").get_json()
+    assert status["synthesis_available"] is False
+    assert status["synthesis_reason"]
+    assert "engine" not in status, "no fixed engine string may be reported"
+    r = client.post("/generate", json={"text": "hello"})
+    assert r.status_code == 503
+    body = r.get_json()
+    assert body["available"] is False and body["reason"]
+    audio_dir = tmp_path / "static" / "audio"
+    assert not audio_dir.exists() or list(audio_dir.iterdir()) == []
 
 
 # -----------------------------------------------------------------------------

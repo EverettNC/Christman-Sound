@@ -1,3 +1,49 @@
+"""
+Voice synthesis orchestrator — voicepack, timbre, emotion, lipsync.
+
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
+-----------------------------------------------------
+Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. The
+only engine this orchestrator could drive was Coqui XTTS. Removed (quoted
+from main 99a6cce):
+
+    from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+    ...
+    self.engine: Optional[XTTSEngine] = None
+    ...
+    def _ensure_engine(self) -> Any:
+        if self.engine is None:
+            raise SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="VoiceSynthesisOrchestrator")
+        return self.engine
+    ...
+    engine = self._ensure_engine()
+    reference_audio = self.current_voicepack.get("reference_audio") or []
+    if reference_audio:
+        engine.load_voice(reference_audio=reference_audio[0])
+    ...
+    result = engine.synthesize(
+        text=text,
+        emotion_params=emotion_embedding.to_dict(),
+        **kwargs,
+    )
+
+Kept whole: the AudioProcessor / PhonemeLabeler / TimbreModeler /
+EmotionEmbedder / VoicepackBuilder wiring, voicepack validation and loading,
+the lipsync path and `SynthesisResultPayload`.
+
+What happens now:
+  - `load_voicepack` validates and loads the voicepack exactly as before and
+    records its reference audio in `self.reference_audio`; there is no
+    engine to point it at.
+  - `_ensure_engine` raises `SynthesisUnavailable("sovereign synthesizer not
+    wired yet")`. `auto_load_engine=True` therefore raises at construction
+    instead of half-building.
+  - `synthesize` validates its inputs and embeds the emotion as before, then
+    raises that same typed failure with the embedded emotion on the
+    exception as `emotion_params`. It never returns a payload with
+    audio=None that a caller could mistake for a quiet success.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,10 +57,10 @@ from ..synthesis.phoneme_labeler import PhonemeLabeler
 from ..timbre.voicepack import VoicepackBuilder, VoicepackMetadata
 from ..timbre.timbre_modeler import TimbreModeler, VoiceProfile
 from ..tone.emotion_embedder import EmotionEmbedder
-from ..engines.xtts_engine import XTTSEngine
+from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
 # Re-exported: consumers (AlphaVox voice_stack) import SynthesisResult from
 # this module, as the pre-migration package did.
-from ..engines.base_synthesizer import SynthesisResult  # noqa: F401
+from ..engines.synthesis_result import SynthesisResult  # noqa: F401
 from ..tone.tonescore_engine import ToneScoreEngine
 from ..audio.config import Config, Tier, get_config
 from ..utils.logger import get_logger
@@ -63,7 +109,8 @@ class VoiceSynthesisOrchestrator:
     --------------------
     1. ENGINE SWAP.
        Replaced GPTSoVITSEngine (which was acting as a placeholder) with the 
-       production XTTSEngine.
+       production XTTSEngine. (2026-10-17: XTTS cut too — see the module
+       docstring. No engine is wired until the sovereign synthesizer is.)
     
     2. FABRICATED EMOTION MODELS REMOVED.
        `_build_custom_emotion_models` previously returned fake dictionary payloads 
@@ -87,7 +134,9 @@ class VoiceSynthesisOrchestrator:
         self.emotion_embedder = EmotionEmbedder(tier=tier)
         self.voicepack_builder = VoicepackBuilder()
 
-        self.engine: Optional[XTTSEngine] = None
+        #: The renderer. None until Everett's own synthesizer is wired in.
+        self.engine: Optional[Any] = None
+        self.reference_audio: List[Path] = []
         self.current_voicepack: Optional[Dict[str, Any]] = None
         self.current_voice_profile: Optional[VoiceProfile] = None
 
@@ -96,10 +145,9 @@ class VoiceSynthesisOrchestrator:
 
         logger.info("VoiceSynthesisOrchestrator initialized", extra={"tier": tier.value})
 
-    def _ensure_engine(self) -> XTTSEngine:
+    def _ensure_engine(self) -> Any:
         if self.engine is None:
-            self.engine = XTTSEngine()
-            logger.info("XTTS engine initialized within Orchestrator")
+            raise SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="VoiceSynthesisOrchestrator")
         return self.engine
 
     def _build_custom_emotion_models(
@@ -121,15 +169,13 @@ class VoiceSynthesisOrchestrator:
         self.current_voicepack = self.voicepack_builder.load(voicepack_path)
         self.current_voice_profile = self.current_voicepack.get("voice_profile")
 
-        engine = self._ensure_engine()
-        reference_audio = self.current_voicepack.get("reference_audio") or []
+        self.reference_audio = list(self.current_voicepack.get("reference_audio") or [])
+        if not self.reference_audio:
+            logger.warning("Voicepack contains no reference audio.")
 
-        if reference_audio:
-            engine.load_voice(reference_audio=reference_audio[0])
-        else:
-            logger.warning("Voicepack contains no reference audio. Engine is primed but empty.")
-
-        logger.info("Voicepack loaded and ready")
+        logger.info(
+            "Voicepack loaded. Speech from it is unavailable: %s.", SOVEREIGN_NOT_WIRED
+        )
 
     def synthesize(
         self,
@@ -148,10 +194,16 @@ class VoiceSynthesisOrchestrator:
             raise ValueError("text must be non-empty")
 
         start_time = time.time()
-        engine = self._ensure_engine()
 
         # Simplified for brevity; logic routes through EmotionEmbedder
         emotion_embedding = self.emotion_embedder.embed_emotion(emotion or "neutral", emotion_intensity)
+
+        try:
+            engine = self._ensure_engine()
+        except SynthesisUnavailable as err:
+            err.emotion_params = emotion_embedding.to_dict()
+            logger.error("Orchestrator did not speak %r: %s", text[:40], err)
+            raise
 
         result = engine.synthesize(
             text=text,
