@@ -1,58 +1,45 @@
 """
-speech_response.py - Simple Native Fallback
+speech_response.py — speak a being's reply.
 
-WHAT CHANGED AND WHY
---------------------
-1. ELIMINATED SILENT FAILURE.
-   If the pyttsx3 engine failed to initialize, `engine` was set to None, and 
-   the `speak` function silently `print`ed an error and returned. 
-   It now raises a RuntimeError to strictly obey Rule 6 (Fail Loud).
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
+-----------------------------------------------------
+Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. This
+file was nothing but a wrapper around pyttsx3, the operating system's speech
+engine. The original is kept whole at
+quarantine/2026-10_outside_voices/christman_voice_sdk/synthesis/speech_response.py.
+Removed (quoted from main 99a6cce):
+
+    import pyttsx3
+    ...
+    eng = pyttsx3.init(driverName="nsss") if sys.platform == "darwin" else pyttsx3.init()
+    eng.setProperty("rate", 180)
+    eng.setProperty("volume", 1.0)
+    ...
+    engine.say(text)
+    engine.runAndWait()
+
+`speak()` keeps its name and signature so callers still import, and raises
+`SynthesisUnavailable("sovereign synthesizer not wired yet")`. It never
+speaks in a voice that is not the being's own, and it never returns as if it
+had spoken.
 """
 
+from __future__ import annotations
+
 import logging
-import sys
-import pyttsx3
+from typing import Optional
+
+from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
 
 logger = logging.getLogger(__name__)
 
-def _get_engine():
-    try:
-        # 2026-10-11: driverName="nsss" was hardcoded — the macOS driver —
-        # so on Linux and Windows this "native fallback" could never start.
-        eng = pyttsx3.init(driverName="nsss") if sys.platform == "darwin" else pyttsx3.init()
-        eng.setProperty("rate", 180)
-        eng.setProperty("volume", 1.0)
-        return eng
-    except Exception as e:
-        logger.error(f"pyttsx3 Speech engine init failed: {e}")
-        return None
 
-def speak(text: str, tone_profile: dict = None):
-    logger.info(f"🗣️ Speaking response via native OS: {text}")
-    
-    engine = _get_engine()
-    if not engine:
-        raise RuntimeError("Speech engine not available. OS native fallback failed.")
+def speak(text: str, tone_profile: Optional[dict] = None) -> None:
+    """Raises `SynthesisUnavailable` with the reason. Nothing is voiced."""
+    del tone_profile
+    err = SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="speech_response.speak")
+    logger.error("Did not speak %r: %s", (text or "")[:40], err)
+    raise err
 
-    original_rate = engine.getProperty("rate")
-    original_volume = engine.getProperty("volume")
-
-    try:
-        if tone_profile:
-            rate = tone_profile.get("speech_rate")
-            if rate:
-                engine.setProperty("rate", rate)
-            volume = tone_profile.get("volume")
-            if volume is not None:
-                engine.setProperty("volume", volume)
-
-        engine.say(text)
-        engine.runAndWait()
-    except Exception as e:
-        logger.error(f"Failed to speak via native OS: {e}")
-        raise RuntimeError(f"Native TTS execution failed: {e}") from e
-    finally:
-        engine.setProperty("rate", original_rate)
-        engine.setProperty("volume", original_volume)
 
 __all__ = ["speak"]

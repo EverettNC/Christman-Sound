@@ -1,8 +1,29 @@
 """
 TTS Service - Local API
 
-WHAT CHANGED AND WHY
---------------------
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
+-----------------------------------------------------
+Everett's ruling: every outside speech engine is cut. This service rendered
+through voice_synthesis, whose only renderer was Coqui XTTS (now in
+quarantine/2026-10_outside_voices/). Removed (quoted from main 99a6cce):
+
+    (docstring) Generate speech WAV from text using local XTTS zero-shot cloning.
+    ...
+    if not result_path:
+        raise RuntimeError("Local synthesis failed and returned None.")
+    ...
+        "engine": "xtts_v2_local",
+
+`/status` reported "xtts_v2_local" as a fixed string whether or not XTTS had
+loaded. It now reports `synthesis_available` and the real reason from
+`voice_synthesis.synthesis_readiness()`. `/generate` answers 503 with that
+reason (`available: false`) when no voice can be made, instead of a 500.
+`local_text_to_speech` lets the typed `SynthesisUnavailable` through to the
+caller. The content-hash cache (text, reference, language and emotion in the
+key) is kept whole.
+
+EARLIER HISTORY OF THIS FILE
+----------------------------
 1. CLOUD EGRESS TERMINATED.
    The predecessor used `gTTS` inside Flask endpoints, shipping user text 
    to Google Cloud to generate MP3s. This violated Cardinal Rule 13 and patient data 
@@ -25,7 +46,8 @@ from pathlib import Path
 
 from flask import Flask, jsonify, send_from_directory, send_file, request
 from werkzeug.utils import secure_filename
-from .voice_synthesis import get_speech_synthesis_engine
+from .voice_synthesis import get_speech_synthesis_engine, synthesis_readiness
+from ..engines.synthesis_result import SynthesisUnavailable
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -50,7 +72,10 @@ def local_text_to_speech(
     emotion_params: Optional[Dict] = None,
     lang: str = "en",
 ) -> str:
-    """Generate speech WAV from text using local XTTS zero-shot cloning."""
+    """
+    Generate a speech WAV from text through Christman-Sound's own renderer.
+    Raises `SynthesisUnavailable` with the reason when no voice can be made.
+    """
     if not text or not text.strip():
         raise ValueError("text must not be empty")
 
@@ -75,9 +100,8 @@ def local_text_to_speech(
         play_audio=False,
         output_path=output_path
     )
-    
     if not result_path:
-        raise RuntimeError("Local synthesis failed and returned None.")
+        raise SynthesisUnavailable("the renderer returned no file", where="local_text_to_speech")
 
     return result_path
 
@@ -107,6 +131,10 @@ def generate_speech():
             lang=lang
         )
         return jsonify({"audio_url": f"/audio/{os.path.basename(audio_path)}", "status": "ok"})
+    except SynthesisUnavailable as e:
+        logger.error(f"No voice: {e}")
+        return jsonify({"error": str(e), "available": False, "reason": e.reason,
+                        "status": "unavailable"}), 503
     except Exception as e:
         logger.error(f"Synthesis failed: {e}")
         return jsonify({"error": str(e), "status": "failed"}), 500
@@ -121,11 +149,13 @@ def serve_audio(filename: str):
 
 @app.route("/status", methods=["GET"])
 def status():
-    """Health check: Local TTS service availability."""
+    """Health check: the service is up; whether it can make a voice is reported, not assumed."""
+    ready, reason = synthesis_readiness()
     return jsonify({
         "status": "online",
         "cloud_dependencies": False,
-        "engine": "xtts_v2_local",
+        "synthesis_available": bool(ready),
+        "synthesis_reason": None if ready else reason,
         "last_update": datetime.now().isoformat(),
     })
 

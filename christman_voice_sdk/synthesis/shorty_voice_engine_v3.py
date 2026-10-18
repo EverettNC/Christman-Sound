@@ -1,8 +1,38 @@
 """
 Shorty Voice Engine V3 - ULTRA Tier Implementation
 
-WHAT CHANGED AND WHY
---------------------
+WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
+-----------------------------------------------------
+Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. This
+class drove Coqui XTTS to render; that render call is the only thing that
+came out. Removed (quoted from main 99a6cce):
+
+    from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+    ...
+    logger.info("Loading XTTS voice synthesis engine...")
+    self.xtts = XTTSEngine(device=device)
+    ...
+    self.xtts.load_voice(reference_audio)
+    ...
+    result = self.xtts.synthesize(
+        text=text,
+        emotion_params=quant["voice_params"],
+        **kwargs
+    )
+    return result
+
+Kept whole: Everett's emotion quantification — SHORTY_EMOTIONS,
+`quantify_emotion`, `_get_emotion_score`, `_emotion_to_voice_params` — the
+emotion detector and the measured baseline from the reference clip.
+
+`synthesize` still quantifies the emotion first (so a bad emotion or a
+missing baseline fails exactly as before), then raises
+`SynthesisUnavailable("sovereign synthesizer not wired yet")` carrying the
+quantified voice parameters on the exception as `voice_params`. It never
+returns a result that pretends to be speech.
+
+EARLIER HISTORY OF THIS FILE
+----------------------------
 1. FABRICATED BASELINES ERADICATED.
    The `_get_default_baseline()` method invented highly specific decimal scores 
    (e.g., 'happy': 0.9123) if the audio analysis failed. An analysis that fails 
@@ -23,7 +53,7 @@ from pathlib import Path
 from typing import Any, Optional, Dict, List
 import time
 
-from ..engines.xtts_engine import XTTSEngine
+from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
 from ..timbre.shorty_emotion import ShortyEmotionDetector
 from ..utils.logger import get_logger
 
@@ -50,9 +80,6 @@ class ShortyVoiceEngineV3:
             scaler_path=scaler_path
         )
 
-        logger.info("Loading XTTS voice synthesis engine...")
-        self.xtts = XTTSEngine(device=device)
-
         self.reference_audio = None
         self.emotion_baseline = None
 
@@ -68,7 +95,6 @@ class ShortyVoiceEngineV3:
             raise FileNotFoundError(f"Reference audio not found: {reference_audio}")
 
         self.reference_audio = reference_audio
-        self.xtts.load_voice(reference_audio)
 
         logger.info("Analyzing reference audio for emotional baseline...")
         try:
@@ -98,13 +124,11 @@ class ShortyVoiceEngineV3:
             exaggeration = emotion_params.get("exaggeration", 0.0)
 
         quant = self.quantify_emotion(text, emotion, exaggeration)
-        
-        result = self.xtts.synthesize(
-            text=text,
-            emotion_params=quant["voice_params"],
-            **kwargs
-        )
-        return result
+
+        err = SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="ShortyVoiceEngineV3.synthesize")
+        err.voice_params = quant["voice_params"]
+        logger.error("Shorty did not speak %r: %s", text[:40], err)
+        raise err
 
     def quantify_emotion(
         self,

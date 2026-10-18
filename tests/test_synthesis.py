@@ -86,6 +86,95 @@ def test_mouth_has_no_outside_engine_left():
     assert vs.synthesis_readiness()[0] is False
 
 
+def _torch_stack_missing():
+    """Name the first missing piece of the torch stack Shorty and the orchestrator import."""
+    for module in ("torch", "torchaudio", "transformers"):
+        try:
+            __import__(module)
+        except ImportError:
+            return module
+    return None
+
+
+def test_shorty_quantifies_then_refuses_to_render():
+    """Everett's emotion quantification still runs; only the outside render is gone."""
+    missing = _torch_stack_missing()
+    if missing is not None:
+        pytest.skip(f"not run: {missing} is not installed here; shorty_voice_engine_v3 and its emotion detector import it at module top")
+    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+    from christman_voice_sdk.synthesis.shorty_voice_engine_v3 import ShortyVoiceEngineV3
+
+    # __new__: the constructor builds the wav2vec2 emotion detector, which
+    # downloads a model. This test makes no network call. The baseline below
+    # is test input to reach the render step, not a measurement of anyone.
+    eng = ShortyVoiceEngineV3.__new__(ShortyVoiceEngineV3)
+    eng.emotion_baseline = {"happy": 0.6}
+    eng.reference_audio = None
+    assert not hasattr(eng, "xtts")
+    with pytest.raises(SynthesisUnavailable) as excinfo:
+        eng.synthesize("hello", emotion_params={"emotion": "happy", "exaggeration": 0.0})
+    err = excinfo.value
+    assert err.available is False and err.reason == SOVEREIGN_NOT_WIRED
+    assert err.voice_params == eng.quantify_emotion("hello", "happy", 0.0)["voice_params"]
+
+
+def test_orchestrator_embeds_emotion_then_refuses_to_render(tmp_path, monkeypatch):
+    # VoicepackBuilder creates data/voicepacks relative to the working directory.
+    monkeypatch.chdir(tmp_path)
+    missing = _torch_stack_missing()
+    if missing is not None:
+        pytest.skip(f"not run: {missing} is not installed here; the orchestrator and its timbre and tone modules import it at module top")
+    from christman_voice_sdk.audio.config import Tier
+    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+    from christman_voice_sdk.synthesis.voice_synthesis_orchestrator import VoiceSynthesisOrchestrator
+    from christman_voice_sdk.tone.emotion_embedder import EmotionEmbedder
+
+    orch = VoiceSynthesisOrchestrator.__new__(VoiceSynthesisOrchestrator)
+    orch.engine = None
+    orch.tier = Tier.ELITE
+    orch.emotion_embedder = EmotionEmbedder(tier=Tier.ELITE)
+    orch.current_voicepack = {"metadata": {}}
+    with pytest.raises(SynthesisUnavailable) as excinfo:
+        orch.synthesize("hello", emotion="happy")
+    err = excinfo.value
+    assert err.reason == SOVEREIGN_NOT_WIRED
+    assert err.emotion_params == orch.emotion_embedder.embed_emotion("happy", 1.0).to_dict()
+    with pytest.raises(SynthesisUnavailable):
+        VoiceSynthesisOrchestrator(tier=Tier.ELITE, auto_load_engine=True)
+
+
+def test_speech_response_raises_instead_of_using_the_os_voice():
+    from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable
+    from christman_voice_sdk.synthesis import speech_response
+
+    with pytest.raises(SynthesisUnavailable):
+        speech_response.speak("hello")
+
+
+def test_tts_service_reports_real_state_and_503s_without_a_voice(tmp_path, monkeypatch):
+    try:
+        import flask  # noqa: F401
+    except ImportError:
+        pytest.skip("not run: flask not installed in this environment")
+    from christman_voice_sdk.synthesis import tts_service as ts
+    from christman_voice_sdk.synthesis import voice_synthesis as vs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
+    client = ts.app.test_client()
+    status = client.get("/status").get_json()
+    assert status["synthesis_available"] is False
+    assert status["synthesis_reason"]
+    assert "engine" not in status, "no fixed engine string may be reported"
+    r = client.post("/generate", json={"text": "hello"})
+    assert r.status_code == 503
+    body = r.get_json()
+    assert body["available"] is False and body["reason"]
+    audio_dir = tmp_path / "static" / "audio"
+    assert not audio_dir.exists() or list(audio_dir.iterdir()) == []
+
+
 # -----------------------------------------------------------------------------
 # Honesty of the rest of the speak path.
 # -----------------------------------------------------------------------------
