@@ -597,7 +597,7 @@ class ToneScoreEngine:
 __all__ = ["ToneScoreEngine", "ToneResult", "get_rms_contour", "get_pitch_contour_native"]
 
 # ==============================================================================
-# Patent Pending — TCAP-2026-001 / TCAP-2026-002
+# Patent Pending
 # The Christman AI Project — Luma Cognify AI
 # Nothing Vital Lives Below Root.
 # ==============================================================================

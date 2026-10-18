@@ -144,7 +144,7 @@ def make_incisive(text: str, redact_profanity: bool = False) -> str:
 
 
 # ==============================================================================
-# Patent Pending — TCAP-2026-001 / TCAP-2026-002
+# Patent Pending
 # © 2026 Everett Nathaniel Christman & Misty Gail Christman
 # The Christman AI Project — Luma Cognify AI
 # Truth. Dignity. Protection. Transparency. No Erasure.

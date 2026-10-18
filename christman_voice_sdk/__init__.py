@@ -5,7 +5,7 @@ The only voice SDK built on what it costs to lose someone.
 
 © 2026 Everett Nathaniel Christman & Misty Gail Christman
 The Christman AI Project — Luma Cognify AI
-Patent Pending TCAP-2026-001 / TCAP-2026-002
+Patent Pending
 """
 
 __version__ = "1.0.0"

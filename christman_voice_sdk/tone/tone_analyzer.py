@@ -7,7 +7,7 @@ Layer 3: Discrete emotions — from a classifier whose labels are read from it
 Layer 4: Interpretation
 Layer 5: ToneScore composite — heuristic
 
-Patent Pending TCAP-2026-001 / TCAP-2026-002
+Patent Pending
 © 2026 Everett Nathaniel Christman & Misty Gail Christman
 The Christman AI Project — Luma Cognify AI
 
@@ -569,7 +569,7 @@ __all__ = [
 # one name in one package means the import path decides which analysis runs.
 # Everett's call which survives; this file does not delete the other.
 #
-# Patent Pending TCAP-2026-001 / TCAP-2026-002
+# Patent Pending
 # The Christman AI Project — Luma Cognify AI
 # "How can we help you love yourself more?"
 # Nothing Vital Lives Below Root.
