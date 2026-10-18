@@ -237,7 +237,10 @@ logger = logging.getLogger(__name__)
 #: The name every result from this mouth reports.
 ENGINE_NAME = "christman"
 
-#: Everett's measured pitch median, in Hz. Source: median F0 measured from his
+#: (Wording corrected 2026-10-18: the recorded voice and this pitch are
+#: AlphaVox's, not Everett's; the synthesizer that speaks at it is Everett's
+#: own. The constant keeps its name because tests and callers import it.)
+#: AlphaVox's measured pitch median, in Hz. Source: median F0 measured from its
 #: 26 recorded phrases in AlphaVox data/phrases/alphavox_verified, with
 #: christman_yin and formants.py, 2026-10-18. A chosen starting value, held
 #: until per-phrase contours replace it.

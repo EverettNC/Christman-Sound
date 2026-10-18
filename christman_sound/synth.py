@@ -32,8 +32,11 @@ Where Codec War spells an unknown word letter by letter, this raises
 WordNotInLexicon. Where it would voice an empty string as 0.2 s of silence,
 this raises NothingToSay.
 
-What this is NOT yet: Everett's voice. It is Codec War's formant voice, ours
-end to end. Shaping it toward his voice is a later step.
+What this is NOT yet: AlphaVox's voice. It is Codec War's formant voice, ours
+end to end, synthesized by Everett's own synthesizer. Shaping it toward
+AlphaVox's recorded voice is a later step. (Wording corrected 2026-10-18:
+Everett ruled the recorded voice and its measured pitch are AlphaVox's, not
+his; the synthesizer is his.)
 """
 
 from __future__ import annotations
