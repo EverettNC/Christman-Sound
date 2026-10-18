@@ -39,19 +39,6 @@ contact@thechristmanaiproject.com
 https://thechristmanaiproject.com
 
 "How can we help you love yourself more?"
-
-NOTE (2026-10-17) — OUTSIDE VOICES CUT
-Everett ruled that this file is a symbolic header: it is never wired, and
-its text stays. Tonight he also ruled that the AlphaVox rebuild cuts every
-outside speech engine. So only the outside-engine pieces came out of this
-file, each replaced where it stood by a dated comment that quotes it:
-the pygame import, the XTTSEngine import, the XTTS_MODEL constant, the
-base_synthesizer import (that file moved to quarantine with the engines),
-the XTTS fallback in synthesize_speech, and the pygame and SynthesisResult
-playback in play_audio / wait_for_playback. Nothing else in this file was
-changed, and nothing new was wired to it. Live speech belongs to
-christman_voice_sdk.synthesis.voice_synthesis and plays through
-christman_sound.dsp (christman_play).
 """
 
 from __future__ import annotations
@@ -127,14 +114,12 @@ except ImportError:
     _sd_ok = False
     logging.warning("[SDK] sounddevice not installed — mic capture disabled")
 
-# 2026-10-17: outside player cut (Everett's ruling). Removed:
-#     try:
-#         import pygame
-#         _pygame_ok = True
-#     except ImportError:
-#         _pygame_ok = False
-#         logging.warning("[SDK] pygame not installed — playback disabled")
-_pygame_ok = False
+try:
+    import pygame
+    _pygame_ok = True
+except ImportError:
+    _pygame_ok = False
+    logging.warning("[SDK] pygame not installed — playback disabled")
 
 # ── Native Engine Verification ────────────────────────────────────────────────
 # Rule 6: Fail loud. If the native engine is missing, 
@@ -178,24 +163,20 @@ try:
     _shorty_ok = True
 except ImportError:
     _shorty_ok = False
-    logging.warning("[SDK] ShortyVoiceEngineV3 not found — synthesis unavailable")
+    logging.warning("[SDK] ShortyVoiceEngineV3 not found — trying XTTSEngine")
 
-# 2026-10-17: outside speech engine cut (Everett's ruling). Removed:
-#     try:
-#         from .engines.xtts_engine import XTTSEngine
-#         _xtts_ok = True
-#     except ImportError:
-#         _xtts_ok = False
-#         logging.warning("[SDK] XTTSEngine not found — synthesis unavailable")
-#
-#     try:
-#         from .engines.base_synthesizer import SynthesisResult
-#         _result_ok = True
-#     except ImportError:
-#         _result_ok = False
-# The warning above read "— trying XTTSEngine"; there is no XTTS to try.
-_xtts_ok = False
-_result_ok = False
+try:
+    from .engines.xtts_engine import XTTSEngine
+    _xtts_ok = True
+except ImportError:
+    _xtts_ok = False
+    logging.warning("[SDK] XTTSEngine not found — synthesis unavailable")
+
+try:
+    from .engines.base_synthesizer import SynthesisResult
+    _result_ok = True
+except ImportError:
+    _result_ok = False
 
 
 # ── Runtime constants (all overridable via env — Rule 12) ─────────────────────
@@ -204,9 +185,10 @@ SAMPLE_RATE:     int  = 16_000
 CHANNELS:        int  = 1
 DTYPE:           str  = "int16"
 OUTPUT_DIR:     Path  = Path(os.getenv("CHRISTMAN_OUTPUT_DIR", "/tmp/christman_sdk"))
-# 2026-10-17: outside speech engine cut. Removed:
-#     XTTS_MODEL: str = os.getenv("CHRISTMAN_XTTS_MODEL",
-#                                 "tts_models/multilingual/multi-dataset/xtts_v2")
+XTTS_MODEL:      str  = os.getenv(
+    "CHRISTMAN_XTTS_MODEL",
+    "tts_models/multilingual/multi-dataset/xtts_v2",
+)
 REFERENCE_AUDIO: Optional[str] = os.getenv("CHRISTMAN_REFERENCE_AUDIO", None)
 WAV2VEC_MODEL:   str  = os.getenv(
     "CHRISTMAN_WAV2VEC_MODEL",
@@ -1188,9 +1170,9 @@ def synthesize_speech(
     """
     Synthesize speech using the Christman Voice SDK engine chain.
 
-    Primary:  ShortyVoiceEngineV3 — full Christman emotion quantification.
-    (2026-10-17: the "+ XTTS v2 voice cloning" render and the "XTTSEngine
-    direct" fallback were cut with every outside speech engine.)
+    Primary:  ShortyVoiceEngineV3 — full Christman emotion quantification
+              + XTTS v2 voice cloning.
+    Fallback: XTTSEngine direct — voice cloning without quantification layer.
 
     No gTTS. No ElevenLabs. No cloud APIs. Entirely local. Entirely yours.
 
@@ -1199,7 +1181,7 @@ def synthesize_speech(
         voice_params:    Dict from resolve_voice_params(). Must have 'emotion' key.
         reference_audio: Path to speaker reference WAV (6–15 seconds clean voice).
                          Falls back to CHRISTMAN_REFERENCE_AUDIO env var.
-        language:        Language code (default 'en'). (2026-10-17: was "for XTTS".)
+        language:        Language code for XTTS (default 'en').
 
     Returns:
         Path to synthesised WAV file, or None on failure.
@@ -1238,19 +1220,27 @@ def synthesize_speech(
                 logger.info("V3 synthesis complete: %s", out)
                 return out
         except Exception as exc:
-            logger.error("[SDK] ShortyV3 failed: %s — no fallback (XTTS cut 2026-10-17)", exc)
+            logger.error("[SDK] ShortyV3 failed: %s — trying XTTS fallback", exc)
 
-    # 2026-10-17: outside speech engine cut. Removed:
-    #     # Fallback — XTTSEngine direct
-    #     if _xtts_ok:
-    #         engine = XTTSEngine(model_name=XTTS_MODEL)
-    #         engine.load_voice(reference_audio=ref)
-    #         result = engine.synthesize(text=text, emotion_params=voice_params,
-    #                                    language=language)
-    #     ...
-    #     logger.error("[SDK] All synthesis paths unavailable. Install: pip install TTS")
+    # Fallback — XTTSEngine direct
+    if _xtts_ok:
+        try:
+            logger.warning("[SDK] Using XTTSEngine direct (no Christman quantification).")
+            engine = XTTSEngine(model_name=XTTS_MODEL)
+            engine.load_voice(reference_audio=ref)
+            result = engine.synthesize(
+                text=text,
+                emotion_params=voice_params,
+                language=language,
+            )
+            out = _save_audio_result(result)
+            if out:
+                logger.info("XTTS fallback synthesis complete: %s", out)
+                return out
+        except Exception as exc:
+            logger.error("[SDK] XTTSEngine fallback failed: %s", exc, exc_info=True)
 
-    logger.error("[SDK] All synthesis paths unavailable: sovereign synthesizer not wired yet.")
+    logger.error("[SDK] All synthesis paths unavailable. Install: pip install TTS")
     return None
 
 
@@ -1277,10 +1267,10 @@ def _save_audio_result(result: Any) -> Optional[Path]:
 
 def play_audio(wav_path: Path) -> bool:
     """
-    Play a WAV file. (2026-10-17: the pygame mixer and the
-    SynthesisResult.play() fallback were cut. This symbolic header plays
-    nothing; live playback is christman_sound.dsp / christman_play.)
-    Fails loud (Rule 6).
+    Play a WAV file via pygame mixer.
+
+    Falls back to SynthesisResult.play() if pygame unavailable.
+    Fails loud if neither works (Rule 6).
 
     Args:
         wav_path: Path to WAV file.
@@ -1292,31 +1282,38 @@ def play_audio(wav_path: Path) -> bool:
         logger.error("[SDK] play_audio(): file not found — %s", wav_path)
         return False
 
-    # 2026-10-17: outside player cut. Removed:
-    #     if _pygame_ok:
-    #         if not pygame.mixer.get_init():
-    #             pygame.mixer.init()
-    #         pygame.mixer.music.load(str(wav_path))
-    #         pygame.mixer.music.play()
-    #         return True
-    #     if _result_ok:
-    #         sr = SynthesisResult(audio_path=str(wav_path), duration=0.0, text="",
-    #                              metadata={"engine": "christman_voice_sdk"})
-    #         sr.play()
-    #         return True
+    if _pygame_ok:
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            pygame.mixer.music.load(str(wav_path))
+            pygame.mixer.music.play()
+            logger.info("Playing: %s", wav_path)
+            return True
+        except Exception as exc:
+            logger.error("[SDK] pygame playback failed: %s", exc)
+
+    if _result_ok:
+        try:
+            sr = SynthesisResult(
+                audio_path=str(wav_path), duration=0.0, text="",
+                metadata={"engine": "christman_voice_sdk"},
+            )
+            sr.play()
+            return True
+        except Exception as exc:
+            logger.error("[SDK] SynthesisResult.play() fallback failed: %s", exc)
 
     logger.error("[SDK] All playback paths unavailable. File at: %s", wav_path)
     return False
 
 
 def wait_for_playback() -> None:
-    """Nothing to wait for. (2026-10-17: the pygame wait loop was cut.)"""
-    # Removed:
-    #     if not _pygame_ok or not pygame.mixer.get_init():
-    #         return
-    #     while pygame.mixer.music.get_busy():
-    #         time.sleep(0.05)
-    return
+    """Block until pygame finishes playing. No-op if unavailable."""
+    if not _pygame_ok or not pygame.mixer.get_init():
+        return
+    while pygame.mixer.music.get_busy():
+        time.sleep(0.05)
 
 
 # =============================================================================

@@ -288,13 +288,24 @@ class Lexicon:
         self._load()
 
     def _load(self) -> None:
+        # Read as bytes and decode line by line (2026-10-18). Opened in text
+        # mode, a byte that is not UTF-8 raised a bare UnicodeDecodeError out
+        # of the loop — not a LexiconError — so synthesis_readiness and the
+        # mouth's constructor crashed instead of reporting why, and the line
+        # could not be named. Now it is LexiconFormatError with the line.
         try:
-            handle = self.path.open("r", encoding="utf-8")
+            handle = self.path.open("rb")
         except OSError as exc:
             raise LexiconUnavailable(f"cannot read lexicon {self.path}: {exc}") from exc
         intern: Dict[str, str] = {}
         with handle:
-            for lineno, line in enumerate(handle, 1):
+            for lineno, raw in enumerate(handle, 1):
+                try:
+                    line = raw.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise LexiconFormatError(
+                        f"{self.path}:{lineno}: not UTF-8 ({exc.reason} at byte {exc.start})"
+                    ) from exc
                 fields = line.split()
                 if not fields:
                     continue  # a blank line carries no entry

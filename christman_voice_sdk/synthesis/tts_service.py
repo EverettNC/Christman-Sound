@@ -1,6 +1,23 @@
 """
 TTS Service - Local API
 
+WHAT CHANGED AND WHY (2026-10-18) — THE SOVEREIGN MOUTH IS WIRED
+----------------------------------------------------------------
+voice_synthesis now renders through christman_synth (engine "christman").
+Two things here follow from that:
+
+  - The content-hash cache key now includes the voice that made the file
+    (engine name, f0, and the lexicon file's identity). Before, the key was
+    text, reference, language and emotion only, so a WAV left in
+    static/audio by the old XTTS or `say` renderer for the same text would
+    have been served as this voice's output with status "ok".
+  - The lexicon's and the synthesizer's typed failures reach /generate
+    unchanged and are answered with `available: false` and the reason:
+    503 when the lexicon is missing or unreadable (LexiconUnavailable,
+    LexiconFormatError), 422 when the text itself cannot be voiced
+    (WordNotInLexicon with the missing `words`, PhoneNotMapped,
+    NothingToSay). Before, those would have been a bare 500.
+
 WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
 -----------------------------------------------------
 Everett's ruling: every outside speech engine is cut. This service rendered
@@ -46,8 +63,22 @@ from pathlib import Path
 
 from flask import Flask, jsonify, send_from_directory, send_file, request
 from werkzeug.utils import secure_filename
-from .voice_synthesis import get_speech_synthesis_engine, synthesis_readiness
+from .voice_synthesis import (
+    ENGINE_NAME,
+    EVERETT_F0_MEDIAN_HZ,
+    LexiconError,
+    NothingToSay,
+    get_speech_synthesis_engine,
+    synthesis_readiness,
+)
 from ..engines.synthesis_result import SynthesisUnavailable
+
+try:
+    from christman_sound.lexicon import LEXICON_ENV, LexiconFormatError, LexiconUnavailable
+except Exception:  # christman_sound not importable: voice_synthesis already reports why
+    LEXICON_ENV = "CHRISTMAN_LEXICON_PATH"
+    class LexiconUnavailable(LexiconError): ...  # type: ignore[no-redef]
+    class LexiconFormatError(LexiconError): ...  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -64,6 +95,23 @@ def _static_dir(*parts: str) -> str:
 def _hash_content(*parts: str) -> str:
     payload = "|".join(parts)
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+def _voice_tag() -> str:
+    """
+    Which voice made a cached file: engine, f0, and the lexicon file's
+    identity (path, size, mtime). Part of the cache key so a file made by any
+    other voice, or from another lexicon, is never served as this one.
+    """
+    lexicon = os.environ.get(LEXICON_ENV, "")
+    ident = "no-lexicon"
+    if lexicon:
+        try:
+            st = os.stat(lexicon)
+            ident = f"{os.path.realpath(lexicon)}:{st.st_size}:{st.st_mtime_ns}"
+        except OSError as exc:
+            ident = f"unreadable:{lexicon}:{type(exc).__name__}"
+    return f"{ENGINE_NAME}|f0={EVERETT_F0_MEDIAN_HZ}|{ident}"
+
 
 def local_text_to_speech(
     text: str,
@@ -85,7 +133,7 @@ def local_text_to_speech(
         # emotion_params is part of the key. 2026-10-11: it was not, so a
         # cached neutral rendering was served for an emotional request.
         emotion_key = json.dumps(emotion_params or {}, sort_keys=True)
-        content_hash = _hash_content(text, str(reference_audio_path), lang, emotion_key)
+        content_hash = _hash_content(text, str(reference_audio_path), lang, emotion_key, _voice_tag())
         filename = f"{content_hash}.wav"
         output_path = os.path.join(audio_dir, filename)
 
@@ -135,6 +183,19 @@ def generate_speech():
         logger.error(f"No voice: {e}")
         return jsonify({"error": str(e), "available": False, "reason": e.reason,
                         "status": "unavailable"}), 503
+    except (LexiconUnavailable, LexiconFormatError) as e:
+        logger.error(f"No lexicon: {e}")
+        return jsonify({"error": str(e), "available": False, "reason": str(e),
+                        "status": "unavailable"}), 503
+    except (LexiconError, NothingToSay) as e:
+        # The text cannot be voiced as typed (a word not in the lexicon, a
+        # non-speech phone, no word at all). Named, never spelled or skipped.
+        logger.error(f"Text not voiced: {e}")
+        body = {"error": str(e), "available": False, "reason": str(e), "status": "not_voiced",
+                "kind": type(e).__name__}
+        if hasattr(e, "words"):
+            body["words"] = list(e.words)
+        return jsonify(body), 422
     except Exception as e:
         logger.error(f"Synthesis failed: {e}")
         return jsonify({"error": str(e), "status": "failed"}), 500
