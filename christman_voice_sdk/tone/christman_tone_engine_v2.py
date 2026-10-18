@@ -41,7 +41,7 @@ WHAT CHANGED AND WHY
 3. `intensity_norm = np.clip(rms_energy * 400, 0, 1)` (:65) — the 400 is
    uncalibrated and unexplained, and it is the ONLY surviving trigger for
    HOLD_SPACE. It is retained because removing it would leave no route at all,
-   but it is now named a heuristic and exposed in the result.
+   but it is now named an uncalibrated chosen value and exposed in the result.
 
 4. `except Exception: return None` (:104) swallowed every failure into a bare
    None. A caller could not tell a missing file from a corrupt model. Failures
@@ -84,11 +84,14 @@ DESIRED_STATES: List[str] = [
 #: Emotion states that route to HOLD_SPACE, IF the model emits them.
 HOLD_SPACE_STATES = frozenset({"tremble", "last_breath", "sad", "fearful"})
 
-#: RMS -> 0-1 intensity. HEURISTIC. The 400 is uncalibrated; it came from the
-#: original and there is no measurement behind it.
+#: RMS -> 0-1 intensity. A chosen starting value (reason: carried over from the
+#: original engine; it is uncalibrated and there is no measurement behind it).
+#: Held until client data replaces it.
 INTENSITY_SCALE = 400.0
 
-#: Intensity above this routes to HOLD_SPACE regardless of emotion. HEURISTIC.
+#: Intensity above this routes to HOLD_SPACE regardless of emotion. A fixed
+#: threshold, chosen (reason: carried over from the original engine; there is
+#: no measurement behind it). Held until client data replaces it.
 INTENSITY_HOLD_THRESHOLD = 0.85
 
 
@@ -114,7 +117,7 @@ class ToneEngineResult:
             "dominant_state": self.dominant_state,
             "action_state": self.action_state,
             "physical_intensity": self.physical_intensity,
-            "physical_intensity_is_heuristic": True,
+            "physical_intensity_is_uncalibrated": True,
             "intensity_scale": INTENSITY_SCALE,
             "raw_scores": self.raw_scores,
             "emotions_available": self.raw_scores is not None,
