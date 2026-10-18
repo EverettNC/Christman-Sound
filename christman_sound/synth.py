@@ -25,7 +25,9 @@ is reached only through christman_sound.dsp.get_dsp() — the one loader.
 Text follows Codec War's textToPhones (phonemes.ts:222-244) exactly: a 0.12 s
 SIL to open, each word's phones at their table duration times 1.05 for the
 first and last phone of the word and 0.95 for the ones between, and a 0.08 s
-SIL after every word. Then every duration is divided by `rate` (synth.ts:105).
+SIL after every word. The one addition (Everett's ruling, 2026-10-18): each
+phone's duration is also multiplied by the lexicon mapping's own factor, which
+is 1.0 except for the flap (D x 0.5) and the long E (EH x 1.625). Then every duration is divided by `rate` (synth.ts:105).
 Where Codec War spells an unknown word letter by letter, this raises
 WordNotInLexicon. Where it would voice an empty string as 0.2 s of silence,
 this raises NothingToSay.
@@ -150,10 +152,12 @@ def text_to_phones(
         if key not in lexicon:
             missing.append(key)
             continue
-        ids = lexicon.phones(key)
-        for i, pid in enumerate(ids):
-            factor = _EDGE_FACTOR if (i == 0 or i == len(ids) - 1) else _INNER_FACTOR
-            out.append((pid, table[pid][1] * factor, raw))
+        timed = lexicon.phones_timed(key)
+        for i, (pid, phone_factor) in enumerate(timed):
+            factor = _EDGE_FACTOR if (i == 0 or i == len(timed) - 1) else _INNER_FACTOR
+            # Codec War's position factor, then the mapping table's own factor
+            # (1.0 except the flap and the long E; see lexicon.DURATION_REASONS).
+            out.append((pid, table[pid][1] * factor * phone_factor, raw))
         out.append(("SIL", _WORD_GAP_SIL, None))
         spoken += 1
     if missing:
