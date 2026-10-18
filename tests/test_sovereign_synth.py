@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 
 from christman_sound.dsp import ChristmanDSP, PlaybackUnavailable, SynthRefused  # noqa: E402
 from christman_sound.lexicon import (  # noqa: E402
+    DURATION_REASONS,
     NOT_MAPPED,
     VOSK_TO_CODECWAR,
     LexiconFormatError,
@@ -64,7 +65,9 @@ CW_DUR = {
 }
 
 # A small lexicon in the exact align_lexicon.txt format of vosk-model-en-us-0.22.
-# The first two lines are the ones quoted from Everett's file.
+# The first two lines are the ones quoted from Everett's file. "butterd" and
+# "bearshort" are control rows for the duration tests: the same phones with a
+# plain d and a plain E, so the flap and long-E rows can be measured against them.
 FIXTURE_LEXICON = """\
 christman christman k_B r_I I_I s_I t_I m_I V_I n_E
 hello hello h_B @_I l_I oU_E
@@ -72,6 +75,9 @@ filament filament f_B I_I l_I @_I m_I @_I n_I t_E
 booth booth b_B u_I T_E
 i i aI_S
 butter butter b_B V_I 4_I @`_E
+bear bear b_B E:_I r_E
+butterd butterd b_B V_I d_I @`_E
+bearshort bearshort b_B E_I r_E
 uh uh UHH_S
 qq qq Q_S
 """
@@ -136,10 +142,17 @@ def test_library_built_and_phone_table_is_codec_wars(dsp):
 
 
 def test_mapping_reaches_every_codec_war_phone(dsp):
-    targets = set(VOSK_TO_CODECWAR.values())
+    targets = {pid for pid, _ in VOSK_TO_CODECWAR.values()}
     assert targets == set(dsp.synth_phone_table()), "every Codec War phone must be reachable"
     assert not set(VOSK_TO_CODECWAR) & set(NOT_MAPPED)
-    assert len(VOSK_TO_CODECWAR) == 42 and len(NOT_MAPPED) == 12
+    assert len(VOSK_TO_CODECWAR) == 44 and len(NOT_MAPPED) == 10
+    # Everett's ruling, 2026-10-18: only the flap and the long E carry a
+    # factor other than 1.0, each with its reason written down.
+    scaled = {v: f for v, (_, f) in VOSK_TO_CODECWAR.items() if f != 1.0}
+    assert scaled == {"4": 0.5, "E:": 1.625}
+    assert VOSK_TO_CODECWAR["4"] == ("D", 0.5) and VOSK_TO_CODECWAR["E:"] == ("EH", 1.625)
+    assert set(DURATION_REASONS) == {"4", "E:"}
+    assert "4" not in NOT_MAPPED and "E:" not in NOT_MAPPED
 
 
 # ---------------------------------------------------------------- pitch
@@ -280,11 +293,41 @@ def test_write_wav_round_trips_with_stdlib(dsp, lexicon_file, tmp_path):
 
 # ------------------------------------------------------------ refusals
 
-def test_unmapped_flap_raises_typed_failure(dsp, lexicon_file):
-    with pytest.raises(PhoneNotMapped) as exc:
-        synthesize("butter", lexicon_path=lexicon_file, engine=dsp)
-    assert exc.value.phone == "4" and exc.value.word == "butter"
-    print(exc.value)
+@pytest.mark.parametrize("sr", [16000, 22050])
+@pytest.mark.parametrize(
+    "word,control,position,cw_phone,cw_dur,factor",
+    [
+        # butter = b V 4 @` : the flap is an inside phone (Codec War x 0.95).
+        ("butter", "butterd", 2, "D", CW_DUR["D"], 0.5),
+        # bear = b E: r : the long E is an inside phone (x 0.95).
+        ("bear", "bearshort", 1, "EH", CW_DUR["EH"], 1.625),
+    ],
+)
+def test_flap_and_long_e_speak_at_their_factor(dsp, lexicon_file, sr, word, control, position,
+                                               cw_phone, cw_dur, factor):
+    """
+    Everett's ruling, 2026-10-18: the flap is D x 0.5 and the long E is EH x
+    1.625; neither refuses. Measured from the output: the word and its control
+    row differ only in that one phone, so the difference in sample count is
+    that phone's change in length. floor() at the end of each run may move
+    either total by under one sample, so the allowance is 1 sample.
+    """
+    r = synthesize(word, lexicon_path=lexicon_file, sample_rate=sr, engine=dsp)
+    ref = synthesize(control, lexicon_path=lexicon_file, sample_rate=sr, engine=dsp)
+    seg = r.phones[1 + position]       # +1 for the opening SIL
+    ref_seg = ref.phones[1 + position]
+    assert seg.id == ref_seg.id == cw_phone
+    expected_seg = cw_dur * 0.95 * factor
+    assert abs(seg.dur - expected_seg) < 1e-12
+    measured_delta = len(r.samples) - len(ref.samples)
+    expected_delta = (expected_seg - cw_dur * 0.95) * sr
+    measured_seg = ref_seg.dur + measured_delta / sr
+    print(f"{word} sr={sr}: {cw_phone} x {factor} -> segment {expected_seg * 1000:.2f} ms expected; "
+          f"measured from the samples {measured_seg * 1000:.2f} ms "
+          f"({measured_delta:+d} samples vs control, expected {expected_delta:+.2f}); "
+          f"measured factor {measured_seg / (cw_dur * 0.95):.4f}")
+    assert abs(measured_delta - expected_delta) <= 1.0
+    assert abs(max(abs(x) for x in r.samples) - 0.7) < 1e-6  # it spoke: peak-normalised output, not silence
 
 
 def test_non_speech_phone_raises_typed_failure(dsp, lexicon_file):

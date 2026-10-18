@@ -30,7 +30,8 @@ Rules this module keeps, every one a refusal and never a substitute:
   * A word not in the lexicon -> WordNotInLexicon, naming every missing word.
   * A lexicon phone with no Codec War counterpart is listed in NOT_MAPPED and
     raises PhoneNotMapped when a word that uses it is asked for. It is never
-    dropped and never replaced by a near neighbour.
+    dropped and never replaced by a near neighbour. Since 2026-10-18 only the
+    ten non-speech models are left there (see the ruling below).
   * A line that is not in the align_lexicon format -> LexiconFormatError with
     the line number. The file is not half-loaded.
 The lexicon is never vendored into this repository and never downloaded by
@@ -41,9 +42,9 @@ WHERE THE PHONE SET CAME FROM
 Vosk side: graph/phones.txt of vosk-model-en-us-0.22-lgraph, which is built
 on the same acoustic model as vosk-model-en-us-0.22 and so has the same phone
 inventory: 54 phones once the position markers and Kaldi's <eps> and #n
-disambiguation symbols are set aside. 42 of them map onto Codec War's phones
-(every one of Codec War's 40 is reached); 12 are NOT_MAPPED. The speech
-phones are X-SAMPA. Only that
+disambiguation symbols are set aside. 44 of them map onto Codec War's phones
+(every one of Codec War's 40 is reached); the 10 non-speech models are
+NOT_MAPPED. The speech phones are X-SAMPA. Only that
 one 2 KB file was read (by an HTTP range read of the model archive); the
 lexicon itself was not downloaded. To confirm against the lexicon on the Mac:
 
@@ -51,6 +52,18 @@ lexicon itself was not downloaded. To confirm against the lexicon on the Mac:
 
 Codec War side: PHONES in phonemes.ts:17-58 (ARPAbet), mirrored in the C
 table in christman_synth.c, which is the one copy the synthesizer reads.
+
+EVERETT'S RULING, 2026-10-18 — THE FLAP AND THE LONG E
+------------------------------------------------------
+Everett ruled that Codec War can already make both sounds from what it has,
+so neither may refuse. Each mapping row now carries a duration factor, and
+two rows use one other than 1.0, shown in the table with their reasons:
+    4   -> D  x 0.5     the flap is a shortened D
+    E:  -> EH x 1.625   the long E is EH held long
+The factor multiplies the phone's Codec War table duration, on top of Codec
+War's own word-position factor (1.05 at the edges of a word, 0.95 inside).
+These are chosen starting values with their reasons written beside them,
+held until measurements of Everett's own speech replace them.
 """
 
 from __future__ import annotations
@@ -68,6 +81,7 @@ __all__ = [
     "WordNotInLexicon",
     "PhoneNotMapped",
     "VOSK_TO_CODECWAR",
+    "DURATION_REASONS",
     "NOT_MAPPED",
     "VOSK_PHONES",
     "LEXICON_ENV",
@@ -121,74 +135,98 @@ class PhoneNotMapped(LexiconError):
 
 
 # ------------------------------------------------------------------------------
-# THE MAPPING. Left: vosk-model-en-us-0.22 phone (X-SAMPA). Right: Codec War
-# phone id (ARPAbet, phonemes.ts line in the comment). Built row by row from
-# both inventories. Two Vosk vowels land on each of AH and ER because Codec War,
+# THE MAPPING. Left: vosk-model-en-us-0.22 phone (X-SAMPA). Right: (Codec War
+# phone id, duration factor). The id is ARPAbet with its phonemes.ts line in
+# the comment; the factor multiplies that phone's Codec War table duration and
+# is 1.0 on every row except the two Everett ruled on (2026-10-18), whose
+# reasons are in DURATION_REASONS just below. Built row by row from both
+# inventories. Two Vosk vowels land on each of AH and ER because Codec War,
 # like ARPAbet without stress digits, has one phone where X-SAMPA has two: the
 # stressed and unstressed forms. Codec War's own word list already writes
 # schwa as AH ("filament" F IH L AH M AH N T, phonemes.ts:68).
 # ------------------------------------------------------------------------------
-VOSK_TO_CODECWAR: Dict[str, str] = {
+VOSK_TO_CODECWAR: Dict[str, Tuple[str, float]] = {
     # vowels
-    "A": "AA",    # ɑ  father             phonemes.ts:19
-    "{": "AE",    # æ  cat                phonemes.ts:20
-    "V": "AH",    # ʌ  strut (stressed)   phonemes.ts:21
-    "@": "AH",    # ə  schwa (unstressed) phonemes.ts:21
-    "O": "AO",    # ɔ  thought            phonemes.ts:22
-    "aU": "AW",   # aʊ mouth              phonemes.ts:23
-    "aI": "AY",   # aɪ price              phonemes.ts:24
-    "E": "EH",    # ɛ  dress              phonemes.ts:25
-    "3`": "ER",   # ɝ  nurse (stressed)   phonemes.ts:26
-    "@`": "ER",   # ɚ  letter (unstressed) phonemes.ts:26
-    "eI": "EY",   # eɪ face               phonemes.ts:27
-    "I": "IH",    # ɪ  kit                phonemes.ts:28
-    "i": "IY",    # i  fleece             phonemes.ts:29
-    "oU": "OW",   # oʊ goat               phonemes.ts:30
-    "OI": "OY",   # ɔɪ choice             phonemes.ts:31
-    "U": "UH",    # ʊ  foot               phonemes.ts:32
-    "u": "UW",    # u  goose              phonemes.ts:33
+    "A": ("AA", 1.0),    # ɑ  father             phonemes.ts:19
+    "{": ("AE", 1.0),    # æ  cat                phonemes.ts:20
+    "V": ("AH", 1.0),    # ʌ  strut (stressed)   phonemes.ts:21
+    "@": ("AH", 1.0),    # ə  schwa (unstressed) phonemes.ts:21
+    "O": ("AO", 1.0),    # ɔ  thought            phonemes.ts:22
+    "aU": ("AW", 1.0),   # aʊ mouth              phonemes.ts:23
+    "aI": ("AY", 1.0),   # aɪ price              phonemes.ts:24
+    "E": ("EH", 1.0),    # ɛ  dress              phonemes.ts:25
+    "E:": ("EH", 1.625),  # ɛː long E: EH held long — see DURATION_REASONS["E:"]
+    "3`": ("ER", 1.0),   # ɝ  nurse (stressed)   phonemes.ts:26
+    "@`": ("ER", 1.0),   # ɚ  letter (unstressed) phonemes.ts:26
+    "eI": ("EY", 1.0),   # eɪ face               phonemes.ts:27
+    "I": ("IH", 1.0),    # ɪ  kit                phonemes.ts:28
+    "i": ("IY", 1.0),    # i  fleece             phonemes.ts:29
+    "oU": ("OW", 1.0),   # oʊ goat               phonemes.ts:30
+    "OI": ("OY", 1.0),   # ɔɪ choice             phonemes.ts:31
+    "U": ("UH", 1.0),    # ʊ  foot               phonemes.ts:32
+    "u": ("UW", 1.0),    # u  goose              phonemes.ts:33
     # stops
-    "b": "B",     # phonemes.ts:34
-    "d": "D",     # phonemes.ts:35
-    "g": "G",     # phonemes.ts:36
-    "p": "P",     # phonemes.ts:37
-    "t": "T",     # phonemes.ts:38
-    "k": "K",     # phonemes.ts:39
+    "b": ("B", 1.0),     # phonemes.ts:34
+    "d": ("D", 1.0),     # phonemes.ts:35
+    "g": ("G", 1.0),     # phonemes.ts:36
+    "p": ("P", 1.0),     # phonemes.ts:37
+    "t": ("T", 1.0),     # phonemes.ts:38
+    "4": ("D", 0.5),     # ɾ  flap (the t in "butter"): a shortened D — see DURATION_REASONS["4"]
+    "k": ("K", 1.0),     # phonemes.ts:39
     # fricatives
-    "f": "F",     # phonemes.ts:40
-    "v": "V",     # phonemes.ts:41
-    "T": "TH",    # θ thin   phonemes.ts:42
-    "D": "DH",    # ð this   phonemes.ts:43
-    "s": "S",     # phonemes.ts:44
-    "z": "Z",     # phonemes.ts:45
-    "S": "SH",    # ʃ        phonemes.ts:46
-    "Z": "ZH",    # ʒ        phonemes.ts:47
-    "h": "HH",    # phonemes.ts:48
+    "f": ("F", 1.0),     # phonemes.ts:40
+    "v": ("V", 1.0),     # phonemes.ts:41
+    "T": ("TH", 1.0),    # θ thin   phonemes.ts:42
+    "D": ("DH", 1.0),    # ð this   phonemes.ts:43
+    "s": ("S", 1.0),     # phonemes.ts:44
+    "z": ("Z", 1.0),     # phonemes.ts:45
+    "S": ("SH", 1.0),    # ʃ        phonemes.ts:46
+    "Z": ("ZH", 1.0),    # ʒ        phonemes.ts:47
+    "h": ("HH", 1.0),    # phonemes.ts:48
     # affricates
-    "tS": "CH",   # tʃ       phonemes.ts:49
-    "dZ": "JH",   # dʒ       phonemes.ts:50
+    "tS": ("CH", 1.0),   # tʃ       phonemes.ts:49
+    "dZ": ("JH", 1.0),   # dʒ       phonemes.ts:50
     # nasals
-    "m": "M",     # phonemes.ts:51
-    "n": "N",     # phonemes.ts:52
-    "N": "NG",    # ŋ        phonemes.ts:53
+    "m": ("M", 1.0),     # phonemes.ts:51
+    "n": ("N", 1.0),     # phonemes.ts:52
+    "N": ("NG", 1.0),    # ŋ        phonemes.ts:53
     # liquids, glides
-    "l": "L",     # phonemes.ts:54
-    "r": "R",     # phonemes.ts:55
-    "w": "W",     # phonemes.ts:56
-    "j": "Y",     # j yes    phonemes.ts:57
+    "l": ("L", 1.0),     # phonemes.ts:54
+    "r": ("R", 1.0),     # phonemes.ts:55
+    "w": ("W", 1.0),     # phonemes.ts:56
+    "j": ("Y", 1.0),     # j yes    phonemes.ts:57
     # silence is silence on both sides
-    "SIL": "SIL",  # phonemes.ts:18
+    "SIL": ("SIL", 1.0),  # phonemes.ts:18
+}
+
+#: Why the two rows that are not x 1.0 have the factor they have.
+DURATION_REASONS: Dict[str, str] = {
+    "4": (
+        "x 0.5. A flap is a single brief tap of the tongue, not a closure "
+        "held and released. Codec War's D is already its shortest phone, "
+        "0.05 s (phonemes.ts:35, tied with T); half of it, 0.025 s, keeps "
+        "D's own shape — the near-silent closure then the burst, which "
+        "synth.ts:51-52 lays out over whatever duration the phone is given "
+        "— compressed into a single tap. A chosen starting value, held until "
+        "Everett's own flaps are measured."
+    ),
+    "E:": (
+        "x 1.625. EH is 0.08 s in Codec War (phonemes.ts:25). Codec War's "
+        "own long vowels, EY and OW, are 0.13 s (phonemes.ts:27, :30); "
+        "0.08 x 1.625 = 0.13 s, so the long E is held exactly as long as "
+        "Codec War already holds its long vowels. Same formants as EH, so "
+        "the same vowel, held long. A chosen starting value, held until "
+        "Everett's own speech is measured."
+    ),
 }
 
 # ------------------------------------------------------------------------------
-# NOT MAPPED. Every lexicon phone with no Codec War counterpart. Hitting one
-# raises PhoneNotMapped. Mapping any of these to a neighbour (flap -> D or T,
-# E: -> EH) would be a pronunciation decision; that is Everett's call, not
-# this code's.
+# NOT MAPPED. Every lexicon phone with no Codec War counterpart: since
+# Everett's 2026-10-18 ruling, only the ten non-speech models. They are not
+# sounds of speech, so there is nothing for Codec War to make. Hitting one
+# raises PhoneNotMapped.
 # ------------------------------------------------------------------------------
 NOT_MAPPED: Dict[str, str] = {
-    "4": "alveolar flap (ɾ, the t/d in 'butter'); Codec War has no flap phone",
-    "E:": "long open-mid vowel (ɛː); Codec War has no long vowels",
     "BRH": "breath (non-speech model)",
     "CGH": "cough (non-speech model)",
     "LAUGHTER": "laughter (non-speech model)",
@@ -212,8 +250,11 @@ def strip_position(phone: str) -> str:
     return _POSITION.sub("", phone)
 
 
-def map_phone(vosk_phone: str, word: Optional[str] = None) -> str:
-    """One Vosk phone (marker already stripped) to its Codec War id, or PhoneNotMapped."""
+def map_phone(vosk_phone: str, word: Optional[str] = None) -> Tuple[str, float]:
+    """
+    One Vosk phone (marker already stripped) to (Codec War id, duration
+    factor), or PhoneNotMapped.
+    """
     try:
         return VOSK_TO_CODECWAR[vosk_phone]
     except KeyError:
@@ -290,6 +331,15 @@ class Lexicon:
         normalize_word). Uses the FIRST pronunciation in file order — the
         file's own order is the only ranking it carries. Raises
         WordNotInLexicon or PhoneNotMapped.
+        """
+        return [pid for pid, _ in self.phones_timed(word)]
+
+    def phones_timed(self, word: str) -> List[Tuple[str, float]]:
+        """
+        (Codec War id, duration factor) for each phone of `word`, first
+        pronunciation in file order. The factor is the mapping table's
+        (1.0 except the flap and the long E). Raises WordNotInLexicon or
+        PhoneNotMapped.
         """
         first = self.pronunciations(word)[0]
         return [map_phone(p, word) for p in first]
