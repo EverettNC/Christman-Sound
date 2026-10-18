@@ -115,9 +115,9 @@ class AudioSegment:
     """
     One analyzed span of audio.
 
-    `quality_score` is a heuristic composite, not a measurement of anything
-    physical. It is documented as such in `_analyze_quality` so nobody reads it
-    as calibrated.
+    `quality_score` is a weighted sum with chosen weights (a fixed rule), not a
+    measurement of anything physical. It is documented as such in
+    `_analyze_quality` so nobody reads it as calibrated.
     """
 
     audio: np.ndarray
@@ -407,8 +407,10 @@ class AudioProcessor:
         """
         Score each segment 0-100.
 
-        HEURISTIC, NOT A MEASUREMENT. The weights and ranges below were chosen,
-        not derived from any evaluation. Do not report this number as an
+        A FIXED RULE, NOT A MEASUREMENT. The weights and ranges below are chosen
+        starting values, not derived from any evaluation (reason: nothing in this
+        repository has evaluated them against labelled recordings). They are held
+        until client data replaces them. Do not report this number as an
         accuracy, a MOS, or anything calibrated — that is the fabricated-metrics
         pattern REMEDIATION Phase 1 lists for `base_synthesizer.py:99` and
         `tonescore_engine.py:102`.
@@ -448,7 +450,7 @@ class AudioProcessor:
                 float(np.mean([s.speech_ratio for s in segments])), 4
             ),
             "total_duration": round(sum(s.duration for s in segments), 2),
-            "quality_score_is_heuristic": True,
+            "quality_score_weights_are_chosen": True,
         }
 
 

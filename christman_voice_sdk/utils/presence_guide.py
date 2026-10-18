@@ -6,7 +6,7 @@
 Detects when an AAC / nonverbal user is in a state that needs *presence*
 rather than problem-solving, and shapes response guidance accordingly.
 
-NOT a clinical instrument. A heuristic guard against toxic positivity,
+NOT a clinical instrument. A phrase-list guard against toxic positivity,
 premature problem-solving, and minimization in the generated voice surface.
 When in doubt: stay steady, witness, do not rush.
 
@@ -492,7 +492,7 @@ class PresenceGuide:
             "passes_presence_check": not violations,
             "violations": violations,
             "checked_for_solving": human_state in self._NO_SOLVE_STATES,
-            "is_heuristic": True,
+            "is_phrase_list_check": True,
         }
 
 

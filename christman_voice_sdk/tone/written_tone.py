@@ -13,7 +13,7 @@ firm-and-clear, or is it venting at someone?" and the USER decides.
 
 NON-CLAIMS (Cardinal Rule #13: no fabricated engines):
 
-  * Heuristic, lexicon-based. NOT a clinical or forensic instrument, and MUST
+  * Word lists and fixed rules. NOT a clinical or forensic instrument, and MUST
     NOT be used to evaluate anyone's character, mental state, or intent.
   * Scores are explainable feature counts on a 0..1 scale. They are not
     calibrated probabilities.

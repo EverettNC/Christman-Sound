@@ -5,7 +5,7 @@ Layer 1: Physiological — pitch, jitter, shimmer, HNR (parselmouth)
 Layer 2: Prosody — rhythm, pace, pauses
 Layer 3: Paralinguistics — see the note below; MOSTLY NOT IMPLEMENTED
 Layer 4: Discrete emotions — see the note below; RULE-BASED, NOT A CLASSIFIER
-Layer 5: ToneScore composite — heuristic
+Layer 5: ToneScore composite — weighted sum with chosen weights
 
 Used by: Giuseppe, Inferno, AlphaVox, Sierra
 
@@ -247,7 +247,7 @@ class EmotionHypotheses:
 
 
 class ToneScoreCalculator:
-    """Layer 5 composite. HEURISTIC."""
+    """Layer 5 composite. A weighted sum with chosen weights, not fitted."""
 
     WEIGHTS: Dict[str, float] = {"arousal": 0.40, "valence": 0.35, "intensity": 0.25}
 
@@ -512,7 +512,7 @@ class PraatToneAnalyzer:
             "layer_5_tonescore": {
                 "score": tone_score, "score_known": tone_score is not None,
                 "arousal": arousal, "valence": valence, "intensity": intensity,
-                "composite_is_heuristic": True,
+                "composite_weights_are_chosen": True,
                 "composite_weights": ToneScoreCalculator.WEIGHTS,
                 "response_mode": ToneScoreCalculator.get_response_mode(tone_score),
             },
@@ -541,7 +541,7 @@ class PraatToneAnalyzer:
     def _valence(
         physio: PhysiologicalFeatures, hyp: EmotionHypotheses
     ) -> Optional[float]:
-        """Affine map over rule outputs. HEURISTIC, and weak."""
+        """Affine map over rule outputs. A fixed rule, and weak."""
         if not hyp.scores:
             return None
         positive = hyp.scores.get("joy", 0.0) * 100.0

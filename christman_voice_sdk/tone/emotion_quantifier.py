@@ -162,7 +162,7 @@ class EmotionalMetrics:
         data["coherence_level"] = self.coherence_level.value
         data["gesture_emotion"] = self.gesture_emotion.value
         data["timestamp"] = self.timestamp.isoformat()
-        data["scores_are_heuristic"] = True
+        data["scores_are_word_list_rules"] = True
         return data
 
 
@@ -235,8 +235,9 @@ class EmotionAnalysisService:
     """
     Text-side emotional quantification.
 
-    All scores are heuristic. This is not a clinical instrument and must not be
-    used to evaluate anyone's character, mental state, or intent.
+    All scores come from word lists with chosen weights and fixed rules. This
+    is not a clinical instrument and must not be used to evaluate anyone's
+    character, mental state, or intent.
     """
 
     def __init__(self) -> None:
@@ -404,7 +405,11 @@ class EmotionAnalysisService:
         return bool(hits), hits, bool(negated)
 
     def _coherence(self, text: str) -> Tuple[float, CoherenceLevel]:
-        """Heuristic coherence. Chosen weights, not derived."""
+        """
+        Coherence by fixed rules: share of short words, long text with few
+        sentence breaks, dashes or ellipses, word repetition. Chosen weights,
+        not derived.
+        """
         stripped = (text or "").strip()
         if len(stripped) < 5:
             return 0.8, CoherenceLevel.COHERENT
@@ -533,7 +538,7 @@ class EmotionAnalysisService:
                 "stress": self.baseline_stress,
                 "coherence": self.baseline_coherence,
             },
-            "scores_are_heuristic": True,
+            "scores_are_word_list_rules": True,
             "history_depth": len(self.recent_assessments),
             "timestamp": metrics.timestamp.isoformat(),
         }

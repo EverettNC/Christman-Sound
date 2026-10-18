@@ -34,7 +34,7 @@ WHAT CHANGED AND WHY
 3. THE FALLBACK WAS INDISTINGUISHABLE FROM THE REAL ENGINE.
 
    `analyze_user_input` used `ToneEngine` when importable and a keyword
-   heuristic when not, returning the same shape either way. A caller could not
+   list when not, returning the same shape either way. A caller could not
    tell which had run. `source` is now on every result.
 
 4. CANNED EMPATHY WAS INJECTED INTO RESPONSES.
