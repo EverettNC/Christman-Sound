@@ -2,10 +2,10 @@
 Christman Multi-Layer Tone Analyzer
 
 Layer 1: Physiological (pitch, jitter, shimmer, HNR)
-Layer 2: VAD (valence, arousal, dominance) — heuristic
+Layer 2: VAD (valence, arousal, dominance) — fixed rules with chosen weights
 Layer 3: Discrete emotions — from a classifier whose labels are read from it
 Layer 4: Interpretation
-Layer 5: ToneScore composite — heuristic
+Layer 5: ToneScore composite — weighted sum with chosen weights
 
 Patent Pending
 © 2026 Everett Nathaniel Christman & Misty Gail Christman
@@ -171,7 +171,7 @@ class ToneAnalysisResult:
             "emotion_intensity": self.emotion_intensity,
             "tone_score": self.tone_score,
             "tone_score_known": self.tone_score is not None,
-            "composite_is_heuristic": True,
+            "composite_weights_are_chosen": True,
             "composite_weights": ToneScoreCalculator.WEIGHTS,
             "interpretation": self.interpretation,
             "response_mode": self.response_mode,
@@ -182,7 +182,11 @@ class ToneAnalysisResult:
 
 
 class ToneScoreCalculator:
-    """Composite. HEURISTIC — weights chosen, not fitted."""
+    """
+    Composite. A weighted sum; the weights are chosen starting values, not
+    fitted (reason: carried over from the original engine; nothing in this
+    repository has fitted them). Held until client data replaces them.
+    """
 
     WEIGHTS: Dict[str, float] = {"arousal": 0.40, "valence": 0.35, "intensity": 0.25}
 
@@ -355,7 +359,7 @@ class MultiLayerToneAnalyzer:
             "layer_5_tonescore": {
                 "score": r.tone_score, "score_known": r.tone_score is not None,
                 "intensity": r.emotion_intensity, "response_mode": r.response_mode,
-                "composite_is_heuristic": True,
+                "composite_weights_are_chosen": True,
             },
             "label_set": r.label_set,
             "notes": r.notes,
@@ -422,7 +426,7 @@ class MultiLayerToneAnalyzer:
         self, audio: np.ndarray, sample_rate: int,
         jitter: Optional[float], pitch: Optional[np.ndarray],
     ) -> Optional[float]:
-        """Heuristic 0-100. None when pitch is unmeasured (was: 50.0)."""
+        """Fixed rule, chosen weights, 0-100. None when pitch is unmeasured (was: 50.0)."""
         if pitch is None:
             return None
         voiced = pitch[pitch > 0]
@@ -447,7 +451,7 @@ class MultiLayerToneAnalyzer:
         self, audio: np.ndarray, sample_rate: int, hnr: Optional[float]
     ) -> Optional[float]:
         """
-        Heuristic 0-100, and WEAK.
+        Fixed rule with chosen weights, 0-100, and WEAK.
 
         Valence is poorly recoverable from acoustics. This is a spectral proxy,
         not a pleasantness reading. See prosody.py for why.

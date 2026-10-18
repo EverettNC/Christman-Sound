@@ -45,11 +45,11 @@ WHAT CHANGED AND WHY
 
        tone_score = 0.4*arousal + 0.35*valence + 0.25*emotion_intensity
 
-   arousal and valence are 0-100 heuristics; emotion_intensity was
+   arousal and valence are 0-100 scores from fixed rules; emotion_intensity was
    `max(probability)*100`, a confidence. Adding a confidence to an energy
    estimate produces a number with no unit. The composite is retained because
    downstream depends on it, but it now carries
-   `composite_is_heuristic: True` and its weights, and it is None whenever any
+   `composite_weights_are_chosen: True` and its weights, and it is None whenever any
    input is unavailable rather than substituting a default.
 
 5. `import torchaudio` sat inside `analyze_tone` (:176) and again inside
@@ -191,7 +191,7 @@ class ToneResult:
             "emotion_confidence": self.emotion_confidence,
             "tone_score": self.tone_score,
             "tone_score_known": self.tone_score is not None,
-            "composite_is_heuristic": True,
+            "composite_weights_are_chosen": True,
             "composite_weights": ToneScoreEngine.COMPOSITE_WEIGHTS,
             "interpretation": self.interpretation,
             "response_mode": self.response_mode,
@@ -206,17 +206,19 @@ class ToneScoreEngine:
     Multi-layer tone detection.
 
     Layer 1: native DSP features (pitch, jitter, shimmer, HNR)
-    Layer 2: arousal / valence / dominance heuristics
+    Layer 2: arousal / valence / dominance by fixed rules with chosen weights
     Layer 3: discrete emotions from a classifier whose labels are read from it
-    Layer 4: composite, explicitly labelled heuristic
+    Layer 4: composite, explicitly labelled as chosen weights
 
     No accuracy is claimed. This engine has not been evaluated against a
     labelled corpus in this repository. If that changes, put the harness in the
     repo and cite it here — not a number in a docstring.
     """
 
-    #: Composite weights. HEURISTIC — chosen, not fitted. Exposed on every
-    #: result so they cannot be read as derived.
+    #: Composite weights. Chosen starting values, not fitted (reason: carried
+    #: over from the original engine; nothing in this repository has fitted
+    #: them). Held until client data replaces them. Exposed on every result so
+    #: they cannot be read as derived.
     COMPOSITE_WEIGHTS: Dict[str, float] = {
         "arousal": 0.40, "valence": 0.35, "emotion_intensity": 0.25,
     }
@@ -412,7 +414,7 @@ class ToneScoreEngine:
         self, y: np.ndarray, sr: int, jitter: Optional[float], pitch: Optional[np.ndarray]
     ) -> Optional[float]:
         """
-        Energy + tempo + pitch + jitter, 0-100. HEURISTIC.
+        Energy + tempo + pitch + jitter, 0-100. A fixed rule with chosen weights.
 
         Returns None when pitch is unavailable rather than substituting 50 —
         the predecessor's `pitch_score = 50` on failure made an unmeasured
@@ -443,7 +445,8 @@ class ToneScoreEngine:
 
     def _valence(self, y: np.ndarray, sr: int, hnr: Optional[float]) -> Optional[float]:
         """
-        Brightness + HNR + smoothness, 0-100. HEURISTIC, and weak.
+        Brightness + HNR + smoothness, 0-100. A fixed rule with chosen weights,
+        and weak.
 
         Valence is poorly recoverable from acoustics — see prosody.py. Treat
         this as a rough energy-of-spectrum proxy, not a pleasantness reading.
@@ -534,7 +537,7 @@ class ToneScoreEngine:
         emotion_intensity: Optional[float],
     ) -> Optional[float]:
         """
-        Weighted composite, 0-100. HEURISTIC.
+        Weighted composite, 0-100. Chosen weights, not fitted.
 
         None if any input is unmeasured. The predecessor defaulted missing
         inputs to 50 and produced a score indistinguishable from a real one.
