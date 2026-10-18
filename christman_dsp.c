@@ -199,13 +199,23 @@ int christman_lpc(const float* audio, size_t length, int order, float* out_a) {
 // AudioToolbox framework is linked by scripts/build_dsp.py.
 //
 // Contract: blocking. Plays `length` interleaved float32 samples at
-// `sample_rate` with `channels` channels and returns when the last sample
-// has been handed to the device. Returns 0 on success; nonzero means
-// NOTHING was played, with the reason in the code:
+// `sample_rate` with `channels` channels and returns when the device has
+// played out the last sample. Returns 0 only then. Nonzero means the clip
+// was NOT played in full, with the reason in the code. Codes 1-5 and 7
+// come before any sample reaches the device; 6 and 8 come after part of
+// the clip may already have been heard:
 //   1  bad arguments            2  no audio system on this platform
 //   3  OS audio library absent  4  device could not be opened
 //   5  device rejected format   6  write failed mid-stream
-//   7  allocation failed
+//   7  allocation failed        8  device failed while playing out the end
+//
+// (2026-10-18) THE LAST BUFFER HAS TO DRAIN, AND THE DEVICE HAS TO SAY SO.
+// On Linux the result of snd_pcm_drain was thrown away, so a device that
+// failed while playing out the last buffered audio (unplugged, suspended)
+// still returned 0. It now returns 8. On Darwin a queue that stopped on
+// its own, before this code asked it to, still set `finished` and returned
+// 0, and a failed AudioQueueEnqueueBuffer was counted as frames handed
+// over. Both now return 6.
 // `christman_play_backend` names the backend ("alsa", "coreaudio", or
 // "none") so a caller can report what it is about to use, not guess.
 // =============================================================================
@@ -222,20 +232,22 @@ typedef struct {
     int channels;
     int stopping;   /* async stop requested once all audio was handed over */
     int finished;   /* CoreAudio reported the queue is no longer running */
+    int failed;     /* a buffer could not be enqueued; the clip is not whole */
     pthread_mutex_t lock;
     pthread_cond_t  cond;
 } cm_play_state;
 
 /* Fill one buffer. Returns the number of frames written (0 = nothing left). */
 static size_t cm_fill(cm_play_state* st, AudioQueueRef aq, AudioQueueBufferRef buf) {
+    if (st->failed) return 0;   /* the clip is already broken; hand over nothing more */
     size_t frames_left = st->frames_total - st->frames_done;
     size_t frames_fit  = buf->mAudioDataBytesCapacity / (sizeof(float) * st->channels);
     size_t n = frames_left < frames_fit ? frames_left : frames_fit;
     if (n == 0) return 0;
     memcpy(buf->mAudioData, st->data + st->frames_done * st->channels, n * st->channels * sizeof(float));
     buf->mAudioDataByteSize = (UInt32)(n * st->channels * sizeof(float));
+    if (AudioQueueEnqueueBuffer(aq, buf, 0, NULL) != noErr) { st->failed = 1; return 0; }
     st->frames_done += n;
-    AudioQueueEnqueueBuffer(aq, buf, 0, NULL);
     return n;
 }
 
@@ -247,7 +259,9 @@ static size_t cm_fill(cm_play_state* st, AudioQueueRef aq, AudioQueueBufferRef b
 static void cm_aq_callback(void* user, AudioQueueRef aq, AudioQueueBufferRef buf) {
     cm_play_state* st = (cm_play_state*)user;
     if (cm_fill(st, aq, buf) == 0 && !st->stopping) {
+        pthread_mutex_lock(&st->lock);
         st->stopping = 1;
+        pthread_mutex_unlock(&st->lock);
         AudioQueueStop(aq, false);
     }
 }
@@ -270,7 +284,7 @@ int christman_play(const float* audio, size_t length, int sample_rate, int chann
     if (!audio || length == 0 || sample_rate <= 0 || channels < 1 || channels > 2 || length % channels) return 1;
     cm_play_state st;
     st.data = audio; st.frames_total = length / channels; st.frames_done = 0;
-    st.channels = channels; st.stopping = 0; st.finished = 0;
+    st.channels = channels; st.stopping = 0; st.finished = 0; st.failed = 0;
     pthread_mutex_init(&st.lock, NULL); pthread_cond_init(&st.cond, NULL);
 
     AudioStreamBasicDescription fmt;
@@ -300,18 +314,28 @@ int christman_play(const float* audio, size_t length, int sample_rate, int chann
         if (AudioQueueAllocateBuffer(aq, bytes_per_buf, &bufs[i]) != noErr) { AudioQueueDispose(aq, true); return 7; }
         if (cm_fill(&st, aq, bufs[i]) == 0) break;
     }
+    if (st.failed) {                              /* a primed buffer was refused */
+        AudioQueueDispose(aq, true);
+        pthread_mutex_destroy(&st.lock); pthread_cond_destroy(&st.cond);
+        return 6;
+    }
     if (AudioQueueStart(aq, NULL) != noErr) { AudioQueueDispose(aq, true); return 4; }
     if (st.frames_done == st.frames_total) {      /* whole clip fit in the primed buffers */
+        pthread_mutex_lock(&st.lock);
         st.stopping = 1;
+        pthread_mutex_unlock(&st.lock);
         AudioQueueStop(aq, false);                /* stops after they have played */
     }
 
     pthread_mutex_lock(&st.lock);
     while (!st.finished) pthread_cond_wait(&st.cond, &st.lock);
+    /* Whole only if every frame was enqueued and the queue stopped because we
+     * asked it to after the last one. Anything else stopped it early. */
+    int whole = st.stopping && !st.failed && st.frames_done == st.frames_total;
     pthread_mutex_unlock(&st.lock);
     AudioQueueDispose(aq, true);
     pthread_mutex_destroy(&st.lock); pthread_cond_destroy(&st.cond);
-    return 0;
+    return whole ? 0 : 6;
 }
 
 #elif defined(__linux__)
@@ -369,7 +393,9 @@ int christman_play(const float* audio, size_t length, int sample_rate, int chann
         }
         done += (size_t)w;
     }
-    p_drain(pcm);
+    /* Blocks until the device has played what it holds. Its failure is ours. */
+    int drained = p_drain(pcm);
+    if (status == 0 && drained < 0) status = 8;
     p_close(pcm);
     free(buf);
     dlclose(lib);

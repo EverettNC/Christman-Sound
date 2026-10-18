@@ -102,7 +102,11 @@ class DSPUnavailable(RuntimeError):
 
 
 class PlaybackUnavailable(RuntimeError):
-    """The engine could not play. Nothing reached the speaker. The reason is in the message."""
+    """
+    The engine did not play the whole clip. The reason is in the message.
+    Codes 6 and 8 come after part of the clip may already have been heard;
+    every other code comes before any sample reaches the device.
+    """
 
 
 class SynthUnavailable(DSPUnavailable):
@@ -138,6 +142,7 @@ _PLAY_REASONS = {
     5: "the audio device rejected the format",
     6: "the write to the device failed mid-stream",
     7: "allocation failed",
+    8: "the audio device failed while playing out the end of the clip",
 }
 
 
@@ -357,8 +362,9 @@ class ChristmanDSP:
     def play(self, y: Any, sample_rate: int, channels: int = 1) -> None:
         """
         Play interleaved float32 samples in [-1, 1] through the engine. Blocks
-        until the last sample is handed to the device. Plays or raises
-        `PlaybackUnavailable`; there is no return value that means "maybe".
+        until the device has played out the last sample (christman_play
+        returned 0). Plays the whole clip or raises `PlaybackUnavailable`;
+        there is no return value that means "maybe".
         """
         lib = self._require()
         _keep, ptr, n = _c_floats(y)
