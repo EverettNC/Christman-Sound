@@ -66,7 +66,7 @@ Measured numbers from the branch:
 - The whole path ran with numpy, scipy, soundfile, sounddevice, pygame and librosa blocked: text, then lexicon, then christman_synth, then the cache WAV, then the WAV reader that feeds christman_play. None of them loaded.
 - The stdlib WAV reader returns exactly the float32 values the old numpy reader gave. Checked for 16-bit, 32-bit, 8-bit and IEEE-float WAVs.
 
-The 149.3 Hz value came from this session's measurement of his 26 phrases. It was not measured again in this review.
+The 149.3 Hz value came from this session's measurement of AlphaVox's 26 recorded phrases. It was not measured again in this review.
 
 ## 3. Findings, most serious first
 
@@ -85,12 +85,12 @@ The 149.3 Hz value came from this session's measurement of his 26 phrases. It wa
   - So none of these lines can run unless something imports core.py.
 - What still points readers at it: christman_sound/__init__.py:11-13 still says AlphaVox's routers import `christman_sound.core`. That is no longer true, and it invites someone to wire core.py back in.
 
-### 2. Free text now has a voice, but it is Codec War's formant voice at Everett's pitch, not Everett's voice
+### 2. Free text now has a voice, but it is Codec War's formant voice at AlphaVox's measured pitch, synthesized by Everett's own synthesizer, not yet AlphaVox's voice
 
 **Decision for Everett.**
 
-- christman_sound/synth.py:35-36 says this in its own words.
-- AlphaVox's standing rule: AlphaVox speaks in Everett's voice or it does not speak. Its CLAUDE.md also names the engines it accepts, "xtts" or "recorded".
+- christman_sound/synth.py:35-39 says this in its own words.
+- AlphaVox's standing rule: AlphaVox speaks in AlphaVox's own voice or it does not speak. (When this review was written the rule read "in Everett's voice"; Everett corrected it on 2026-10-18: the recorded voice is AlphaVox's, the synthesizer is his.) Its CLAUDE.md also names the engines it accepts, "xtts" or "recorded".
 - Once CHRISTMAN_LEXICON_PATH is set on the Mac, every AlphaVox path that reaches voice_synthesis.synthesize_speech will produce audio reported as engine "christman". Those paths include AlphaVox's tts router, stream_gateway, and sound_package.speak.
 - Whether "christman" passes AlphaVox's impostor-voice gate is his ruling. Until he rules, leave CHRISTMAN_LEXICON_PATH unset on any machine a client uses. With it unset the mouth answers with LexiconUnavailable and makes no sound.
 
@@ -229,7 +229,7 @@ Outside the new path, the one place found that can report success falsely is the
 ## 5. Waiting on Everett
 
 1. Which core.py stands: 99a6cce, his text, on this branch; or f546841's edit, on main.
-2. Whether engine "christman" (Codec War's formant voice at 149.3 Hz) may speak to AlphaVox clients, or stays off until it is shaped toward his voice.
+2. Whether engine "christman" (Codec War's formant voice at 149.3 Hz) may speak to AlphaVox clients, or stays off until it is shaped toward AlphaVox's recorded voice.
 3. Feeding the measured formants (christman_sound/formants.py) into christman_synth's table. This is the next step, and it has not been started.
 4. Whether to route speech_response, Shorty, the orchestrator, the capture client and the OCR read-aloud to the mouth.
 5. Emotion: whether any emotion maps onto pitch, rate or contour.

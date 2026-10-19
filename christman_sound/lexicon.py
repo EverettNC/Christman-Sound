@@ -63,7 +63,7 @@ two rows use one other than 1.0, shown in the table with their reasons:
 The factor multiplies the phone's Codec War table duration, on top of Codec
 War's own word-position factor (1.05 at the edges of a word, 0.95 inside).
 These are chosen starting values with their reasons written beside them,
-held until measurements of Everett's own speech replace them.
+held until measurements of AlphaVox's recorded voice replace them.
 """
 
 from __future__ import annotations
@@ -208,7 +208,7 @@ DURATION_REASONS: Dict[str, str] = {
         "D's own shape — the near-silent closure then the burst, which "
         "synth.ts:51-52 lays out over whatever duration the phone is given "
         "— compressed into a single tap. A chosen starting value, held until "
-        "Everett's own flaps are measured."
+        "AlphaVox's own flaps are measured."
     ),
     "E:": (
         "x 1.625. EH is 0.08 s in Codec War (phonemes.ts:25). Codec War's "
@@ -216,7 +216,7 @@ DURATION_REASONS: Dict[str, str] = {
         "0.08 x 1.625 = 0.13 s, so the long E is held exactly as long as "
         "Codec War already holds its long vowels. Same formants as EH, so "
         "the same vowel, held long. A chosen starting value, held until "
-        "Everett's own speech is measured."
+        "AlphaVox's recorded voice is measured."
     ),
 }
 
