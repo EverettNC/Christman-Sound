@@ -21,7 +21,7 @@ WHAT CHANGED AND WHY
 
 4. NO FOLDER IN THE WORKING DIRECTORY ON CONSTRUCTION (2026-10-28, Lane 6).
    `VoicepackBuilder()` made data/voicepacks under whatever directory the
-   process started in, just by being built. The default is now the user data
+   process started in, just by being built. The default is now the SDK's data
    folder ($CHRISTMAN_AI_HOME/voice_sdk/voicepacks, default
    ~/.christman_ai/voice_sdk/voicepacks), and it is created when a voicepack
    is built or loaded, not before.
@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..audio.config import user_data_root
+from ..audio.config import sdk_data_root
 from ..timbre.timbre_modeler import TimbreModeler, VoiceProfile
 from .logger import get_logger
 
@@ -94,7 +94,7 @@ def check_members(zipf: zipfile.ZipFile, dest: Path) -> None:
 
 
 def default_voicepack_dir() -> Path:
-    return user_data_root() / "voice_sdk" / "voicepacks"
+    return sdk_data_root() / "voice_sdk" / "voicepacks"
 
 
 @dataclass

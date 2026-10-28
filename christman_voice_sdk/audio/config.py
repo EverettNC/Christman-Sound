@@ -44,7 +44,7 @@ Removed (quoted from main 1100f72):
         for directory in (self.models_dir, self.data_dir, self.logs_dir):
             directory.mkdir(parents=True, exist_ok=True)
 
-The three folders now live under the user data folder,
+The three folders now live under the SDK's data folder,
 `$CHRISTMAN_AI_HOME/voice_sdk` (default `~/.christman_ai/voice_sdk`, beside the
 logs, voice profiles and voice cache the SDK already keeps there). Building a
 Config creates nothing. A caller that needs one calls `config.ensure_dir(...)`,
@@ -64,8 +64,8 @@ from dataclasses import dataclass
 import yaml
 
 
-def user_data_root() -> Path:
-    """The SDK's user data folder: $CHRISTMAN_AI_HOME, else ~/.christman_ai."""
+def sdk_data_root() -> Path:
+    """The SDK's data folder: $CHRISTMAN_AI_HOME, else ~/.christman_ai."""
     raw = os.environ.get("CHRISTMAN_AI_HOME")
     return Path(raw).expanduser() if raw else Path.home() / ".christman_ai"
 
@@ -127,7 +127,7 @@ class Config:
             self._config = self._get_default_config()
 
         # Paths only. Nothing is created until a caller asks (ensure_dir).
-        self.data_root = user_data_root() / "voice_sdk"
+        self.data_root = sdk_data_root() / "voice_sdk"
         self.models_dir = self.data_root / "models"
         self.data_dir = self.data_root / "data"
         self.logs_dir = self.data_root / "logs"
