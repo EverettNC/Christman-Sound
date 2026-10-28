@@ -1,6 +1,29 @@
 """
 Timbre Modeling Module - Stage 2: Base Voice Construction
 
+WHAT CHANGED AND WHY (2026-10-28, second change) — ONE WAY TO MEASURE
+---------------------------------------------------------------------
+Lane 2 made christman_voice_sdk/tone/voice_measure.py the one place the SDK
+measures a voice, and named Praat's numbers for what they are:
+jitter_local_pct, shimmer_local_pct (percent) and hnr_db. This module still
+had its own copies: a loader of the C library, a YIN contour, a frame LPC
+formant reader, and a jitter, shimmer and HNR path through
+tonescore_analyzer that converted the percentages back to fractions under
+the old names. A second copy drifts from the first, and the next rename would
+have broken it with no test to say so. Now:
+
+  pitch        voice_measure.pitch_contour (christman_yin, 40 ms frames
+               every 10 ms, at the recording's own rate)
+  jitter, shimmer, HNR
+               voice_measure.voice_quality (Praat, standard voice-report
+               settings), under its own keys and units
+  formants     christman_sound.formants.measure_formants
+  breath       Praat's CPPS (measure_cpp, below; no other module measures it)
+
+measure_voice_quality returns jitter_local_pct, shimmer_local_pct, hnr_db and
+cpp_db. VoiceProfile carries the same names. tests/test_timbre_modeler.py
+runs it on AlphaVox's verified phrases, so a renamed key fails a test.
+
 WHAT CHANGED AND WHY (2026-10-28) — REAL MEASUREMENTS, OR A REFUSAL
 --------------------------------------------------------------------
 Measured on AlphaVox's 26 recorded phrases (Reviewer A, 2026-10-28), this
@@ -39,87 +62,29 @@ Older notes:
 from __future__ import annotations
 
 import json
-import logging
+
 import math
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from christman_sound.formants import AudioTooShortError, measure_formants
+
 from .logger import get_logger
 from ..audio.audio_processor import AudioSegment
+from ..tone.voice_measure import PraatUnavailable, pitch_contour, read_wav, voice_quality
 
 logger = get_logger(__name__)
 
-#: The pitch the contour searches for: 50 to 500 Hz, every speaking voice.
-F0_LOW_HZ = 50.0
-F0_HIGH_HZ = 500.0
-#: Formant search: roots above 90 Hz (below is the glottal source, not a
-#: resonance) and narrower than 400 Hz (wider is not a formant peak).
-FORMANT_MIN_HZ = 90.0
-FORMANT_MAX_BW_HZ = 400.0
+#: The keys measure_voice_quality returns, each in the unit its name says.
+QUALITY_KEYS = ("jitter_local_pct", "shimmer_local_pct", "hnr_db", "cpp_db")
 
 
 class VoiceQualityUnmeasured(ValueError):
     """A voice-quality measure could not be made. Its name and the reason are in the message."""
-
-
-def _dsp():
-    from christman_sound.dsp import get_dsp  # the one loader
-
-    dsp = get_dsp()
-    if not dsp.available:
-        from christman_sound.dsp import DSPUnavailable
-
-        raise DSPUnavailable(dsp.error or "christman_dsp not loaded")
-    return dsp
-
-
-def get_pitch_contour_native(audio_array: np.ndarray, sample_rate: int = 16000, threshold: float = 0.1) -> np.ndarray:
-    """YIN pitch per 2048-sample frame (hop 512) through christman_yin; 0 where unvoiced. Raises DSPUnavailable."""
-    dsp = _dsp()
-    frame_length, hop_length = 2048, 512
-    x = np.asarray(audio_array, dtype=np.float32).reshape(-1)
-    if len(x) < frame_length:
-        return np.array([], dtype=np.float32)
-    num_frames = 1 + (len(x) - frame_length) // hop_length
-    return np.array([dsp.yin(x[i * hop_length:i * hop_length + frame_length], sample_rate, threshold)
-                     for i in range(num_frames)], dtype=np.float32)
-
-
-def get_lpc_native(audio_array: np.ndarray, order: int) -> Optional[np.ndarray]:
-    """LPC polynomial [1, a1, ...] of one frame through christman_lpc, or None for a silent frame."""
-    return _dsp().lpc_polynomial(np.asarray(audio_array, dtype=np.float32), order)
-
-
-def formants_of(audio: np.ndarray, sample_rate: int) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-    """Median F1, F2, F3 over the voiced 25 ms frames of `audio`, or None for one that was never found."""
-    x = np.asarray(audio, dtype=np.float64).reshape(-1)
-    win = int(0.025 * sample_rate)
-    hop = int(0.010 * sample_rate)
-    order = 2 + sample_rate // 1000
-    found: List[List[float]] = [[], [], []]
-    dsp = _dsp()
-    ham = np.hamming(win)
-    for start in range(0, len(x) - win, hop):
-        frame = x[start:start + win]
-        if dsp.yin(frame.astype(np.float32), sample_rate, 0.15) <= 0:
-            continue
-        emph = np.append(frame[0], frame[1:] - 0.97 * frame[:-1]) * ham
-        a = dsp.lpc_polynomial(emph.astype(np.float32), order)
-        if a is None:
-            continue
-        roots = np.roots(a)
-        roots = roots[np.imag(roots) > 0]
-        freqs = np.angle(roots) * sample_rate / (2 * np.pi)
-        bws = -np.log(np.abs(roots)) * sample_rate / np.pi
-        keep = sorted(f for f, b in zip(freqs, bws)
-                      if FORMANT_MIN_HZ < f < sample_rate / 2 - 50 and b < FORMANT_MAX_BW_HZ)
-        for i in range(min(3, len(keep))):
-            found[i].append(float(keep[i]))
-    return tuple(float(np.median(v)) if v else None for v in found)  # type: ignore[return-value]
 
 
 def measure_cpp(path: str) -> Optional[float]:
@@ -128,7 +93,7 @@ def measure_cpp(path: str) -> Optional[float]:
         import parselmouth
         from parselmouth.praat import call
     except ImportError as exc:
-        raise VoiceQualityUnmeasured(f"cpp: parselmouth is not installed ({exc})") from exc
+        raise VoiceQualityUnmeasured(f"cpp_db: parselmouth is not installed ({exc})") from exc
     snd = parselmouth.Sound(path)
     pc = call(snd, "To PowerCepstrogram", 60, 0.002, 5000, 50)
     v = call(pc, "Get CPPS", "yes", 0.02, 0.0005, 60, 330, 0.05, "Parabolic", 0.001, 0.05, "Exponential decay", "Robust")
@@ -136,32 +101,31 @@ def measure_cpp(path: str) -> Optional[float]:
     return None if math.isnan(v) else v
 
 
-def measure_voice_quality(path: str) -> Dict[str, Optional[float]]:
+def measure_voice_quality(path: str) -> Dict[str, Any]:
     """
-    Jitter (local, fraction), shimmer (local, fraction) and HNR (cc, dB) by
-    Praat, through the SDK's Praat path, and CPPS (dB). A value Praat cannot
-    measure is None, never a default.
+    Jitter (local, %), shimmer (local, %) and HNR (dB) by Praat through
+    voice_measure.voice_quality, and CPPS (dB). Keys: QUALITY_KEYS, plus
+    glottal_periods and reasons (why a value is None). A value Praat cannot
+    measure is None, never a default. No Praat at all raises
+    VoiceQualityUnmeasured.
     """
-    from ..tone.tonescore_analyzer import PraatToneAnalyzer
-
-    phys = PraatToneAnalyzer().extract_physiological(path)
-    if not phys.available:
-        raise VoiceQualityUnmeasured(f"jitter, shimmer, hnr: {phys.reason}")
-    return {"jitter": phys.jitter, "shimmer": phys.shimmer, "hnr_db": phys.hnr, "cpp_db": measure_cpp(path),
-            "pitch_mean_hz": phys.pitch_mean}
+    y, sr = read_wav(path)
+    try:
+        q = voice_quality(y, sr)
+    except PraatUnavailable as exc:
+        raise VoiceQualityUnmeasured(f"jitter_local_pct, shimmer_local_pct, hnr_db: {exc}") from exc
+    return {"jitter_local_pct": q.jitter_local_pct, "shimmer_local_pct": q.shimmer_local_pct, "hnr_db": q.hnr_db,
+            "cpp_db": measure_cpp(path), "glottal_periods": q.glottal_periods, "reasons": dict(q.reasons)}
 
 
 def measure_pitch(path: str) -> Dict[str, Optional[float]]:
     """
-    Praat's pitch of a recording (To Pitch, 75 to 600 Hz): the median in Hz
-    and the range from the 5th to the 95th percentile in semitones. None
-    when no frame is voiced.
+    Pitch of a recording through voice_measure.pitch_contour (christman_yin):
+    the median in Hz and the range from the 5th to the 95th percentile in
+    semitones. None when no frame is voiced.
     """
-    try:
-        import parselmouth
-    except ImportError as exc:
-        raise VoiceQualityUnmeasured(f"pitch: parselmouth is not installed ({exc})") from exc
-    f = parselmouth.Sound(path).to_pitch(pitch_floor=75, pitch_ceiling=600).selected_array["frequency"]
+    y, sr = read_wav(path)
+    f = np.asarray(pitch_contour(y, sr).f0_hz, dtype=np.float64)
     f = f[f > 0]
     if len(f) == 0:
         return {"f0_median_hz": None, "range_st": None}
@@ -220,10 +184,10 @@ class VoiceProfile:
     f2_mean: Optional[float] = None
     f3_mean: Optional[float] = None
     spectral_envelope: Optional[np.ndarray] = None
-    hnr_mean: Optional[float] = None
-    jitter_mean: Optional[float] = None
-    shimmer_mean: Optional[float] = None
-    cpp_mean: Optional[float] = None
+    hnr_db: Optional[float] = None
+    jitter_local_pct: Optional[float] = None
+    shimmer_local_pct: Optional[float] = None
+    cpp_db: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -231,8 +195,7 @@ class VoiceProfile:
             "has_d_vector": self.d_vector is not None,
             "f0": {"mean": self.f0_mean, "std": self.f0_std, "min": self.f0_min, "max": self.f0_max},
             "formants": {"f1": self.f1_mean, "f2": self.f2_mean, "f3": self.f3_mean},
-            "voice_quality": {"hnr": self.hnr_mean, "jitter": self.jitter_mean, "shimmer": self.shimmer_mean,
-                              "cpp": self.cpp_mean},
+            "voice_quality": {k: getattr(self, k) for k in QUALITY_KEYS},
         }
 
 
@@ -273,8 +236,7 @@ class TimbreModeler:
             f0_mean=f0_profile["mean"], f0_std=f0_profile["std"], f0_min=f0_profile["min"], f0_max=f0_profile["max"],
             f0_contour=f0_profile.get("contour"),
             f1_mean=formants[0], f2_mean=formants[1], f3_mean=formants[2],
-            hnr_mean=quality["hnr_db"], jitter_mean=quality["jitter"], shimmer_mean=quality["shimmer"],
-            cpp_mean=quality["cpp_db"],
+            **{k: quality[k] for k in QUALITY_KEYS},
         )
 
     def _extract_x_vector(self, segments: List[AudioSegment]) -> Optional[np.ndarray]:
@@ -290,8 +252,8 @@ class TimbreModeler:
     def _extract_f0_profile(self, segments: List[AudioSegment]) -> Dict[str, Any]:
         all_f0: List[float] = []
         for segment in segments:
-            f0 = get_pitch_contour_native(segment.audio, sample_rate=segment.sample_rate)
-            all_f0.extend(f0[(f0 > F0_LOW_HZ) & (f0 < F0_HIGH_HZ)].tolist())
+            f0 = np.asarray(pitch_contour(segment.audio, segment.sample_rate).f0_hz)
+            all_f0.extend(f0[f0 > 0].tolist())
         if not all_f0:
             logger.warning("No F0 values extracted")
             return {"mean": None, "std": None, "min": None, "max": None}
@@ -302,13 +264,20 @@ class TimbreModeler:
     def _extract_formants(self, segments: List[AudioSegment]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         per: List[List[float]] = [[], [], []]
         for segment in segments:
-            for i, v in enumerate(formants_of(segment.audio, segment.sample_rate)):
+            try:
+                summary = measure_formants(np.asarray(segment.audio, dtype=np.float64).reshape(-1).tolist(),
+                                           segment.sample_rate).summary
+            except AudioTooShortError:
+                continue  # shorter than one formant frame: nothing to measure in it
+            if summary is None:
+                continue
+            for i, v in enumerate((summary.f1_median_hz, summary.f2_median_hz, summary.f3_median_hz)):
                 if v is not None:
                     per[i].append(v)
         return tuple(float(np.median(v)) if v else None for v in per)  # type: ignore[return-value]
 
     def _extract_voice_quality(self, segments: List[AudioSegment]) -> Dict[str, Optional[float]]:
-        values: Dict[str, List[float]] = {"jitter": [], "shimmer": [], "hnr_db": [], "cpp_db": []}
+        values: Dict[str, List[float]] = {k: [] for k in QUALITY_KEYS}
         with tempfile.TemporaryDirectory() as temp_dir:
             for i, segment in enumerate(segments):
                 seg_path = Path(temp_dir) / f"segment_{i}.wav"
@@ -357,5 +326,5 @@ class TimbreModeler:
             f0_mean=data["f0"]["mean"], f0_std=data["f0"]["std"], f0_min=data["f0"]["min"], f0_max=data["f0"]["max"],
             f0_contour=f0_cnt,
             f1_mean=data["formants"]["f1"], f2_mean=data["formants"]["f2"], f3_mean=data["formants"]["f3"],
-            hnr_mean=vq.get("hnr"), jitter_mean=vq.get("jitter"), shimmer_mean=vq.get("shimmer"), cpp_mean=vq.get("cpp"),
+            **{k: vq.get(k) for k in QUALITY_KEYS},
         )

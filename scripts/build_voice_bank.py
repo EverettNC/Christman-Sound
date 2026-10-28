@@ -29,7 +29,7 @@ What it does, in order:
   4. The profile (voice.json), from the --profile-from recordings: pitch
      median, phrase pitch range, syllable rate, voiced aperiodicity, the
      long-term average envelope and level (from their frames); jitter,
-     shimmer and HNR by Praat through the Christman Voice SDK's Praat path,
+     shimmer and HNR by Praat through christman_voice_sdk.tone.voice_measure,
      and breath by Praat's CPPS (christman_voice_sdk.timbre.timbre_modeler);
      and what the renderer's own frames carry (each profile recording
      rendered from its own frames with no jitter or shimmer added, measured
@@ -44,7 +44,6 @@ import datetime as _dt
 import hashlib
 import json
 import math
-import os
 import shutil
 import statistics
 import subprocess
@@ -52,7 +51,7 @@ import sys
 import tempfile
 import wave
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -124,6 +123,23 @@ def _iqr(xs: Sequence[float]) -> float:
     return float(q[2] - q[0]) or 1e-9
 
 
+def _quality(path: str) -> Dict[str, Optional[float]]:
+    """
+    Praat's jitter, shimmer and HNR and CPPS through the SDK
+    (timbre_modeler.measure_voice_quality, which measures through
+    voice_measure.voice_quality), in the renderer's units: the SDK gives
+    jitter_local_pct and shimmer_local_pct in percent; the profile's jitter
+    and shimmer are the same Praat quantities as fractions, which is what
+    christman_vocoder's per-cycle perturbation is set in.
+    """
+    from christman_voice_sdk.timbre.timbre_modeler import measure_voice_quality
+
+    q = measure_voice_quality(path)
+    frac = (lambda v: None if v is None else v / 100.0)
+    return {"jitter": frac(q["jitter_local_pct"]), "shimmer": frac(q["shimmer_local_pct"]),
+            "hnr_db": q["hnr_db"], "cpp_db": q["cpp_db"]}
+
+
 def _median(xs: Sequence[float]) -> float:
     if not xs:
         raise SystemExit("a profile value had nothing to be measured from")
@@ -151,7 +167,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     from christman_sound.lexicon import load_lexicon, normalize_word
     from christman_sound.dsp import get_dsp
     from christman_sound.stitch import FrameBank
-    from christman_voice_sdk.timbre.timbre_modeler import measure_voice_quality
 
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
@@ -238,12 +253,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     speech = sum(u.end - u.start for u in bank.units if u.rec in prof_idx)
 
     # Praat on the recordings.
-    from christman_voice_sdk.timbre.timbre_modeler import measure_pitch  # noqa: F401  (same SDK path)
     from christman_sound.synth import write_wav
 
     quality = {"jitter": [], "shimmer": [], "hnr_db": [], "cpp_db": []}
     for ri in prof_idx:
-        q = measure_voice_quality(bank.recordings[ri]["path"])
+        q = _quality(bank.recordings[ri]["path"])
         for k in quality:
             if q.get(k) is not None:
                 quality[k].append(q[k])
@@ -272,7 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             peak = max(abs(v) for v in y) or 1.0
             wav = tmp / f"{tag}_{ri}.wav"
             write_wav(wav, [v * min(1.0, 0.97 / peak) for v in y], bank.sr)
-            r = measure_voice_quality(str(wav))
+            r = _quality(str(wav))
             for k in got:
                 if r.get(k) is not None:
                     got[k].append(r[k])
@@ -328,8 +342,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "measured_by": {
                 "f0_median_hz, phrase_range_st, syllable_rate, voiced_aperiodicity, ltas_db, level_db":
                     "the profile recordings' frames (Codec War frames.ts) and units (bank.ts)",
-                "jitter, shimmer, hnr_db": "Praat via christman_voice_sdk.tone.tonescore_analyzer.PraatToneAnalyzer, "
-                                           "median over the profile recordings",
+                "jitter, shimmer, hnr_db": "Praat via christman_voice_sdk.tone.voice_measure.voice_quality "
+                                           "(jitter_local_pct and shimmer_local_pct / 100), median over the "
+                                           "profile recordings",
                 "cpp_db": "Praat CPPS via christman_voice_sdk.timbre.timbre_modeler.measure_cpp",
                 "jitter_carried, shimmer_carried": "the same Praat measures on each profile recording rendered from "
                                                    "its own frames by christman_vocoder with none added, at the "
