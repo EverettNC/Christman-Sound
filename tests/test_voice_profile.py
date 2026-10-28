@@ -36,6 +36,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vosk_models import require_full_model  # noqa: E402
 sys.path.insert(0, str(ROOT))
 
 from christman_sound.dsp import ChristmanDSP, SynthRefused  # noqa: E402
@@ -252,6 +254,7 @@ def test_measurement_from_alphavox_recordings_reproduces_the_profile(tmp_path):
     if missing:
         pytest.skip("not run: needs " + ", ".join(missing) +
                     " (AlphaVox's recordings, the Vosk model, its lexicon, a Python with vosk); runs on Everett's Mac")
+    require_full_model(need["CHRISTMAN_VOSK_MODEL"])
     out = tmp_path / "alphavox_voice.json"
     proc = subprocess.run(
         [need["CHRISTMAN_VOSK_PYTHON"], str(ROOT / "scripts" / "measure_alphavox_voice.py"),

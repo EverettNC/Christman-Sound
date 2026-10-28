@@ -39,6 +39,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vosk_models import require_full_model  # noqa: E402
 sys.path.insert(0, str(ROOT))
 
 from christman_sound import synth as cs_synth  # noqa: E402
@@ -240,6 +242,7 @@ def test_alphavox_free_text_is_heard_word_for_word_far_more_often(dsp, tmp_path)
     if missing:
         pytest.skip("not run: needs " + ", ".join(missing) +
                     " (Everett's Vosk model, its lexicon, a Python with vosk); runs on Everett's Mac")
+    require_full_model(need["CHRISTMAN_VOSK_MODEL"])
     voice = load_alphavox_voice()
     table = dsp.synth_phone_table()
     formant_table = dsp.synth_phone_formants()

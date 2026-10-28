@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 
 from christman_sound.dsp import ChristmanDSP, SynthRefused  # noqa: E402
 from christman_sound import stitch as cs_stitch  # noqa: E402
+from christman_sound import synth as cs_synth  # noqa: E402
 
 
 def codecwar_audio() -> Path:
@@ -166,12 +167,12 @@ writeFileSync(join(job.bankDir, "bank.json"), JSON.stringify({ sr: F.FRAME_SR, h
   tokens: built.tokens, units: built.units, skipped: built.skipped }));
 const results = [];
 for (const c of job.cases) {
-  const words = c.words.map(([word, phones]) => ({ word, phones }));
+  const words = c.words.map(([word, phones, pause]) => ({ word, phones, pauseAfter: !!pause }));
   const sel = S.selectUnits(bank, words);
   const st = S.joinUnits(bank, sel);
   let v = null, refused = null;
   try { v = S.applyVoice(st, job.measures, { ...S.NEUTRAL_CONTROLS, ...c.controls }, stats); } catch (e) { refused = e.message; }
-  results.push({ units: sel.units, joins: sel.joins, wholeWords: sel.wholeWords, joinsAt: st.joinsAt,
+  results.push({ units: sel.units, pausesAfter: sel.pausesAfter, joins: sel.joins, wholeWords: sel.wholeWords, joinsAt: st.joinsAt,
     stitched: { f0: Array.from(st.track.f0), env: Array.from(st.track.envDb), ap: Array.from(st.track.ap) },
     refused, voiced: v && { f0: Array.from(v.track.f0), env: Array.from(v.track.envDb), ap: Array.from(v.track.ap), phones: v.phones,
       jitter: v.jitter, shimmer: v.shimmer, applied: v.applied.map((a) => [a.name, a.value]) } });
@@ -191,6 +192,8 @@ CASES = [
     {"words": [["seam", ["S", "IY", "M"]], ["tool", ["T", "UW", "L"]]],
      "controls": {"breath": 0.8, "intonation": 0.3, "timbre": 0.7, "articulation": 0.6, "prosody": 0.9,
                   "resonance": "head", "rate": 1.2, "f0": 180, "jitter": 0.7, "shimmer": 0.6}},
+    {"words": [["mass", ["M", "AA", "S"], True], ["tea", ["T", "IY"]], ["loom", ["L", "UW", "M"]]],
+     "controls": {"cadence": 0.2}},
     {"words": [["mass", ["M", "AA", "S"]]], "controls": {"affect": "calm"}},
 ]
 
@@ -225,9 +228,10 @@ def test_stitch_matches_codec_war(dsp, tmp_path):
     vowels = [k for k, (_, v) in dsp.synth_phone_formants().items() if v]
     worst = 0.0
     for case, r in zip(CASES, ref):
-        words = [(w, p) for w, p in case["words"]]
+        words = [tuple(w) for w in case["words"]]
         sel = cs_stitch.select_units(bank, words)
         assert sel.units == r["units"] and sel.joins == r["joins"] and sel.whole_words == r["wholeWords"]
+        assert sel.pauses_after == r["pausesAfter"]
         st = cs_stitch.join_units(bank, sel)
         assert st.joins_at == r["joinsAt"]
         worst = max(worst, _close(st.track.f0, r["stitched"]["f0"]), _close(st.track.env, r["stitched"]["env"]),
@@ -276,3 +280,18 @@ def test_an_unmeasured_profile_is_refused_by_name():
     m["cpp_db"] = float("nan")
     with pytest.raises(cs_stitch.StitchRefused, match="does not measure: jitter, cpp_db"):
         cs_stitch.check_measures(m, 96)
+
+
+def test_frame_controls_without_a_frame_voice_are_refused_not_ignored(dsp):
+    with pytest.raises(ValueError, match="belong to a frame voice"):
+        cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2)], breath=0.7, engine=dsp)
+
+
+
+def test_synthesize_signature_carries_every_named_control():
+    import inspect
+
+    params = inspect.signature(cs_synth.synthesize).parameters
+    for name in ("cadence", "breath", "jitter", "shimmer", "timbre", "articulation", "resonance", "affect", "intonation",
+                 "prosody", "rate", "f0", "voice"):
+        assert name in params, name
