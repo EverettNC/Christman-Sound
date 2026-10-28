@@ -142,6 +142,17 @@ BEFORE_F0_HZ = 149.3
 
 PHRASE_PREFIX = "alphavox_"
 
+#: (2026-10-28) Codec War's vowels that glide from one quality to another
+#: inside the vowel (phonemes.ts lists them as single rows). Their onset and
+#: offset are measured too; see glide_values.
+GLIDING_VOWELS = ("AW", "AY", "EY", "OW", "OY")
+
+APPLIED_GLIDES = (
+    " Added 2026-10-28: each gliding vowel in glides (onset and offset F1-F3, measured from at least "
+    "MIN_TOKENS_TO_APPLY tokens) -> the glide christman_synth_clear draws across that vowel, onset to "
+    "offset, in place of the single vowel row."
+)
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -192,6 +203,24 @@ def nucleus(frames: List[dict], start: float, end: float, loud_ref: Optional[flo
         if f["f1"] is not None and f["f2"] is not None and f["f3"] is not None
         and f["rms"] >= VOWEL_RMS_RATIO * loud_ref
     ]
+
+
+def glide_values(fr: List[dict]) -> dict:
+    """
+    (2026-10-28) Where a gliding vowel starts and ends: the nucleus frames in
+    time order, the median F1-F3 of the first third (onset) and of the last
+    third (offset). Fewer than 3 frames cannot show a start and an end apart:
+    None for both.
+    """
+    fr = sorted(fr, key=lambda f: f["t"])
+    if len(fr) < 3:
+        return {"onset_hz": None, "offset_hz": None}
+    third = len(fr) // 3
+    first, last = fr[:third], fr[-third:]
+    return {
+        "onset_hz": [med([f[k] for f in first]) for k in ("f1", "f2", "f3")],
+        "offset_hz": [med([f[k] for f in last]) for k in ("f1", "f2", "f3")],
+    }
 
 
 def token_values(fr: List[dict]) -> dict:
@@ -335,6 +364,8 @@ def make_tokens(p: Phrase, lex, dsp, vowels: set) -> List[dict]:
                 "vowel_in_word": ordinal, "start_s": round(s, 3), "end_s": round(e, 3),
             }
             tok.update(token_values(fr))
+            if ph[k][0] in GLIDING_VOWELS:
+                tok.update(glide_values(fr))
             p.tokens.append(tok)
     return skipped
 
@@ -375,7 +406,7 @@ def build_profile(phrases: List[Phrase], lex, dsp, table, vowels: set) -> dict:
             "codec_war_table_it_replaces": {"f1_hz": cf1, "f2_hz": cf2, "f3_hz": cf3},
             "tokens": [
                 {k: (r1(x) if isinstance(x, float) and k.endswith("_hz") else x)
-                 for k, x in t.items() if k not in ("b1_hz", "b2_hz", "b3_hz")}
+                 for k, x in t.items() if k not in ("b1_hz", "b2_hz", "b3_hz", "onset_hz", "offset_hz")}
                 for t in chosen
             ],
         }
@@ -388,6 +419,7 @@ def build_profile(phrases: List[Phrase], lex, dsp, table, vowels: set) -> dict:
         v: "no measured word in AlphaVox's aligned recordings carries this vowel; Codec War's table value is used"
         for v in sorted(vowels) if v not in vow and v not in held_back
     }
+    glides, glides_held = build_glides(by_vowel)
     # pitch
     f0s = [f["f0"] for p in use for f in p.frames if f["voiced"] and f["f0"]]
     per_phrase_contour = {}
@@ -445,7 +477,44 @@ def build_profile(phrases: List[Phrase], lex, dsp, table, vowels: set) -> dict:
         "vowels": vow,
         "measured_not_applied": held_back,
         "not_measured": not_measured,
+        "glides": glides,
+        "glides_not_applied": glides_held,
     }
+
+
+def build_glides(by_vowel: Dict[str, List[dict]]) -> Tuple[Dict[str, dict], Dict[str, dict]]:
+    """
+    (2026-10-28) Each gliding vowel's onset and offset F1-F3: the median over
+    its tokens of each token's onset and offset (glide_values), applied when
+    at least MIN_TOKENS_TO_APPLY tokens had a start and an end to measure.
+    """
+    glides: Dict[str, dict] = {}
+    held: Dict[str, dict] = {}
+    for v in GLIDING_VOWELS:
+        chosen = [t for t in by_vowel.get(v, []) if t.get("onset_hz") is not None]
+        if not chosen:
+            continue
+        toks = [{"phrase": t["phrase"], "word": t["word"], "n_frames": t["n_frames"],
+                 "onset_hz": [r1(x) for x in t["onset_hz"]], "offset_hz": [r1(x) for x in t["offset_hz"]]}
+                for t in chosen]
+        entry = {
+            # Medians of the token values exactly as written below (0.1 Hz).
+            "onset_hz": [r1(med([t["onset_hz"][j] for t in toks])) for j in range(3)],
+            "offset_hz": [r1(med([t["offset_hz"][j] for t in toks])) for j in range(3)],
+            "source": "per token: the vowel's nucleus frames (as for the vowels) in time order; onset = median "
+                      "F1, F2, F3 of the first third, offset = of the last third; value = median over tokens",
+            "n_tokens": len(toks),
+            "tokens": toks,
+        }
+        if len(toks) >= MIN_TOKENS_TO_APPLY:
+            glides[v] = entry
+        else:
+            entry["not_applied_because"] = (
+                f"{len(toks)} token; fewer than MIN_TOKENS_TO_APPLY = {MIN_TOKENS_TO_APPLY}. The vowel glides "
+                "from its own row toward its offglide vowel instead (christman_synth_clear)"
+            )
+            held[v] = entry
+    return glides, held
 
 
 # -- proof ----------------------------------------------------------------------
@@ -546,6 +615,9 @@ def main(argv=None) -> int:
     ap.add_argument("--recordings-commit", default=None,
                     help="the AlphaVox commit the recordings were read at (written into the profile)")
     ap.add_argument("--prove", default=None, help="write the before/after proof here (JSON)")
+    ap.add_argument("--only-glides", action="store_true",
+                    help="(2026-10-28) measure as usual, but write only the glides (and the applied note) into "
+                         "the existing --out profile; every other value in it stays exactly as it is")
     args = ap.parse_args(argv)
 
     dsp = get_dsp()
@@ -584,7 +656,7 @@ def main(argv=None) -> int:
             "a harmonic, and a too-narrow bandwidth would make the synthesizer ring), consonants (their "
             "places inside a word cannot be told apart from word times alone), and vowels in "
             "not_measured. Those keep Codec War's table values."
-        ),
+        ) + APPLIED_GLIDES,
         "measured_on": _dt.date.today().isoformat(),
         "sources": {
             "recordings": {
@@ -608,6 +680,16 @@ def main(argv=None) -> int:
     }
     profile.update(measured)
     out = Path(args.out)
+    if args.only_glides:
+        kept = json.loads(out.read_text(encoding="utf-8"))
+        if [f["sha256"] for f in kept["sources"]["recordings"]["files"]] != \
+                [f["sha256"] for f in profile["sources"]["recordings"]["files"]]:
+            raise SystemExit(f"{out} was measured from other recordings; refusing to add glides from these")
+        kept["applied"] = profile["applied"]
+        kept["glides"] = profile["glides"]
+        kept["glides_not_applied"] = profile["glides_not_applied"]
+        kept["glides_measured_on"] = profile["measured_on"]
+        profile = kept
     out.write_text(json.dumps(profile, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {out}", file=sys.stderr)
 

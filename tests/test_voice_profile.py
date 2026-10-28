@@ -180,6 +180,23 @@ def test_each_vowel_is_the_median_of_its_tokens():
     assert len(applied | held | none) == 15
 
 
+def test_each_glide_is_the_median_of_its_tokens():
+    """(2026-10-28) AY and OW glides, each end the median of its tokens' ends as written."""
+    names = {f["name"] for f in PROFILE["sources"]["recordings"]["files"]}
+    assert set(PROFILE["glides"]) == {"AY", "OW"}
+    for group in ("glides", "glides_not_applied"):
+        for v, e in PROFILE[group].items():
+            toks = e["tokens"]
+            assert e["n_tokens"] == len(toks)
+            assert all(t["phrase"] in names and t["n_frames"] >= 3 for t in toks)
+            for k in ("onset_hz", "offset_hz"):
+                assert e[k] == [round(statistics.median(t[k][j] for t in toks), 1) for j in range(3)], (v, k)
+    assert all(e["n_tokens"] >= 2 for e in PROFILE["glides"].values())
+    assert all(e["n_tokens"] < 2 for e in PROFILE["glides_not_applied"].values())
+    voice = load_alphavox_voice()
+    assert voice.glides["AY"] == (tuple(PROFILE["glides"]["AY"]["onset_hz"]), tuple(PROFILE["glides"]["AY"]["offset_hz"]))
+
+
 def test_pitch_and_rate_are_the_medians_written_beside_them():
     c = PROFILE["pitch_contour"]
     per = c["per_phrase"].values()
@@ -202,6 +219,10 @@ def test_profile_refusals(tmp_path):
         ("pitch_contour", lambda d: d["pitch_contour"]["positions"].pop()),
         ("f2_hz", lambda d: next(iter(d["vowels"].values())).pop("f2_hz")),
         ("vowels", lambda d: d.update(vowels={})),
+        ("glide_offset", lambda d: d["glides"]["AY"].pop("offset_hz")),
+        ("glide_short", lambda d: d["glides"]["AY"]["onset_hz"].pop()),
+        ("glide_zero", lambda d: d["glides"]["AY"]["onset_hz"].__setitem__(0, 0)),
+        ("glide_not_gliding", lambda d: d["glides"].update(AA=d["glides"]["AY"])),
     ]
     for name, spoil in cases:
         d = json.loads(json.dumps(good))
@@ -256,3 +277,10 @@ def test_measurement_from_alphavox_recordings_reproduces_the_profile(tmp_path):
     for v, e in PROFILE["vowels"].items():
         for k in ("f1_hz", "f2_hz", "f3_hz"):
             assert abs(fresh["vowels"][v][k] - e[k]) <= 0.02 * e[k], (v, k, fresh["vowels"][v][k], e[k])
+    # The glides (2026-10-28): two runs on his Mac gave the same values to the 0.1 Hz.
+    for group in ("glides", "glides_not_applied"):
+        assert set(fresh[group]) == set(PROFILE[group]), group
+    for v, e in PROFILE["glides"].items():
+        for k in ("onset_hz", "offset_hz"):
+            for got, want in zip(fresh["glides"][v][k], e[k]):
+                assert abs(got - want) <= 0.02 * want, (v, k, got, want)

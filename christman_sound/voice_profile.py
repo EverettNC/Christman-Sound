@@ -25,6 +25,9 @@ synthesizer takes:
     its measured pitch contour (semitones from the phrase median at points
     across the phrase, joined by straight lines).
   * the speaking rate the profile measured.
+  * (2026-10-28) one glide row per phone for christman_synth_clear: where a
+    gliding vowel (AY, OW, ...) starts and ends, measured where the profile
+    has it ("glides"), else from the vowel's own row toward its offglide.
 
 The profile for AlphaVox is christman_sound/alphavox_voice.json, written by
 scripts/measure_alphavox_voice.py from AlphaVox's recordings with Everett's
@@ -37,7 +40,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -54,6 +57,25 @@ ALPHAVOX_PROFILE_PATH = Path(__file__).resolve().parent / "alphavox_voice.json"
 
 #: Codec War's rate range (synth.ts:104). A profile outside it is refused.
 _RATE_RANGE = (0.6, 1.6)
+
+#: (2026-10-28) Where in the vowel a measured glide is drawn, from its onset
+#: to its offset. The onset is the median of the first third of the vowel's
+#: measured frames and the offset of the last third (measure_alphavox_voice.py,
+#: glide_values), so they sit near 1/6 and 5/6 of the vowel; 0.2 and 0.8,
+#: held flat outside. A chosen starting value.
+MEASURED_GLIDE_SPAN = (0.2, 0.8)
+
+#: (2026-10-28) A gliding vowel the profile did not measure moves from its
+#: own row toward the vowel it glides into (AY, EY, OY close toward IY; AW,
+#: OW round toward UW). Those rows are the voice's own (measured, else Codec
+#: War's table).
+OFFGLIDE = {"AY": "IY", "EY": "IY", "OY": "IY", "AW": "UW", "OW": "UW"}
+
+#: It holds its own row for the first 35% of the vowel, then moves to the
+#: offglide by the end. A chosen starting value: measured on 2026-10-28,
+#: AlphaVox's free text was heard 42% word for word with this and 38% with
+#: these vowels held still (24 test sentences, the Filament ear).
+OFFGLIDE_SPAN = (0.35, 1.0)
 
 
 class VoiceProfileError(ValueError):
@@ -88,6 +110,9 @@ class VoiceProfile:
     rate: float
     #: Codec War phone id -> (F1, F2, F3) measured from the recordings.
     vowel_formants: Dict[str, Tuple[float, float, float]]
+    #: (2026-10-28) Gliding vowel -> ((onset F1, F2, F3), (offset F1, F2, F3))
+    #: measured from the recordings. Empty when the profile measured none.
+    glides: Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = field(default_factory=dict)
 
     # -- pitch -----------------------------------------------------------------
 
@@ -155,6 +180,35 @@ class VoiceProfile:
             rows.append((f1, f2, f3, b1, b2))
         return rows
 
+    # -- glides (2026-10-28) ---------------------------------------------------
+
+    def glide_rows(
+        self,
+        phone_names: Sequence[str],
+        table: Dict[str, Tuple[Tuple[float, float, float, float, float], bool]],
+    ) -> List[Tuple[float, ...]]:
+        """
+        One row of 8 per phone for christman_synth_clear: onset F1-F3, offset
+        F1-F3, and where in the phone the glide starts and ends. A gliding
+        vowel this profile measured glides from its measured onset to its
+        measured offset over MEASURED_GLIDE_SPAN. A gliding vowel it did not
+        measure glides from its own row (formant_rows) toward its offglide
+        vowel's row (OFFGLIDE) over OFFGLIDE_SPAN. Every other phone: eight
+        zeros (no glide).
+        """
+        own = self.formant_rows(phone_names, table)
+        rows: List[Tuple[float, ...]] = []
+        for name, row in zip(phone_names, own):
+            if name in self.glides:
+                (a1, a2, a3), (b1, b2, b3) = self.glides[name]
+                rows.append((a1, a2, a3, b1, b2, b3) + MEASURED_GLIDE_SPAN)
+            elif name in OFFGLIDE:
+                (e1, e2, e3, _, _), = self.formant_rows([OFFGLIDE[name]], table)
+                rows.append((row[0], row[1], row[2], e1, e2, e3) + OFFGLIDE_SPAN)
+            else:
+                rows.append((0.0,) * 8)
+        return rows
+
 
 def load_voice_profile(path: Union[str, Path]) -> VoiceProfile:
     """Read a voice profile file. Raises VoiceProfileError naming whatever is missing or wrong."""
@@ -197,6 +251,20 @@ def load_voice_profile(path: Union[str, Path]) -> VoiceProfile:
         )
     if not vowels:
         raise VoiceProfileError("voice profile measured no vowels")
+    # Glides (2026-10-28) are optional: a profile that measured none glides
+    # its gliding vowels toward their offglide (OFFGLIDE). One that carries a
+    # glide must carry all of it.
+    glides: Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = {}
+    for pid, entry in (data.get("glides") or {}).items():
+        if pid not in OFFGLIDE:
+            raise VoiceProfileError(f"glides.{pid}: not a gliding vowel ({sorted(OFFGLIDE)})")
+        ends = []
+        for key in ("onset_hz", "offset_hz"):
+            vals = _need(entry, key, f"glides.{pid}.")
+            if not isinstance(vals, list) or len(vals) != 3:
+                raise VoiceProfileError(f"glides.{pid}.{key} must hold F1, F2, F3")
+            ends.append(tuple(_positive(v, f"glides.{pid}.{key}") for v in vals))
+        glides[pid] = (ends[0], ends[1])
     return VoiceProfile(
         name=name,
         path=p,
@@ -204,6 +272,7 @@ def load_voice_profile(path: Union[str, Path]) -> VoiceProfile:
         contour_points=tuple(points),
         rate=rate,
         vowel_formants=vowels,
+        glides=glides,
     )
 
 
