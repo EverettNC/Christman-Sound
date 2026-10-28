@@ -28,8 +28,8 @@ Build the library once per machine (the .so is a build artefact, not source):
 
     python3 scripts/build_dsp.py
 
-or let `pip install -e .` build it (setup.py declares it as an optional
-extension).
+pip install does not build it. setup.py declares no extension. Run
+scripts/build_dsp.py after installing.
 
 (2026-10-13) OUTPUT SIDE. `christman_play` and `christman_play_backend`
 bind here alongside the four measurements. `play()` is blocking and
