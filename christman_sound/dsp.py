@@ -131,6 +131,7 @@ _SYNTH_REASONS = {
     6: "sample rate is not 16000 (Codec War) or 22050 (christman_sound)",
     7: "output length does not match christman_synth_length",
     8: "allocation failed",
+    9: "a voice formant value is not greater than zero, finite and below half the sample rate",
 }
 
 
@@ -261,6 +262,16 @@ class ChristmanDSP:
                 ctypes.c_double, ctypes.c_int, _FLOAT_P, ctypes.c_size_t,
             ]
             lib.christman_synth.restype = ctypes.c_int
+            # (2026-10-28) a voice's own resonances, per phone in the sequence.
+            lib.christman_synth_voiced.argtypes = [
+                _INT_P, _DOUBLE_P, ctypes.c_size_t, _DOUBLE_P, ctypes.c_double,
+                ctypes.c_double, ctypes.c_int, _DOUBLE_P, _FLOAT_P, ctypes.c_size_t,
+            ]
+            lib.christman_synth_voiced.restype = ctypes.c_int
+            lib.christman_synth_phone_formants.argtypes = [ctypes.c_int, _DOUBLE_P]
+            lib.christman_synth_phone_formants.restype = ctypes.c_int
+            lib.christman_synth_phone_is_vowel.argtypes = [ctypes.c_int]
+            lib.christman_synth_phone_is_vowel.restype = ctypes.c_int
         except AttributeError as exc:
             self.synth_error = (
                 f"{self.path} was built without christman_synth.c ({exc}). Rebuild: {BUILD_COMMAND}"
@@ -387,6 +398,24 @@ class ChristmanDSP:
             table[lib.christman_synth_phone_name(i).decode()] = (i, float(lib.christman_synth_phone_dur(i)))
         return table
 
+    def synth_phone_formants(self) -> Dict[str, Tuple[Tuple[float, float, float, float, float], bool]]:
+        """
+        Codec War's table resonances, read from the C: {name: ((F1, F2, F3,
+        BW1, BW2), is_vowel)}. Added 2026-10-28 so a voice profile replaces
+        only the rows it measured and takes the rest from the one table.
+        """
+        lib = self._require_synth()
+        out: Dict[str, Tuple[Tuple[float, float, float, float, float], bool]] = {}
+        row = (ctypes.c_double * 5)()
+        for i in range(lib.christman_synth_phone_count()):
+            if lib.christman_synth_phone_formants(i, row) != 0:
+                raise SynthUnavailable(f"christman_synth_phone_formants refused phone id {i}")
+            vowel = lib.christman_synth_phone_is_vowel(i)
+            if vowel < 0:
+                raise SynthUnavailable(f"christman_synth_phone_is_vowel refused phone id {i}")
+            out[lib.christman_synth_phone_name(i).decode()] = (tuple(float(v) for v in row), vowel == 1)
+        return out
+
     def synth(
         self,
         phone_ids: Sequence[int],
@@ -395,11 +424,16 @@ class ChristmanDSP:
         rate: float,
         sample_rate: int,
         f0_contour: Optional[Sequence[float]] = None,
+        formants: Optional[Sequence[Sequence[float]]] = None,
     ) -> array.array:
         """
         Raw call into christman_synth. Returns array('f') of float PCM, or
         raises `SynthRefused` with the engine's reason. `christman_sound.synth`
         is the friendly entry point; this is the binding.
+
+        formants (2026-10-28): None for Codec War's own table, or one row
+        (F1, F2, F3, BW1, BW2 in Hz) per phone in the sequence — a voice's
+        own resonances, through christman_synth_voiced.
         """
         lib = self._require_synth()
         n = len(phone_ids)
@@ -407,19 +441,33 @@ class ChristmanDSP:
             raise ValueError(f"{n} phones but {len(durations)} durations")
         if f0_contour is not None and len(f0_contour) != n:
             raise ValueError(f"{n} phones but {len(f0_contour)} f0 values in the contour")
+        if formants is not None:
+            if len(formants) != n:
+                raise ValueError(f"{n} phones but {len(formants)} formant rows")
+            bad = [i for i, row in enumerate(formants) if len(row) != 5]
+            if bad:
+                raise ValueError(f"formant rows {bad[:5]} do not hold 5 values (F1 F2 F3 BW1 BW2)")
         ids_c = (ctypes.c_int * max(n, 1))(*phone_ids)
         durs_c = (ctypes.c_double * max(n, 1))(*durations)
         contour_c = (ctypes.c_double * n)(*f0_contour) if f0_contour is not None else None
+        rows_c = (
+            (ctypes.c_double * (5 * n))(*(float(v) for row in formants for v in row))
+            if formants is not None else None
+        )
         length = lib.christman_synth_length(durs_c, n, float(rate), int(sample_rate))
         if length == 0:
             # Let the engine name the reason: the length helper only says "refused".
-            status = lib.christman_synth(ids_c, durs_c, n, contour_c, float(f0), float(rate),
-                                         int(sample_rate), (ctypes.c_float * 1)(), 0)
+            status = lib.christman_synth_voiced(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                                int(sample_rate), rows_c, (ctypes.c_float * 1)(), 0)
             raise SynthRefused(status, _SYNTH_REASONS.get(status, "unknown reason"))
         out = array.array("f", bytes(4 * length))
         out_c = (ctypes.c_float * length).from_buffer(out)
-        status = lib.christman_synth(ids_c, durs_c, n, contour_c, float(f0), float(rate),
-                                     int(sample_rate), out_c, length)
+        if rows_c is None:
+            status = lib.christman_synth(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                         int(sample_rate), out_c, length)
+        else:
+            status = lib.christman_synth_voiced(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                                int(sample_rate), rows_c, out_c, length)
         del out_c
         if status != 0:
             raise SynthRefused(status, _SYNTH_REASONS.get(status, "unknown reason"))

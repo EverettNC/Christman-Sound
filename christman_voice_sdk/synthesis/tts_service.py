@@ -1,6 +1,14 @@
 """
 TTS Service - Local API
 
+WHAT CHANGED AND WHY (2026-10-28) — ALPHAVOX'S VOICE
+----------------------------------------------------
+The mouth now speaks in AlphaVox's measured voice profile
+(christman_sound/alphavox_voice.json). The cache key carries a hash of that
+file, so audio made before a re-measurement is never served as the new
+voice. The pitch constant it reads is ALPHAVOX_F0_MEDIAN_HZ (renamed from
+EVERETT_F0_MEDIAN_HZ: the recordings and the pitch are AlphaVox's).
+
 WHAT CHANGED AND WHY (2026-10-18) — THE SOVEREIGN MOUTH IS WIRED
 ----------------------------------------------------------------
 voice_synthesis now renders through christman_synth (engine "christman").
@@ -65,7 +73,7 @@ from flask import Flask, jsonify, send_from_directory, send_file, request
 from werkzeug.utils import secure_filename
 from .voice_synthesis import (
     ENGINE_NAME,
-    EVERETT_F0_MEDIAN_HZ,
+    ALPHAVOX_F0_MEDIAN_HZ,
     LexiconError,
     NothingToSay,
     get_speech_synthesis_engine,
@@ -96,11 +104,26 @@ def _hash_content(*parts: str) -> str:
     payload = "|".join(parts)
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
+def _voice_profile_ident() -> str:
+    """
+    (2026-10-28) The identity of AlphaVox's voice profile file: a hash of its
+    bytes. When the profile is re-measured, every cached file made with the
+    old one stops matching.
+    """
+    try:
+        from christman_sound.voice_profile import ALPHAVOX_PROFILE_PATH
+        return hashlib.sha256(Path(ALPHAVOX_PROFILE_PATH).read_bytes()).hexdigest()[:16]
+    except Exception as exc:  # no profile: voice_synthesis refuses to render, said there
+        return f"no-profile:{type(exc).__name__}"
+
+
 def _voice_tag() -> str:
     """
-    Which voice made a cached file: engine, f0, and the lexicon file's
-    identity (path, size, mtime). Part of the cache key so a file made by any
-    other voice, or from another lexicon, is never served as this one.
+    Which voice made a cached file: engine, AlphaVox's voice profile (f0 and
+    the profile file's hash), and the lexicon file's identity (path, size,
+    mtime). Part of the cache key so a file made by any other voice, by an
+    earlier measurement of this one, or from another lexicon, is never
+    served as this one.
     """
     lexicon = os.environ.get(LEXICON_ENV, "")
     ident = "no-lexicon"
@@ -110,7 +133,7 @@ def _voice_tag() -> str:
             ident = f"{os.path.realpath(lexicon)}:{st.st_size}:{st.st_mtime_ns}"
         except OSError as exc:
             ident = f"unreadable:{lexicon}:{type(exc).__name__}"
-    return f"{ENGINE_NAME}|f0={EVERETT_F0_MEDIAN_HZ}|{ident}"
+    return f"{ENGINE_NAME}|f0={ALPHAVOX_F0_MEDIAN_HZ}|voice={_voice_profile_ident()}|{ident}"
 
 
 def local_text_to_speech(
