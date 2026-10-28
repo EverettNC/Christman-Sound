@@ -21,7 +21,6 @@ import os
 import sys
 import time
 
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -129,28 +128,10 @@ def test_backend_crash_is_counted_not_silent():
     assert "detector exploded" in st["last_backend_error"]
 
 
-def test_silent_recording_has_no_pitch():
-    from christman_voice_sdk.integration import voice_capture_client as vc
-
-    sig = vc.extract_frequency_signature(np.zeros(vc.SAMPLE_RATE, dtype=np.float32))
-    assert sig["fundamental_hz"] is None, sig
-    assert sig["pitch_range_hz"] is None
-    assert sig["spectral_centroid"] is None
-    assert sig["formant_f1_hz"] is None
-    assert sig["voiced_frames"] == 0
-    assert "fundamental_hz" not in sig["measured"]
-
-
-def test_tone_is_measured_not_defaulted():
-    from christman_voice_sdk.integration import voice_capture_client as vc
-
-    sr = vc.SAMPLE_RATE
-    t = np.arange(sr) / sr
-    tone = (0.5 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
-    sig = vc.extract_frequency_signature(tone)
-    assert sig["fundamental_hz"] is not None and abs(sig["fundamental_hz"] - 220.0) < 5.0, sig
-    assert sig["voiced_frames"] > 0
-    assert sig["spectral_centroid"] is not None
+# test_silent_recording_has_no_pitch and test_tone_is_measured_not_defaulted
+# moved to tests/test_voice_capture_client.py (2026-10-28): the signature now
+# takes the recording's sample rate and measures with christman_yin, so those
+# checks build the library they measure with.
 
 
 def test_ws_only_to_loopback():
