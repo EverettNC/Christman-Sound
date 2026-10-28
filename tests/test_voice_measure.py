@@ -208,6 +208,64 @@ def test_read_wav_gives_the_files_own_rate_and_scale(tmp_path, width):
     assert np.max(np.abs(y - x)) < 1e-3
 
 
+# -------------------------------------------------- one tracker, one loader
+
+
+LANE2_MEASURING_FILES = [
+    *sorted((ROOT / "christman_voice_sdk" / "tone").glob("*.py")),
+    *sorted((ROOT / "christman_voice_sdk" / "nonverbal").glob("*.py")),
+    ROOT / "christman_voice_sdk" / "integration" / "voice_capture_client.py",
+    *(ROOT / "christman_voice_sdk" / "audio" / n for n in (
+        "prosody.py", "tape_contour.py", "structural_affect.py", "fusion_engine.py",
+        "body_signals.py", "audio_processor.py", "face_vector.py", "face_reading.py")),
+]
+
+
+def test_no_measuring_file_loads_the_c_library_itself():
+    """christman_sound.dsp.get_dsp() is the one loader."""
+    for path in LANE2_MEASURING_FILES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                assert "ctypes" not in [a.name for a in node.names], f"{path.name} imports ctypes"
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert not node.value.endswith("christman_dsp.so"), f"{path.name} looks for the library"
+
+
+def test_no_second_pitch_tracker_or_quality_measure_is_defined():
+    banned = {"get_pitch_contour_native", "get_rms_contour", "_jitter", "_shimmer", "_hnr",
+              "_compute_jitter", "_compute_shimmer", "_harmonic_noise_ratio", "find_formant"}
+    for path in LANE2_MEASURING_FILES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+        assert not (names & banned), f"{path.name} defines {sorted(names & banned)}"
+        source = path.read_text(encoding="utf-8")
+        if path.name != "voice_measure.py":
+            assert "to_pitch(" not in source, f"{path.name} runs Praat's pitch tracker"
+            assert "np.correlate" not in source, f"{path.name} tracks pitch by autocorrelation"
+
+
+def test_tone_analyzer_is_gone_and_each_class_name_is_defined_once():
+    assert not (ROOT / "christman_voice_sdk" / "tone" / "tone_analyzer.py").exists()
+    seen = {}
+    for path in sorted((ROOT / "christman_voice_sdk").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in {
+                "ToneScoreEngine", "ToneScoreCalculator", "MultiLayerToneAnalyzer",
+                "TemporalNonverbalEngine", "PraatToneAnalyzer",
+            }:
+                seen.setdefault(node.name, []).append(path.relative_to(ROOT).as_posix())
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "MultiLayerToneAnalyzer":
+                        seen.setdefault("MultiLayerToneAnalyzer", []).append(path.name)
+    assert {k: len(v) for k, v in seen.items()} == {
+        "ToneScoreEngine": 1, "ToneScoreCalculator": 1, "TemporalNonverbalEngine": 1,
+        "PraatToneAnalyzer": 1,
+    }, seen
+
+
 # ------------------------------------------------ AlphaVox's verified phrases
 
 
