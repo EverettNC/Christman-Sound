@@ -58,7 +58,7 @@ WHERE THE NUMBERS COME FROM
     text  -> StructuralAffectAnalyzer -> valence, intensity, attribution
     voice -> Corti VocalEvent -> ProsodyAnalyzer -> arousal (RELATIVE, never
              absolute, never valence)
-    audio -> MultiLayerToneAnalyzer -> 4-class emotions
+    audio -> ToneScoreEngine (tone/tonescore_engine.py) -> 4-class emotions
     both  -> reconcile() -> agreement, defer_to_human
 
 `reconcile()` already exists and already returns `defer_to_human` when the

@@ -1,7 +1,8 @@
 """
 Multi-Layer Tone Analysis (Praat/parselmouth path)
 
-Layer 1: Physiological — pitch, jitter, shimmer, HNR (parselmouth)
+Layer 1: Physiological — pitch (christman_yin), jitter, shimmer, HNR (Praat),
+         all through voice_measure.py
 Layer 2: Prosody — rhythm, pace, pauses
 Layer 3: Paralinguistics — see the note below; MOSTLY NOT IMPLEMENTED
 Layer 4: Discrete emotions — see the note below; RULE-BASED, NOT A CLASSIFIER
@@ -55,58 +56,46 @@ WHAT CHANGED AND WHY
    affine map over rule outputs. Retained, labelled, weights exposed.
 
 5. Duplicate class name with `tone_analyzer.py`. Renamed to
-   `PraatToneAnalyzer`, with an alias kept for existing imports. See the note
-   at the bottom.
+   `PraatToneAnalyzer`. (2026-10-28) tone_analyzer.py is gone and so is the
+   alias `MultiLayerToneAnalyzer`: nothing in Christman-Sound or AlphaVox
+   imported either. `ToneScoreCalculator` is defined only here now.
 
 6. parselmouth was imported at module scope, so the whole module failed to
-   import when it was absent. It is now optional and Layer 1 reports
-   unavailable.
+   import when it was absent. It is now optional.
+
+7. (2026-10-28, Lane 2 of ADR-001) ONE MEASUREMENT.
+   Layer 1 measured pitch with Praat's own pitch tracker. Everett's ruling is
+   that the SDK's pitch is his DSP's YIN ("We have our own DSP for that exact
+   reason"), so pitch_mean/std/min/max now come from christman_yin at the
+   file's own sample rate, through voice_measure.pitch_contour and the one
+   loader. Jitter (local), shimmer (local) and HNR are still Praat, now
+   through voice_measure.voice_quality, the one place the SDK measures them;
+   they stay Praat's fractions and dB here, so the Layer 4 rules read them on
+   the same scale as before. A missing christman_dsp or parselmouth now
+   raises (PitchUnavailable / PraatUnavailable) from extract_physiological
+   instead of returning available=False; analyze_complete reports it as
+   status "error" with the reason. The RMS contour and the WAV reader are the
+   ones in voice_measure.py (this file's copies are gone; same arithmetic).
+   Nothing in Christman-Sound or AlphaVox calls this class; if a being does,
+   its Layer 4 hypotheses now see YIN's pitch, not Praat's.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
-from scipy.io import wavfile
+
+from . import voice_measure
+from .voice_measure import pitch_contour, read_wav, rms_contour, voice_quality
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-try:
-    import parselmouth
-    from parselmouth.praat import call as praat_call
-    _praat_ok = True
-except ImportError:
-    parselmouth = None
-    praat_call = None
-    _praat_ok = False
-
-FRAME_LENGTH = 2048
-HOP_LENGTH = 512
-
-
-def get_rms_contour(y: np.ndarray) -> np.ndarray:
-    pad = FRAME_LENGTH // 2
-    padded = np.pad(y, pad, mode="reflect")
-    n = 1 + (len(padded) - FRAME_LENGTH) // HOP_LENGTH
-    if n < 1:
-        return np.array([0.0], dtype=np.float32)
-    strided = np.lib.stride_tricks.as_strided(
-        padded, shape=(n, FRAME_LENGTH),
-        strides=(padded.strides[0] * HOP_LENGTH, padded.strides[0]), writeable=False,
-    )
-    return np.sqrt(np.mean(strided.astype(np.float64) ** 2, axis=1)).astype(np.float32)
-
-
-def load_audio_native(path: str) -> Tuple[np.ndarray, int]:
-    sr, raw = wavfile.read(path)
-    y = raw.astype(np.float32) / 32768.0 if raw.dtype == np.int16 else raw.astype(np.float32)
-    if y.ndim > 1:
-        y = np.mean(y, axis=1)   # (frames, channels) -> axis=1
-    return y, sr
+FRAME_LENGTH = voice_measure.RMS_FRAME_LENGTH
+HOP_LENGTH = voice_measure.RMS_HOP_LENGTH
 
 
 # -----------------------------------------------------------------------------
@@ -135,7 +124,12 @@ class SpeakerBaseline:
 
 @dataclass(frozen=True)
 class PhysiologicalFeatures:
-    """Layer 1. All Optional — Praat may be absent or find no voicing."""
+    """
+    Layer 1. pitch_* in Hz from christman_yin over voiced frames; jitter and
+    shimmer are Praat's local fractions (0.03 is 3%), hnr is Praat's mean HNR
+    in dB. A field is None when the audio did not give it (no voiced frame,
+    Praat "undefined"); `reason` says why.
+    """
 
     pitch_mean: Optional[float] = None
     pitch_std: Optional[float] = None
@@ -283,74 +277,58 @@ class ToneScoreCalculator:
 
 class PraatToneAnalyzer:
     """
-    Five-layer analysis over Praat plus RMS-envelope prosody.
+    Five-layer analysis: christman_yin pitch and Praat jitter, shimmer and HNR
+    (voice_measure.py), plus RMS-envelope prosody.
 
-    Renamed from `MultiLayerToneAnalyzer` — `tone_analyzer.py` defines a class
-    by that name with a different implementation, and two classes sharing one
-    name in one package means the import path decides which analysis runs.
+    Renamed from `MultiLayerToneAnalyzer`: two classes sharing one name in one
+    package meant the import path decided which analysis ran. That name is no
+    longer defined anywhere in the package (2026-10-28).
     """
 
     def __init__(
         self, sample_rate: int = 16000, baseline: Optional[SpeakerBaseline] = None
     ) -> None:
+        # sample_rate is kept for existing callers. Every measurement reads the
+        # file's own rate from its header; this value is never assumed.
         self.sample_rate = sample_rate
         self.baseline = baseline or SpeakerBaseline()
-        if not _praat_ok:
-            logger.error(
-                "parselmouth is not installed. Layer 1 (pitch, jitter, shimmer, "
-                "HNR) is unavailable and will report as such."
-            )
-        logger.info("PraatToneAnalyzer initialized (praat=%s)", _praat_ok)
+        logger.info("PraatToneAnalyzer initialized")
 
     # -- Layer 1 --------------------------------------------------------------
 
     def extract_physiological(self, audio_path: str) -> PhysiologicalFeatures:
-        if not _praat_ok:
-            return PhysiologicalFeatures(
-                available=False, reason="parselmouth not installed"
-            )
-        try:
-            snd = parselmouth.Sound(audio_path)
-            values = snd.to_pitch().selected_array["frequency"]
-            voiced = values[values > 0]
+        """
+        Pitch from christman_yin, jitter, shimmer and HNR from Praat, all at the
+        file's own sample rate (voice_measure.py). Raises PitchUnavailable or
+        PraatUnavailable when an engine is missing; nothing is filled in.
+        """
+        y, sr = read_wav(audio_path)
+        track = pitch_contour(y, sr)
+        quality = voice_quality(y, sr)
 
-            point_process = praat_call(snd, "To PointProcess (periodic, cc)", 75, 600)
-            jitter = praat_call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
-            shimmer = praat_call([snd, point_process], "Get shimmer (local)",
-                                 0, 0, 0.0001, 0.02, 1.3, 1.6)
-            harmonicity = praat_call(snd, "To Harmonicity (cc)", 0.01, 75, 0.1, 1.0)
-            hnr = praat_call(harmonicity, "Get mean", 0, 0)
-        except Exception as exc:
-            logger.error("Praat analysis failed: %s", exc)
-            return PhysiologicalFeatures(available=False, reason=str(exc))
+        def fraction(pct: Optional[float]) -> Optional[float]:
+            return None if pct is None else pct / 100.0
 
-        def clean(v: Any) -> Optional[float]:
-            # NaN is Praat's "could not measure". The predecessor turned it
-            # into 0.0, which reads as a measurement of zero jitter.
-            try:
-                f = float(v)
-            except (TypeError, ValueError):
-                return None
-            return None if np.isnan(f) else f
-
-        has_voice = len(voiced) > 0
+        reasons = [r for r in (track.summary()["reason"], *quality.reasons.values()) if r]
         return PhysiologicalFeatures(
-            pitch_mean=float(np.mean(voiced)) if has_voice else None,
-            pitch_std=float(np.std(voiced)) if has_voice else None,
-            pitch_min=float(np.min(voiced)) if has_voice else None,
-            pitch_max=float(np.max(voiced)) if has_voice else None,
-            jitter=clean(jitter), shimmer=clean(shimmer), hnr=clean(hnr),
+            pitch_mean=track.mean_hz,
+            pitch_std=track.std_hz,
+            pitch_min=track.min_hz,
+            pitch_max=track.max_hz,
+            jitter=fraction(quality.jitter_local_pct),
+            shimmer=fraction(quality.shimmer_local_pct),
+            hnr=quality.hnr_db,
             available=True,
-            reason=None if has_voice else "no voiced frames found",
+            reason="; ".join(reasons) if reasons else None,
         )
 
     # -- Layer 2 --------------------------------------------------------------
 
     def extract_prosody(self, audio_path: str) -> ProsodyFeatures:
-        y, sr = load_audio_native(audio_path)
+        y, sr = read_wav(audio_path)
         if y.size == 0:
             return ProsodyFeatures()
-        rms = get_rms_contour(y)
+        rms = rms_contour(y)
 
         tempo: Optional[float] = None
         if len(rms) > 2:
@@ -397,7 +375,7 @@ class PraatToneAnalyzer:
         Only `breath_pattern` is real. The counts are not implemented and are
         returned as None, not as zero.
         """
-        y, sr = load_audio_native(audio_path)
+        y, sr = read_wav(audio_path)
         if y.size < FRAME_LENGTH:
             return ParalinguisticFeatures()
 
@@ -517,7 +495,8 @@ class PraatToneAnalyzer:
                 "response_mode": ToneScoreCalculator.get_response_mode(tone_score),
             },
             "meta": {"audio_path": audio_path, "analysis_version": "2.0",
-                     "praat_available": _praat_ok},
+                     "pitch_tracker": "christman_yin (christman_sound.dsp)",
+                     "voice_quality_analyzer": "Praat (parselmouth)"},
             "notes": notes,
         }
 
@@ -563,14 +542,8 @@ class PraatToneAnalyzer:
         return min(100.0, max(0.0, (dominant_strength + energy) / 2.0))
 
 
-#: Backwards-compatible alias. Existing imports of `MultiLayerToneAnalyzer`
-#: from THIS module keep working, but the name now clearly points at the Praat
-#: implementation rather than colliding with tone_analyzer.py's DSP one.
-MultiLayerToneAnalyzer = PraatToneAnalyzer
-
-
 __all__ = [
-    "PraatToneAnalyzer", "MultiLayerToneAnalyzer", "ToneScoreCalculator",
+    "PraatToneAnalyzer", "ToneScoreCalculator",
     "PhysiologicalFeatures", "ProsodyFeatures", "ParalinguisticFeatures",
     "EmotionHypotheses", "SpeakerBaseline",
 ]
