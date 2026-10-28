@@ -3,7 +3,7 @@
 
 — Presence Guide.
 
-Detects when an AAC / nonverbal user is in a state that needs *presence*
+Detects when an AAC / nonverbal client is in a state that needs *presence*
 rather than problem-solving, and shapes response guidance accordingly.
 
 NOT a clinical instrument. A phrase-list guard against toxic positivity,
@@ -86,7 +86,7 @@ NEGATION_WINDOW = 4
 
 
 class HumanState(Enum):
-    """States where the user needs presence, not solutions."""
+    """States where the client needs presence, not solutions."""
 
     GRIEVING = "grieving"
     OVERWHELMED = "overwhelmed"
@@ -188,7 +188,7 @@ def _negated_at(tokens: Sequence[str], index: int) -> bool:
 
 
 class PresenceGuide:
-    """Shapes response guidance when a user is in a presence-needed state."""
+    """Shapes response guidance when a client is in a presence-needed state."""
 
     #: People a loss can be OF. "lost my mother" is grief; "lost my keys" is not.
     _PERSON_NOUNS = frozenset({
@@ -236,14 +236,14 @@ class PresenceGuide:
 
     # -- Detection ------------------------------------------------------------
 
-    def assess(self, user_input: str, context: str = "") -> StateAssessment:
+    def assess(self, client_input: str, context: str = "") -> StateAssessment:
         """
         Detect a presence-needed state, with evidence.
 
         Scores every state and returns the strongest. Negated markers do not
         count. `state` is None when nothing matched.
         """
-        tokens = _tokens(user_input)
+        tokens = _tokens(client_input)
         if not tokens:
             return StateAssessment(state=None)
 
@@ -288,10 +288,10 @@ class PresenceGuide:
         )
 
     def assess_human_state(
-        self, context: str, user_input: str
+        self, context: str, client_input: str
     ) -> Optional[HumanState]:
         """Compatibility wrapper for the original signature."""
-        return self.assess(user_input, context).state
+        return self.assess(client_input, context).state
 
     def _resolve_lost(
         self, tokens: Sequence[str]
@@ -414,7 +414,7 @@ class PresenceGuide:
     }
 
     def get_presence_response(
-        self, human_state: HumanState, user_said_what: Optional[str] = None
+        self, human_state: HumanState, client_said_what: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Guidance for a detected state.

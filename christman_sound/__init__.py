@@ -5,12 +5,28 @@
 # ==============================================================================
 
 """
-christman_sound — the package beings import.
+christman_sound — the package beings import, and where the voice lives.
 
-`christman_sound.core` is the monolith SDK (Sections 1-14: capture, tone,
-temporal nonverbal, eye tracking, gateway). AlphaVox's routers import it as
-`from christman_sound.core import ...`. It used to live only in a vendored
-tree inside AlphaVox; the canon lives here now, one copy, this repo.
+The voice is here, in plain Python and C:
+  - dsp.py          the one loader for christman_dsp.so (built by
+                    scripts/build_dsp.py from christman_dsp.c,
+                    christman_synth.c and christman_vocoder.c)
+  - synth.py        synthesize() and speak(): text -> phones -> sound
+  - stitch.py       frame voices, spoken from a voice's own recordings
+  - lexicon.py      words -> phones
+  - formants.py     formant measurement from recordings
+  - voice_profile.py  a voice's measured profile
+  - logger.py       logging
 
-The modular remediated SDK is `christman_voice_sdk`. New work goes there.
+AlphaVox (backend, checked at EverettNC/AlphaVox 3783a5c, 2026-10-28)
+imports christman_sound.logger, .dsp, .lexicon and .synth, and its voicepack
+script imports .formants. It does not import christman_sound.core.
+
+`christman_sound.core` is kept for the record. Everett's standing ruling: it
+is called by nothing, is never wired into anything, and is not touched.
+(This docstring used to say AlphaVox's routers import it; they do not.)
+
+The modular SDK is `christman_voice_sdk`: hearing, recognition, tone, timbre,
+the speaking engine (synthesis/voice_synthesis.py, which renders through
+christman_sound.synth), and the rest.
 """

@@ -1,26 +1,35 @@
-# Document uploads for ChristmanVideoEngine
+# models/documents
 
-ChristmanVideoEngine extracts text from files dropped in the **Prompt → Source document** field.
+This folder holds no model and no document. It holds this note.
 
-## Supported formats
+## What this note used to say
 
-- **PDF** — text layer via `pypdf`; scanned pages via `christman_ocr_shared.py` (PaddleOCR)
-- **HTML / HTM** — body text extracted for editing in the prompt box
-- **TXT / MD** — plain text
-- **PNG / JPG / …** — OCR via Christman OCR
+It described a document-upload screen for ChristmanVideoEngine: a `/video`
+Prompt UI, a "Source document" field, PDF text through `pypdf`. None of that is
+in this repository. ChristmanVideoEngine is a separate project, and its upload
+screen lives there. (Corrected 2026-10-28.)
 
-## Editable workflow
+## What this repository does have for documents
 
-1. Drop document in `/video` Prompt UI
-2. Text loads into the **Prompt** textarea — edit freely
-3. Render uses **your edited prompt** (document body is not double-injected)
+`christman_ocr_shared.py`, at the repository root. It is the one document
+reader here:
 
-## OCR module
+- `ChristmanOCR(being_name=...).read_document(path)` reads an image
+  (`.jpg .jpeg .png .bmp .tiff .tif .webp`) or a PDF. PDF pages are rendered at
+  300 dpi with PyMuPDF and read with PaddleOCR. There is no `pypdf` text-layer
+  path; every page goes through OCR.
+- `read_screen()` reads the screen once; `watch_screen()` keeps reading it.
+- Lines below confidence 0.50 are dropped.
+- Text found is sent to Derek, a Christman being, over a local WebSocket to be
+  read aloud. If Derek does not answer, the read-aloud raises
+  `SynthesisUnavailable` with the reason. There is no fallback voice.
 
-`christman_ocr_shared.py` lives at the Christman-Sound repo root.
-
-Optional heavy deps (scanned PDFs / photos only):
+What it needs beyond the base install:
 
 ```bash
-pip install paddleocr paddlepaddle pymupdf pillow numpy
+pip install paddleocr paddlepaddle pymupdf pillow
 ```
+
+Not offline yet: PaddleOCR fetches its model files from the network the first
+time it is constructed. Everett's rule is offline, no downloads; this is an
+open item (tests/test_offline.py lists it).
