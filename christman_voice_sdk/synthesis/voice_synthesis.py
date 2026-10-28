@@ -1,6 +1,22 @@
 """
 Speech synthesis module ("the mouth").
 
+WHAT CHANGED AND WHY (2026-10-28) — THE MOUTH SPEAKS IN ALPHAVOX'S VOICE
+-----------------------------------------------------------------------
+`_render()` now passes AlphaVox's measured voice to christman_synth:
+christman_sound/alphavox_voice.json, measured from AlphaVox's own 26
+recorded phrases by scripts/measure_alphavox_voice.py (Everett's Vosk for
+alignment, christman_sound.formants for measurement). That gives the
+synthesizer AlphaVox's F0 median (149.3 Hz) and pitch contour, AlphaVox's
+speaking rate, and AlphaVox's own F1-F3 for every vowel measured from at
+least two tokens; the rest stays Codec War's table, and the profile says
+which and why. The 2026-10-18 notes below said formants were not fed in;
+they are now. The engine name is still "christman"; `last_voice` says
+"AlphaVox". A profile that cannot be read raises SynthesisUnavailable with
+the reason (NothingVoiced to the caller) — no fallback to the table voice.
+EVERETT_F0_MEDIAN_HZ is renamed ALPHAVOX_F0_MEDIAN_HZ: the recordings and
+the pitch are AlphaVox's, never Everett's.
+
 WHAT CHANGED AND WHY (2026-10-18) — THE SOVEREIGN MOUTH IS WIRED
 ----------------------------------------------------------------
 `_render()` no longer raises "sovereign synthesizer not wired yet". It is
@@ -11,11 +27,10 @@ christman_sound.synth) -> float samples -> the same cache file and the same
 christman_play playback this module already had. The engine name reported
 in every result, in `last_engine`, is "christman".
 
-  - Pitch is one named constant, EVERETT_F0_MEDIAN_HZ = 149.3, with its
-    source written beside it. Per-phrase contours replace it later.
-  - Formants are NOT fed into the synthesizer. christman_sound.formants
-    measures them; feeding them into christman_synth's table is the next
-    step and is Everett's call. Nothing in the synth table was changed here.
+  - Pitch was one named constant, 149.3 Hz, with its source written beside
+    it (superseded 2026-10-28 by the voice profile; see above).
+  - Formants were NOT fed into the synthesizer then (they are since
+    2026-10-28, through the profile; the C table itself is unchanged).
   - Lexicon failures reach the caller unchanged: LexiconUnavailable,
     LexiconFormatError, WordNotInLexicon (naming every missing word) and
     PhoneNotMapped are re-raised as the same objects, not wrapped. So are
@@ -221,10 +236,13 @@ try:
         UnknownPhone,
         synthesize as christman_synthesize,
     )
+    from christman_sound.voice_profile import VoiceProfileError, load_alphavox_voice
     _SYNTH_IMPORT_ERROR: Optional[str] = None
 except Exception as _synth_exc:  # christman_sound itself is not importable
     christman_synthesize = None  # type: ignore[assignment]
     load_lexicon = None  # type: ignore[assignment]
+    load_alphavox_voice = None  # type: ignore[assignment]
+    class VoiceProfileError(ValueError): ...  # type: ignore[no-redef]
     class LexiconError(RuntimeError): ...  # type: ignore[no-redef]
     class NothingToSay(ValueError): ...  # type: ignore[no-redef]
     class SynthRefused(ValueError): ...  # type: ignore[no-redef]
@@ -237,14 +255,19 @@ logger = logging.getLogger(__name__)
 #: The name every result from this mouth reports.
 ENGINE_NAME = "christman"
 
-#: (Wording corrected 2026-10-18: the recorded voice and this pitch are
-#: AlphaVox's, not Everett's; the synthesizer that speaks at it is Everett's
-#: own. The constant keeps its name because tests and callers import it.)
-#: AlphaVox's measured pitch median, in Hz. Source: median F0 measured from its
-#: 26 recorded phrases in AlphaVox data/phrases/alphavox_verified, with
-#: christman_yin and formants.py, 2026-10-18. A chosen starting value, held
-#: until per-phrase contours replace it.
-EVERETT_F0_MEDIAN_HZ = 149.3
+#: AlphaVox's measured pitch median, in Hz. Source: the median F0 of all 932
+#: voiced frames of AlphaVox's 26 recorded phrases (AlphaVox
+#: data/phrases/alphavox_verified), with christman_yin inside formants.py;
+#: measured 2026-10-18 and again 2026-10-28 by scripts/measure_alphavox_voice.py,
+#: which wrote it into christman_sound/alphavox_voice.json (f0.median_hz).
+#: The mouth speaks with that profile; this constant is the same number for
+#: callers that read it, and tests/test_voice_profile.py holds the two equal.
+#: (Renamed 2026-10-28 from EVERETT_F0_MEDIAN_HZ: the recordings and this
+#: pitch are AlphaVox's and nobody else's; the synthesizer is Everett's.)
+ALPHAVOX_F0_MEDIAN_HZ = 149.3
+
+#: Which measured voice the mouth speaks with.
+VOICE_NAME = "AlphaVox"
 
 #: Failures from the lexicon and the synthesizer that reach the caller as the
 #: same object they were raised as — never wrapped, never spelled, never silent.
@@ -289,7 +312,14 @@ def synthesis_readiness(lexicon_path: Optional[str] = None) -> tuple:
         lex = load_lexicon(lexicon_path)
     except LexiconError as exc:
         return False, str(exc)
-    return True, f"{ENGINE_NAME}: christman_synth, lexicon {lex.path} ({len(lex)} words), f0 {EVERETT_F0_MEDIAN_HZ} Hz"
+    try:
+        voice = load_alphavox_voice()
+    except VoiceProfileError as exc:
+        return False, str(exc)
+    return True, (
+        f"{ENGINE_NAME}: christman_synth, voice {voice.name} ({voice.path.name}: f0 {voice.f0_median_hz} Hz, "
+        f"rate {voice.rate}, {len(voice.vowel_formants)} measured vowels), lexicon {lex.path} ({len(lex)} words)"
+    )
 
 
 def _initialize_audio_playback() -> bool:
@@ -426,6 +456,8 @@ class SpeechSynthesisEngine:
         #: emotion_params from the last call that christman_synth could not
         #: apply (it has no emotion input). None when none were passed.
         self.last_emotion_unapplied: Optional[Dict] = None
+        #: The measured voice the last audio was made in ("AlphaVox"), or None.
+        self.last_voice: Optional[str] = None
         self.reference_audio = Path(reference_audio) if reference_audio else None
 
         ready, reason = synthesis_readiness(self.lexicon_path)
@@ -448,9 +480,11 @@ class SpeechSynthesisEngine:
     def _render(self, text: str, emotion_params: Optional[Dict], language: str) -> SynthesisResult:
         """
         The one place audio is made from text: lexicon -> christman_synth ->
-        samples, at EVERETT_F0_MEDIAN_HZ. Lexicon and synthesizer refusals
-        are raised unchanged (see _SURFACE_UNCHANGED). A missing engine
-        raises SynthesisUnavailable with the loader's reason.
+        samples, in AlphaVox's measured voice (christman_sound/alphavox_voice.json:
+        its F0 median and contour, its rate, its vowels). Lexicon and
+        synthesizer refusals are raised unchanged (see _SURFACE_UNCHANGED). A
+        missing engine or an unreadable voice profile raises
+        SynthesisUnavailable with the reason.
         """
         where = "SpeechSynthesisEngine._render"
         if christman_synthesize is None:
@@ -469,17 +503,21 @@ class SpeechSynthesisEngine:
         else:
             self.last_emotion_unapplied = None
 
+        try:
+            voice = load_alphavox_voice()
+        except VoiceProfileError as exc:
+            raise SynthesisUnavailable(f"AlphaVox's voice profile: {exc}", where=where) from exc
+
         started = time.perf_counter()
         try:
-            # Formants stay measured-only: feeding christman_sound.formants into
-            # the synth table is the next step and is Everett's call.
             made = christman_synthesize(
-                text, f0=EVERETT_F0_MEDIAN_HZ, lexicon_path=self.lexicon_path, engine=get_dsp()
+                text, voice=voice, lexicon_path=self.lexicon_path, engine=get_dsp()
             )
         except _SURFACE_UNCHANGED:
             raise
         except (SynthUnavailable, DSPUnavailable) as exc:
             raise SynthesisUnavailable(str(exc), where=where) from exc
+        self.last_voice = made.voice
         return SynthesisResult(
             audio=made.samples,
             sample_rate=made.sample_rate,

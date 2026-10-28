@@ -32,11 +32,13 @@ Where Codec War spells an unknown word letter by letter, this raises
 WordNotInLexicon. Where it would voice an empty string as 0.2 s of silence,
 this raises NothingToSay.
 
-What this is NOT yet: AlphaVox's voice. It is Codec War's formant voice, ours
-end to end, synthesized by Everett's own synthesizer. Shaping it toward
-AlphaVox's recorded voice is a later step. (Wording corrected 2026-10-18:
-Everett ruled the recorded voice and its measured pitch are AlphaVox's, not
-his; the synthesizer is his.)
+AlphaVox's voice (added 2026-10-28). By itself this module speaks Codec
+War's table voice. Pass `voice=load_alphavox_voice()` (christman_sound.
+voice_profile) and it speaks in AlphaVox's voice as measured from AlphaVox's
+own 26 recordings: AlphaVox's F0 median and pitch contour, AlphaVox's rate,
+and AlphaVox's F1-F3 for each vowel measured from at least two tokens, through
+christman_synth_voiced. The recordings and the pitch are AlphaVox's, never
+Everett's; the synthesizer is Everett's.
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ from .dsp import (
     get_dsp,
 )
 from .lexicon import Lexicon, WordNotInLexicon, load_lexicon, normalize_word
+from .voice_profile import VoiceProfile
 
 __all__ = [
     "CODECWAR_SAMPLE_RATE",
@@ -120,6 +123,9 @@ class SynthResult:
     f0: Union[float, Tuple[float, ...]]
     rate: float
     engine: str = field(default="christman_synth")
+    #: The measured voice the samples were made with (e.g. "AlphaVox"), or
+    #: None for Codec War's own table voice.
+    voice: Optional[str] = None
 
     @property
     def duration(self) -> float:
@@ -174,13 +180,14 @@ def synthesize(
     text: Optional[str] = None,
     *,
     phones: Optional[Sequence[Tuple[str, float]]] = None,
-    f0: float = CODECWAR_F0,
+    f0: Optional[float] = None,
     f0_contour: Optional[Sequence[float]] = None,
-    rate: float = 1.0,
+    rate: Optional[float] = None,
     sample_rate: int = CODECWAR_SAMPLE_RATE,
     lexicon: Optional[Lexicon] = None,
     lexicon_path: Optional[Union[str, Path]] = None,
     engine: Optional[ChristmanDSP] = None,
+    voice: Optional[VoiceProfile] = None,
 ) -> SynthResult:
     """
     Synthesize `text` (looked up in the lexicon) or `phones` (a list of
@@ -189,9 +196,16 @@ def synthesize(
     f0          single pitch in Hz, used as synth.ts uses it (default 148).
     f0_contour  optional per-phone pitch, one value per phone in the final
                 sequence (for text, see text_to_phones: it includes the SILs).
-    rate        0.6 to 1.6; every duration is divided by it. Outside that
-                range the engine refuses (Codec War clamps; we do not).
+    rate        0.6 to 1.6; every duration is divided by it (default 1.0).
+                Outside that range the engine refuses (Codec War clamps; we
+                do not).
     sample_rate 16000 (Codec War, default) or 22050.
+    voice       (2026-10-28) a measured VoiceProfile, e.g.
+                voice_profile.load_alphavox_voice(). Its F0 median and pitch
+                contour give the pitch, its rate the rate, and its measured
+                vowel F1-F3 replace Codec War's for those vowels. A voice is
+                the one source of pitch and rate: passing f0, f0_contour or
+                rate with it raises ValueError rather than mix the two.
 
     Raises LexiconUnavailable, WordNotInLexicon, PhoneNotMapped, NothingToSay,
     UnknownPhone, SynthRefused, SynthUnavailable or DSPUnavailable. Never
@@ -199,6 +213,8 @@ def synthesize(
     """
     if (text is None) == (phones is None):
         raise ValueError("pass exactly one of text or phones")
+    if voice is not None and (f0 is not None or f0_contour is not None or rate is not None):
+        raise ValueError("a voice carries its own pitch and rate; do not also pass f0, f0_contour or rate")
     dsp = engine if engine is not None else get_dsp()
     table = dsp.synth_phone_table()
 
@@ -220,7 +236,18 @@ def synthesize(
 
     ids = [table[pid][0] for pid, _, _ in seq]
     durs = [d for _, d, _ in seq]
-    samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour)
+    rows = None
+    if voice is not None:
+        # The voice's own pitch, contour, rate and vowel resonances.
+        rate = voice.rate
+        f0 = voice.f0_median_hz
+        f0_contour = voice.f0_contour(durs, [pid != "SIL" for pid, _, _ in seq])
+        rows = voice.formant_rows([pid for pid, _, _ in seq], dsp.synth_phone_formants())
+    if f0 is None:
+        f0 = CODECWAR_F0
+    if rate is None:
+        rate = 1.0
+    samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour, rows)
 
     # The timeline exactly as the C computes it (dur / rate, running sum).
     timeline: List[TimedPhone] = []
@@ -235,6 +262,7 @@ def synthesize(
         phones=timeline,
         f0=tuple(f0_contour) if f0_contour is not None else float(f0),
         rate=float(rate),
+        voice=voice.name if voice is not None else None,
     )
 
 

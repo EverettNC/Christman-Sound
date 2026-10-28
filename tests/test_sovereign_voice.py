@@ -48,6 +48,7 @@ from christman_sound.lexicon import (  # noqa: E402
     WordNotInLexicon,
 )
 from christman_sound import synth as cs_synth  # noqa: E402
+from christman_sound.voice_profile import load_alphavox_voice  # noqa: E402
 from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable  # noqa: E402
 from christman_voice_sdk.synthesis import voice_synthesis as vs  # noqa: E402
 
@@ -110,9 +111,10 @@ def test_render_returns_real_samples_from_christman_synth(mouth, dsp, lexicon_fi
     assert isinstance(r.audio, array.array) and r.audio.typecode == "f"
     assert r.sample_rate == cs_synth.CODECWAR_SAMPLE_RATE
     assert r.degraded is False and r.error_reason is None
-    # The same samples christman_synth gives for this text at this pitch: the
-    # mouth adds nothing and takes nothing away.
-    direct = cs_synth.synthesize(PHRASE, f0=F0, lexicon_path=lexicon_file, engine=dsp)
+    # The same samples christman_synth gives for this text in AlphaVox's
+    # measured voice: the mouth adds nothing and takes nothing away.
+    direct = cs_synth.synthesize(PHRASE, voice=load_alphavox_voice(), lexicon_path=lexicon_file, engine=dsp)
+    assert direct.voice == "AlphaVox" and mouth.last_voice == "AlphaVox"
     assert list(r.audio) == list(direct.samples)
     assert abs(r.duration - len(r.audio) / r.sample_rate) < 1e-12
     peak = max(abs(s) for s in r.audio)
@@ -123,29 +125,47 @@ def test_render_returns_real_samples_from_christman_synth(mouth, dsp, lexicon_fi
     assert rms > 0.05
 
 
-def test_f0_constant_is_everetts_measured_median_with_its_source():
-    assert vs.EVERETT_F0_MEDIAN_HZ == 149.3
+def test_f0_constant_is_alphavox_measured_median_with_its_source():
+    assert vs.ALPHAVOX_F0_MEDIAN_HZ == 149.3
+    assert not hasattr(vs, "EVERETT_F0_MEDIAN_HZ")  # the recordings and the pitch are AlphaVox's
+    assert load_alphavox_voice().f0_median_hz == vs.ALPHAVOX_F0_MEDIAN_HZ
     src = (ROOT / "christman_voice_sdk" / "synthesis" / "voice_synthesis.py").read_text(encoding="utf-8")
-    at = src.index("\nEVERETT_F0_MEDIAN_HZ = 149.3")  # the assignment, not the docstring mention
-    beside = src[max(0, at - 400):at]
+    at = src.index("\nALPHAVOX_F0_MEDIAN_HZ = 149.3")  # the assignment, not the docstring mention
+    beside = src[max(0, at - 700):at]
     for words in ("26 recorded phrases", "alphavox_verified", "christman_yin", "formants.py",
-                  "2026-10-18", "per-phrase contours"):
+                  "alphavox_voice.json", "AlphaVox's"):
         assert words in beside, words
 
 
-def test_output_pitch_is_149_3_hz_by_christman_yin(mouth, dsp):
+def test_output_pitch_follows_alphavox_contour_by_christman_yin(mouth, dsp):
+    """
+    The mouth speaks at AlphaVox's F0 median moved by AlphaVox's measured
+    contour, so the requested pitch is a range, not one number. Every voiced
+    frame must sit inside the range the contour asked for, widened by the
+    3 % tolerance above; the median inside it widened by the median tolerance.
+    """
     r = mouth._render(PHRASE, None, "en")
     sr = r.sample_rate
+    made = cs_synth.synthesize(PHRASE, voice=load_alphavox_voice(), lexicon_path=mouth.lexicon_path, engine=dsp)
+    asked = [f for f, ph in zip(made.f0, made.phones) if ph.id != "SIL"]
+    lo, hi = min(asked), max(asked)
     est, voiced = _voiced_yin(dsp, r.audio, sr)
     median = statistics.median(voiced)
-    median_tol = F0 / (sr - F0) + 0.003
-    worst = max(abs(e - F0) / F0 for e in voiced)
-    print(f"requested {F0} Hz at {sr} Hz: {len(voiced)} voiced of {len(est)} frames, "
-          f"median {median:.2f} Hz ({(median - F0) / F0 * 100:+.2f} %, tol {median_tol * 100:.2f} %), "
-          f"worst voiced frame {worst * 100:.2f} %")
-    assert len(voiced) >= 20
-    assert abs(median - F0) / F0 <= median_tol
-    assert worst <= 0.03, voiced
+    median_tol = hi / (sr - hi) + 0.003
+    print(f"asked {lo:.2f}-{hi:.2f} Hz (AlphaVox median {F0} Hz with its contour) at {sr} Hz: "
+          f"{len(voiced)} voiced of {len(est)} frames, median {median:.2f} Hz, "
+          f"range {min(voiced):.2f}-{max(voiced):.2f} Hz")
+    # 20 voiced frames was the floor at rate 1.0. AlphaVox speaks at its
+    # measured rate (1.33), so the same phrase lasts 1 / rate as long and
+    # carries that many fewer frames: the floor scales with it (15 at 1.33).
+    # Measured 2026-10-28 on Everett's Mac: 17 voiced frames.
+    assert len(voiced) >= int(20 / made.rate), (len(voiced), made.rate)
+    assert lo * (1 - median_tol) <= median <= hi * (1 + median_tol)
+    assert all(lo * 0.97 <= e <= hi * 1.03 for e in voiced), voiced
+    # and the range is AlphaVox's: inside the contour's own extremes around 149.3 Hz
+    v = load_alphavox_voice()
+    semis = [s for _, s in v.contour_points]
+    assert lo >= F0 * 2 ** (min(semis) / 12) - 1e-9 and hi <= F0 * 2 ** (max(semis) / 12) + 1e-9
 
 
 def test_generate_speech_audio_writes_the_samples_and_reports_christman(mouth, tmp_path):

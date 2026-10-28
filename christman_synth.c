@@ -64,6 +64,18 @@
 //         6 sample rate not 16000 or 22050
 //         7 out_len does not equal christman_synth_length(...)
 //         8 allocation failed
+//   int christman_synth_voiced(ids, durs, n, f0_contour_or_NULL, f0, rate,
+//                              sample_rate, formants_or_NULL, out, out_len)
+//       (added 2026-10-28) The same synthesis, with one more input: a voice's
+//       own resonances. `formants` is NULL (then this is exactly
+//       christman_synth) or n_phones rows of 5 doubles, one row per phone in
+//       the sequence: F1, F2, F3, BW1, BW2 in Hz. The cascade steers toward
+//       the row's values instead of the table's. Everything else (source,
+//       envelopes, durations, the fixed BW3 of 160 Hz) is the table's and
+//       synth.ts's, unchanged. This is how AlphaVox's measured vowels reach
+//       the synthesizer: christman_sound/voice_profile.py builds the rows
+//       from christman_sound/alphavox_voice.json. Extra return code:
+//         9 a formant row value not > 0, finite and below sample_rate / 2
 //   int christman_synth_phone_count(void)            -> 40
 //   const char* christman_synth_phone_name(int id)   -> "AA" etc, NULL if bad id
 //   int christman_synth_phone_id(const char* name)   -> id, or -1 if unknown
@@ -158,6 +170,26 @@ double christman_synth_phone_dur(int id) {
     return (id >= 0 && id < CM_N_PHONES) ? CM_PHONES[id].dur : -1.0;
 }
 
+// (added 2026-10-28) The table row's F1, F2, F3, BW1, BW2 into out[0..4], so
+// a voice profile can start from Codec War's values and replace only what it
+// measured. Returns 0, or -1 for a bad id or a NULL out (nothing written).
+int christman_synth_phone_formants(int id, double* out) {
+    if (!out || id < 0 || id >= CM_N_PHONES) return -1;
+    out[0] = CM_PHONES[id].f1;
+    out[1] = CM_PHONES[id].f2;
+    out[2] = CM_PHONES[id].f3;
+    out[3] = CM_PHONES[id].bw1;
+    out[4] = CM_PHONES[id].bw2;
+    return 0;
+}
+
+// (added 2026-10-28) 1 when the phone is a vowel in Codec War's kinds
+// (phonemes.ts:7), 0 when not, -1 for a bad id.
+int christman_synth_phone_is_vowel(int id) {
+    if (id < 0 || id >= CM_N_PHONES) return -1;
+    return CM_PHONES[id].kind == K_VOWEL ? 1 : 0;
+}
+
 // Glottal pulse, synth.ts:6-13: a smoothstep rise over 62% of the period,
 // then a parabolic fall.
 static double cm_glottal(double phase) {
@@ -224,9 +256,21 @@ static cm_pole cm_make_pole(double freq, double bw, int sr) {
     return p;
 }
 
+int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_phones,
+                           const double* f0_contour, double f0, double rate, int sample_rate,
+                           const double* formants, float* out, size_t out_len);
+
 int christman_synth(const int* phone_ids, const double* durs, size_t n_phones,
                     const double* f0_contour, double f0, double rate, int sample_rate,
                     float* out, size_t out_len) {
+    // Codec War's own voice: the table's formants, sample for sample synth.ts.
+    return christman_synth_voiced(phone_ids, durs, n_phones, f0_contour, f0, rate,
+                                  sample_rate, NULL, out, out_len);
+}
+
+int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_phones,
+                           const double* f0_contour, double f0, double rate, int sample_rate,
+                           const double* formants, float* out, size_t out_len) {
     if (!phone_ids || !durs || !out || n_phones == 0) return 1;
     for (size_t k = 0; k < n_phones; k++)
         if (phone_ids[k] < 0 || phone_ids[k] >= CM_N_PHONES) return 2;
@@ -241,6 +285,10 @@ int christman_synth(const int* phone_ids, const double* durs, size_t n_phones,
         return 4;
     }
     if (!cm_check_rate(rate)) return 5;
+    if (formants) {
+        for (size_t k = 0; k < n_phones * 5; k++)
+            if (!isfinite(formants[k]) || formants[k] <= 0 || formants[k] >= nyquist) return 9;
+    }
 
     double* starts = (double*)malloc(n_phones * sizeof(double));
     double* scaled = (double*)malloc(n_phones * sizeof(double));
@@ -298,11 +346,18 @@ int christman_synth(const int* phone_ids, const double* durs, size_t n_phones,
         double time = (double)i / SR;
         while (k + 1 < n_phones && time >= starts[k + 1]) k++;
         const cm_phone* proto = &CM_PHONES[phone_ids[k]];
-        f1 += 0.14 * (proto->f1 - f1);                              // synth.ts:135
-        f2 += 0.14 * (proto->f2 - f2);                              // synth.ts:136
-        f3 += 0.1 * (proto->f3 - f3);                               // synth.ts:137
-        b1 += 0.1 * (proto->bw1 - b1);                              // synth.ts:138
-        b2 += 0.1 * (proto->bw2 - b2);                              // synth.ts:139
+        // Targets: the voice's own row when one is given, else the table's.
+        const double* row = formants ? formants + 5 * k : NULL;
+        double t1 = row ? row[0] : proto->f1;
+        double t2 = row ? row[1] : proto->f2;
+        double t3 = row ? row[2] : proto->f3;
+        double tb1 = row ? row[3] : proto->bw1;
+        double tb2 = row ? row[4] : proto->bw2;
+        f1 += 0.14 * (t1 - f1);                                     // synth.ts:135
+        f2 += 0.14 * (t2 - f2);                                     // synth.ts:136
+        f3 += 0.1 * (t3 - f3);                                      // synth.ts:137
+        b1 += 0.1 * (tb1 - b1);                                     // synth.ts:138
+        b2 += 0.1 * (tb2 - b2);                                     // synth.ts:139
         cm_pole p1 = cm_make_pole(f1, b1, sample_rate);
         cm_pole p2 = cm_make_pole(f2, b2, sample_rate);
         cm_pole p3 = cm_make_pole(f3, 160, sample_rate);            // synth.ts:142 fixed BW3

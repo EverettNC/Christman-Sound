@@ -1,0 +1,2647 @@
+{
+ "voice": "AlphaVox",
+ "schema": 1,
+ "what_this_is": "AlphaVox's voice, measured from AlphaVox's own 26 recorded phrases, for christman_synth (christman_sound.voice_profile applies it). The recordings are AlphaVox's voice and no one else's. Every value sits beside the measurements it came from.",
+ "applied": "F0 median and pitch contour -> per-phone pitch; rate -> christman_synth's rate; each measured vowel's F1, F2, F3 -> that vowel's formant targets. Not applied, and why: the measured bandwidths (christman_sound.formants says LPC bandwidths read far too narrow when F1 sits on a harmonic, and a too-narrow bandwidth would make the synthesizer ring), consonants (their places inside a word cannot be told apart from word times alone), and vowels in not_measured. Those keep Codec War's table values.",
+ "measured_on": "2026-10-28",
+ "sources": {
+  "recordings": {
+   "repository": "EverettNC/AlphaVox",
+   "directory": "data/phrases/alphavox_verified",
+   "commit": "326c9f1ee8ccdd4cc977222bcdfb71cd3248baf6",
+   "files": [
+    {
+     "name": "alphavox_hello.wav",
+     "sha256": "39d06a9a8173b604618cf4627c93895bf626fbdff0d33c30204201d6be920c7b",
+     "text": "hello",
+     "sample_rate": 24000,
+     "seconds": 0.448,
+     "aligned_words": [
+      {
+       "word": "hello",
+       "start": 0.06,
+       "end": 0.42,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_angry.wav",
+     "sha256": "eeb2f4bc7ea211712674e0c0f6f4c9b49ae69c89a6e727c645832913938d91b1",
+     "text": "i am angry",
+     "sample_rate": 24000,
+     "seconds": 0.624,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.24,
+       "conf": 1.0
+      },
+      {
+       "word": "angry",
+       "start": 0.24,
+       "end": 0.57,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_feeling_happy.wav",
+     "sha256": "4638ba80ed69fefa4f87eaf4e9acc932b5d354ac4fb294122c3cc462bdac2cc0",
+     "text": "i am feeling happy",
+     "sample_rate": 24000,
+     "seconds": 1.029,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.24,
+       "conf": 1.0
+      },
+      {
+       "word": "feeling",
+       "start": 0.24,
+       "end": 0.6,
+       "conf": 1.0
+      },
+      {
+       "word": "happy",
+       "start": 0.6,
+       "end": 0.99,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_feeling_sad.wav",
+     "sha256": "b387995e411abbf803a31cc3dbc9344a61403f630634b6edbf6a7c6126dd65a2",
+     "text": "i am feeling sad",
+     "sample_rate": 24000,
+     "seconds": 1.035,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.24,
+       "conf": 1.0
+      },
+      {
+       "word": "feeling",
+       "start": 0.24,
+       "end": 0.57,
+       "conf": 1.0
+      },
+      {
+       "word": "sad",
+       "start": 0.57,
+       "end": 1.02,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_finished.wav",
+     "sha256": "9a255e024804ca6196ff5a6a728b6a39d0f7c4449ca0ae2a42abe170e0364169",
+     "text": "i am finished",
+     "sample_rate": 24000,
+     "seconds": 0.661,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.24,
+       "conf": 1.0
+      },
+      {
+       "word": "finished",
+       "start": 0.24,
+       "end": 0.66,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_hungry_i_need_food.wav",
+     "sha256": "f08541713f5db53144302f9c5598eed7e39a17a7799f6534bb909fd5bc66469d",
+     "text": "i am hungry i need food",
+     "sample_rate": 24000,
+     "seconds": 1.743,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.21,
+       "conf": 1.0
+      },
+      {
+       "word": "hungry",
+       "start": 0.21,
+       "end": 0.72,
+       "conf": 1.0
+      },
+      {
+       "word": "i",
+       "start": 0.96,
+       "end": 1.08,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 1.08,
+       "end": 1.32,
+       "conf": 1.0
+      },
+      {
+       "word": "food",
+       "start": 1.32,
+       "end": 1.71,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_in_pain_i_need_help.wav",
+     "sha256": "68141f2ad7228a21eacfc9edbccdc9f333c104b0b83b1a293fd83ca300e9335c",
+     "text": "i am in pain i need help",
+     "sample_rate": 24000,
+     "seconds": 1.722,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.27,
+       "conf": 1.0
+      },
+      {
+       "word": "in",
+       "start": 0.27,
+       "end": 0.36,
+       "conf": 1.0
+      },
+      {
+       "word": "pain",
+       "start": 0.36,
+       "end": 0.84,
+       "conf": 1.0
+      },
+      {
+       "word": "i",
+       "start": 1.08,
+       "end": 1.17,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 1.17,
+       "end": 1.38,
+       "conf": 1.0
+      },
+      {
+       "word": "help",
+       "start": 1.38,
+       "end": 1.71,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_scared.wav",
+     "sha256": "5c65e40f2d8c48e9422f459d670d0b7e7d1be21e9016f950fd47992296337953",
+     "text": "i am scared",
+     "sample_rate": 24000,
+     "seconds": 0.736,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.15,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.15,
+       "end": 0.27,
+       "conf": 1.0
+      },
+      {
+       "word": "scared",
+       "start": 0.27,
+       "end": 0.72,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "sha256": "7ad6a519430617b73f2b1584dd7885b0dfc79d61684eb1356dc8f61b8e9b74c8",
+     "text": "i am thirsty i need a drink",
+     "sample_rate": 24000,
+     "seconds": 1.669,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.24,
+       "conf": 1.0
+      },
+      {
+       "word": "thirsty",
+       "start": 0.24,
+       "end": 0.75,
+       "conf": 1.0
+      },
+      {
+       "word": "i",
+       "start": 0.93,
+       "end": 1.05,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 1.05,
+       "end": 1.26,
+       "conf": 1.0
+      },
+      {
+       "word": "a",
+       "start": 1.26,
+       "end": 1.29,
+       "conf": 1.0
+      },
+      {
+       "word": "drink",
+       "start": 1.29,
+       "end": 1.65,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_am_tired_i_need_rest.wav",
+     "sha256": "aeaf5fcbc21ba4d93784304e26756b77f958c964abc7b761cf4f4027dcc73315",
+     "text": "i am tired i need rest",
+     "sample_rate": 24000,
+     "seconds": 1.749,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "am",
+       "start": 0.12,
+       "end": 0.27,
+       "conf": 1.0
+      },
+      {
+       "word": "tired",
+       "start": 0.27,
+       "end": 0.75,
+       "conf": 1.0
+      },
+      {
+       "word": "i",
+       "start": 0.99,
+       "end": 1.11,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 1.11,
+       "end": 1.315338,
+       "conf": 1.0
+      },
+      {
+       "word": "rest",
+       "start": 1.32,
+       "end": 1.74,
+       "conf": 0.844615
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_have_a_question.wav",
+     "sha256": "2c26a3c9368919b5b2f5c2d995f19a0daa797182bf11b53bba5f5fc8b688dcca",
+     "text": "i have a question",
+     "sample_rate": 24000,
+     "seconds": 0.884,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "have",
+       "start": 0.12,
+       "end": 0.3,
+       "conf": 1.0
+      },
+      {
+       "word": "a",
+       "start": 0.3,
+       "end": 0.33,
+       "conf": 1.0
+      },
+      {
+       "word": "question",
+       "start": 0.33,
+       "end": 0.84,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_love_you.wav",
+     "sha256": "e7e80a92e92eff3b34aa358162e71d3888d231d3136443b40540c67d2bbb1a0c",
+     "text": "i love you",
+     "sample_rate": 24000,
+     "seconds": 0.656,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "love",
+       "start": 0.12,
+       "end": 0.36,
+       "conf": 1.0
+      },
+      {
+       "word": "you",
+       "start": 0.36,
+       "end": 0.63,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_need_a_break.wav",
+     "sha256": "e30542a6c6fe26c907d59dc3d5161fa148cf67ac50dc7a9a9055b7999df6de4f",
+     "text": "i need a break",
+     "sample_rate": 24000,
+     "seconds": 0.8,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.15,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 0.15,
+       "end": 0.39,
+       "conf": 1.0
+      },
+      {
+       "word": "a",
+       "start": 0.39,
+       "end": 0.45,
+       "conf": 1.0
+      },
+      {
+       "word": "break",
+       "start": 0.45,
+       "end": 0.78,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_need_help_please.wav",
+     "sha256": "d4aee0ba3948cbe5f17efc76221f8bb64ec95c4e3c14dd0887ccfd1d46ad6f00",
+     "text": "i need help please",
+     "sample_rate": 24000,
+     "seconds": 0.901,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.09,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 0.09,
+       "end": 0.3,
+       "conf": 1.0
+      },
+      {
+       "word": "help",
+       "start": 0.3,
+       "end": 0.51,
+       "conf": 1.0
+      },
+      {
+       "word": "please",
+       "start": 0.51,
+       "end": 0.9,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_need_my_medicine.wav",
+     "sha256": "d27d0da009a97f676b37bbe556e9ab3c7154d4ecab8a2918dfa3a45d1a06f41e",
+     "text": "i need my medicine",
+     "sample_rate": 24000,
+     "seconds": 1.008,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.15,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 0.15,
+       "end": 0.36,
+       "conf": 1.0
+      },
+      {
+       "word": "my",
+       "start": 0.36,
+       "end": 0.48,
+       "conf": 1.0
+      },
+      {
+       "word": "medicine",
+       "start": 0.48,
+       "end": 0.99,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_need_to_use_the_bathroom.wav",
+     "sha256": "1dac1cf2dc9134622b11e3e529f93785988bf2e6ca46094097d732fc529ea488",
+     "text": "i need to use the bathroom",
+     "sample_rate": 24000,
+     "seconds": 1.344,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.12,
+       "conf": 1.0
+      },
+      {
+       "word": "need",
+       "start": 0.12,
+       "end": 0.33,
+       "conf": 1.0
+      },
+      {
+       "word": "to",
+       "start": 0.33,
+       "end": 0.39,
+       "conf": 1.0
+      },
+      {
+       "word": "use",
+       "start": 0.39,
+       "end": 0.69,
+       "conf": 1.0
+      },
+      {
+       "word": "the",
+       "start": 0.69,
+       "end": 0.78,
+       "conf": 1.0
+      },
+      {
+       "word": "bathroom",
+       "start": 0.78,
+       "end": 1.29,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_want_more.wav",
+     "sha256": "fde68379a07ab171934d58b9d30a6188881389d7d57994bba59b1bf49a92a1ce",
+     "text": "i want more",
+     "sample_rate": 24000,
+     "seconds": 0.629,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.088124,
+       "conf": 0.929046
+      },
+      {
+       "word": "want",
+       "start": 0.088124,
+       "end": 0.3,
+       "conf": 1.0
+      },
+      {
+       "word": "more",
+       "start": 0.3,
+       "end": 0.6,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_want_to_go_home.wav",
+     "sha256": "b42883408b1a61b839453daf4476e1cc1703c0d8c724a7faa6f72c520399a554",
+     "text": "i want to go home",
+     "sample_rate": 24000,
+     "seconds": 0.901,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.09,
+       "conf": 1.0
+      },
+      {
+       "word": "want",
+       "start": 0.09,
+       "end": 0.33,
+       "conf": 1.0
+      },
+      {
+       "word": "to",
+       "start": 0.33,
+       "end": 0.39,
+       "conf": 1.0
+      },
+      {
+       "word": "go",
+       "start": 0.39,
+       "end": 0.57,
+       "conf": 1.0
+      },
+      {
+       "word": "home",
+       "start": 0.57,
+       "end": 0.9,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_want_to_go_outside.wav",
+     "sha256": "2270cb2e0347e5085b0c06c74172835292f7a8c98bce9f2d1b816d5f448fbde7",
+     "text": "i want to go outside",
+     "sample_rate": 24000,
+     "seconds": 1.051,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.09,
+       "conf": 1.0
+      },
+      {
+       "word": "want",
+       "start": 0.09,
+       "end": 0.3,
+       "conf": 1.0
+      },
+      {
+       "word": "to",
+       "start": 0.3,
+       "end": 0.39,
+       "conf": 1.0
+      },
+      {
+       "word": "go",
+       "start": 0.39,
+       "end": 0.54,
+       "conf": 1.0
+      },
+      {
+       "word": "outside",
+       "start": 0.54,
+       "end": 1.02,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_want_to_listen_to_music.wav",
+     "sha256": "688e463378514a3a4b6ac7601471ab3ddd6faccae5a9b2ca9b7e80df7284b586",
+     "text": "i want to listen to music",
+     "sample_rate": 24000,
+     "seconds": 1.275,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.09,
+       "conf": 1.0
+      },
+      {
+       "word": "want",
+       "start": 0.09,
+       "end": 0.3,
+       "conf": 1.0
+      },
+      {
+       "word": "to",
+       "start": 0.3,
+       "end": 0.39,
+       "conf": 1.0
+      },
+      {
+       "word": "listen",
+       "start": 0.39,
+       "end": 0.69,
+       "conf": 1.0
+      },
+      {
+       "word": "to",
+       "start": 0.69,
+       "end": 0.78,
+       "conf": 1.0
+      },
+      {
+       "word": "music",
+       "start": 0.78,
+       "end": 1.26,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_want_to_play.wav",
+     "sha256": "7f7ace40db344d48741f4382b286b5457f174357844d576f2ec86756da239a7b",
+     "text": "i want to play",
+     "sample_rate": 24000,
+     "seconds": 0.752,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.09,
+       "conf": 1.0
+      },
+      {
+       "word": "want",
+       "start": 0.09,
+       "end": 0.33,
+       "conf": 1.0
+      },
+      {
+       "word": "to",
+       "start": 0.33,
+       "end": 0.39,
+       "conf": 1.0
+      },
+      {
+       "word": "play",
+       "start": 0.39,
+       "end": 0.72,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_i_want_to_read_a_book.wav",
+     "sha256": "9548e402e78d7b904dcaac91bb4c9ab7488bc64e029d40eb7c798a04d50b0642",
+     "text": "i want to read a book",
+     "sample_rate": 24000,
+     "seconds": 0.965,
+     "aligned_words": [
+      {
+       "word": "i",
+       "start": 0.0,
+       "end": 0.09,
+       "conf": 1.0
+      },
+      {
+       "word": "want",
+       "start": 0.09,
+       "end": 0.33,
+       "conf": 1.0
+      },
+      {
+       "word": "to",
+       "start": 0.33,
+       "end": 0.39,
+       "conf": 1.0
+      },
+      {
+       "word": "read",
+       "start": 0.39,
+       "end": 0.6,
+       "conf": 1.0
+      },
+      {
+       "word": "a",
+       "start": 0.6,
+       "end": 0.63,
+       "conf": 1.0
+      },
+      {
+       "word": "book",
+       "start": 0.63,
+       "end": 0.96,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_no.wav",
+     "sha256": "22c48947e3874374f0b7c2cf362519f6676ddc6033f518fd9e2c921884696a73",
+     "text": "no",
+     "sample_rate": 24000,
+     "seconds": 0.352,
+     "aligned_words": [
+      {
+       "word": "no",
+       "start": 0.06,
+       "end": 0.3,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_stop.wav",
+     "sha256": "e6b27a38fd822fe9f33617e095eb1a130d231c2baec9dab06b7b0600bf9ad0ed",
+     "text": "stop",
+     "sample_rate": 24000,
+     "seconds": 0.48,
+     "aligned_words": [
+      {
+       "word": "stop",
+       "start": 0.06,
+       "end": 0.45,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_thank_you.wav",
+     "sha256": "f5c80d21e8262efac52fbd68ef67b3f64e14833fc1ff0f5fc7fe1c7bec07f45e",
+     "text": "thank you",
+     "sample_rate": 24000,
+     "seconds": 0.496,
+     "aligned_words": [
+      {
+       "word": "thank",
+       "start": 0.06,
+       "end": 0.3,
+       "conf": 1.0
+      },
+      {
+       "word": "you",
+       "start": 0.3,
+       "end": 0.48,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    },
+    {
+     "name": "alphavox_yes.wav",
+     "sha256": "bca2e79e2370371c4491e85658bc41fda33018b21d768232635a0a9236e307eb",
+     "text": "yes",
+     "sample_rate": 24000,
+     "seconds": 0.363,
+     "aligned_words": [
+      {
+       "word": "yes",
+       "start": 0.06,
+       "end": 0.36,
+       "conf": 1.0
+      }
+     ],
+     "excluded": null
+    }
+   ]
+  },
+  "aligner": {
+   "engine": "vosk (Everett's ear), word times on",
+   "vosk_version": "0.3.44",
+   "model": "vosk-model-en-us-0.22",
+   "phrase_text": "from the file name; a phrase whose decoded words differ is left out",
+   "run_to_run": "word times on the same file move by up to one 30 ms frame between runs (measured 2026-10-28: 3 to 4 of 26 phrases; one vowel's F3 moved 10 Hz, one contour point 0.06 semitones, over three runs)"
+  },
+  "lexicon": {
+   "file": "vosk-model-en-us-0.22/graph/phones/align_lexicon.txt",
+   "sha256": "2ac672b4e1014451ded473c86a205ba032a0ed9086945065568cb2dc5ebb4633",
+   "pronunciation": "first in file order"
+  },
+  "formant_reader": {
+   "module": "christman_sound.formants",
+   "frame_s": 0.025,
+   "hop_s": 0.01,
+   "vowel_rms_ratio": 0.5
+  },
+  "script": "scripts/measure_alphavox_voice.py"
+ },
+ "f0": {
+  "median_hz": 149.3,
+  "n_voiced_frames": 932,
+  "source": "median F0 of every voiced frame (christman_yin inside christman_sound.formants) over all aligned recordings"
+ },
+ "pitch_contour": {
+  "positions": [
+   0.1,
+   0.3,
+   0.5,
+   0.7,
+   0.9
+  ],
+  "semitones_from_median": [
+   0.26,
+   0.78,
+   -0.41,
+   -0.49,
+   -0.55
+  ],
+  "n_phrases_per_position": [
+   23,
+   24,
+   17,
+   22,
+   6
+  ],
+  "source": "each phrase cut into 5 equal parts between its first word's start and last word's end; each part = median semitones of its voiced frames from that phrase's own F0 median; value here = median across phrases. Applied at each phone's centre, straight lines between the points.",
+  "per_phrase": {
+   "alphavox_hello.wav": {
+    "phrase_median_f0_hz": 196.1,
+    "semitones": [
+     -3.1,
+     0.0,
+     4.21,
+     null,
+     null
+    ]
+   },
+   "alphavox_i_am_angry.wav": {
+    "phrase_median_f0_hz": 141.0,
+    "semitones": [
+     -4.87,
+     -3.73,
+     1.25,
+     0.73,
+     null
+    ]
+   },
+   "alphavox_i_am_feeling_happy.wav": {
+    "phrase_median_f0_hz": 161.3,
+    "semitones": [
+     -2.35,
+     5.17,
+     3.05,
+     -0.28,
+     null
+    ]
+   },
+   "alphavox_i_am_feeling_sad.wav": {
+    "phrase_median_f0_hz": 138.9,
+    "semitones": [
+     0.24,
+     0.74,
+     -1.16,
+     -0.71,
+     null
+    ]
+   },
+   "alphavox_i_am_finished.wav": {
+    "phrase_median_f0_hz": 142.9,
+    "semitones": [
+     -0.49,
+     0.0,
+     0.5,
+     -0.12,
+     null
+    ]
+   },
+   "alphavox_i_am_hungry_i_need_food.wav": {
+    "phrase_median_f0_hz": 153.8,
+    "semitones": [
+     1.68,
+     0.82,
+     null,
+     0.4,
+     -0.26
+    ]
+   },
+   "alphavox_i_am_in_pain_i_need_help.wav": {
+    "phrase_median_f0_hz": 147.1,
+    "semitones": [
+     1.05,
+     -0.25,
+     null,
+     1.6,
+     -2.15
+    ]
+   },
+   "alphavox_i_am_scared.wav": {
+    "phrase_median_f0_hz": 129.9,
+    "semitones": [
+     0.0,
+     -1.19,
+     null,
+     2.67,
+     null
+    ]
+   },
+   "alphavox_i_am_thirsty_i_need_a_drink.wav": {
+    "phrase_median_f0_hz": 142.9,
+    "semitones": [
+     -0.25,
+     -0.49,
+     -5.1,
+     3.56,
+     -0.84
+    ]
+   },
+   "alphavox_i_am_tired_i_need_rest.wav": {
+    "phrase_median_f0_hz": 151.5,
+    "semitones": [
+     0.26,
+     1.08,
+     null,
+     -1.02,
+     1.08
+    ]
+   },
+   "alphavox_i_have_a_question.wav": {
+    "phrase_median_f0_hz": 166.7,
+    "semitones": [
+     0.89,
+     1.82,
+     0.0,
+     -0.84,
+     null
+    ]
+   },
+   "alphavox_i_love_you.wav": {
+    "phrase_median_f0_hz": 153.8,
+    "semitones": [
+     3.05,
+     0.0,
+     -2.01,
+     0.82,
+     null
+    ]
+   },
+   "alphavox_i_need_a_break.wav": {
+    "phrase_median_f0_hz": 153.8,
+    "semitones": [
+     0.0,
+     1.39,
+     -5.24,
+     -0.78,
+     null
+    ]
+   },
+   "alphavox_i_need_help_please.wav": {
+    "phrase_median_f0_hz": 137.0,
+    "semitones": [
+     1.49,
+     0.72,
+     2.97,
+     -6.46,
+     null
+    ]
+   },
+   "alphavox_i_need_my_medicine.wav": {
+    "phrase_median_f0_hz": 149.3,
+    "semitones": [
+     0.52,
+     0.93,
+     -1.6,
+     0.52,
+     null
+    ]
+   },
+   "alphavox_i_need_to_use_the_bathroom.wav": {
+    "phrase_median_f0_hz": 137.0,
+    "semitones": [
+     4.9,
+     -1.8,
+     0.36,
+     -5.96,
+     -1.59
+    ]
+   },
+   "alphavox_i_want_more.wav": {
+    "phrase_median_f0_hz": 157.5,
+    "semitones": [
+     -1.56,
+     1.28,
+     -0.41,
+     1.87,
+     null
+    ]
+   },
+   "alphavox_i_want_to_go_home.wav": {
+    "phrase_median_f0_hz": 160.0,
+    "semitones": [
+     1.45,
+     4.93,
+     -0.81,
+     0.14,
+     null
+    ]
+   },
+   "alphavox_i_want_to_go_outside.wav": {
+    "phrase_median_f0_hz": 150.5,
+    "semitones": [
+     3.92,
+     2.27,
+     -1.98,
+     -5.05,
+     null
+    ]
+   },
+   "alphavox_i_want_to_listen_to_music.wav": {
+    "phrase_median_f0_hz": 160.0,
+    "semitones": [
+     3.86,
+     2.21,
+     -5.92,
+     -4.27,
+     null
+    ]
+   },
+   "alphavox_i_want_to_play.wav": {
+    "phrase_median_f0_hz": 183.6,
+    "semitones": [
+     -2.25,
+     2.55,
+     null,
+     -5.07,
+     null
+    ]
+   },
+   "alphavox_i_want_to_read_a_book.wav": {
+    "phrase_median_f0_hz": 135.1,
+    "semitones": [
+     4.83,
+     7.86,
+     -0.23,
+     -0.76,
+     null
+    ]
+   },
+   "alphavox_no.wav": {
+    "phrase_median_f0_hz": 102.0,
+    "semitones": [
+     -0.43,
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   "alphavox_stop.wav": {
+    "phrase_median_f0_hz": 185.2,
+    "semitones": [
+     null,
+     0.0,
+     null,
+     null,
+     null
+    ]
+   },
+   "alphavox_thank_you.wav": {
+    "phrase_median_f0_hz": 208.3,
+    "semitones": [
+     null,
+     null,
+     null,
+     -1.39,
+     2.52
+    ]
+   },
+   "alphavox_yes.wav": {
+    "phrase_median_f0_hz": 169.5,
+    "semitones": [
+     null,
+     0.0,
+     null,
+     null,
+     null
+    ]
+   }
+  }
+ },
+ "rate": {
+  "value": 1.33,
+  "n_phrases": 26,
+  "source": "per phrase: the synthesizer's own duration for the words at rate 1.0 (Codec War table, position and mapping factors, 0.08 s gaps) / the recorded duration of the same words (Vosk: first word start to last word end); value = median over phrases",
+  "per_phrase": {
+   "alphavox_hello.wav": {
+    "synth_seconds_at_rate_1": 0.333,
+    "recorded_seconds": 0.36,
+    "ratio": 0.9236
+   },
+   "alphavox_i_am_angry.wav": {
+    "synth_seconds_at_rate_1": 1.002,
+    "recorded_seconds": 0.57,
+    "ratio": 1.7588
+   },
+   "alphavox_i_am_feeling_happy.wav": {
+    "synth_seconds_at_rate_1": 1.399,
+    "recorded_seconds": 0.99,
+    "ratio": 1.4136
+   },
+   "alphavox_i_am_feeling_sad.wav": {
+    "synth_seconds_at_rate_1": 1.322,
+    "recorded_seconds": 1.02,
+    "ratio": 1.2956
+   },
+   "alphavox_i_am_finished.wav": {
+    "synth_seconds_at_rate_1": 1.035,
+    "recorded_seconds": 0.66,
+    "ratio": 1.5674
+   },
+   "alphavox_i_am_hungry_i_need_food.wav": {
+    "synth_seconds_at_rate_1": 1.877,
+    "recorded_seconds": 1.71,
+    "ratio": 1.0977
+   },
+   "alphavox_i_am_in_pain_i_need_help.wav": {
+    "synth_seconds_at_rate_1": 1.957,
+    "recorded_seconds": 1.71,
+    "ratio": 1.1442
+   },
+   "alphavox_i_am_scared.wav": {
+    "synth_seconds_at_rate_1": 0.987,
+    "recorded_seconds": 0.72,
+    "ratio": 1.3708
+   },
+   "alphavox_i_am_thirsty_i_need_a_drink.wav": {
+    "synth_seconds_at_rate_1": 2.115,
+    "recorded_seconds": 1.65,
+    "ratio": 1.2818
+   },
+   "alphavox_i_am_tired_i_need_rest.wav": {
+    "synth_seconds_at_rate_1": 1.841,
+    "recorded_seconds": 1.74,
+    "ratio": 1.0578
+   },
+   "alphavox_i_have_a_question.wav": {
+    "synth_seconds_at_rate_1": 1.048,
+    "recorded_seconds": 0.84,
+    "ratio": 1.2476
+   },
+   "alphavox_i_love_you.wav": {
+    "synth_seconds_at_rate_1": 0.699,
+    "recorded_seconds": 0.63,
+    "ratio": 1.1095
+   },
+   "alphavox_i_need_a_break.wav": {
+    "synth_seconds_at_rate_1": 0.997,
+    "recorded_seconds": 0.78,
+    "ratio": 1.2788
+   },
+   "alphavox_i_need_help_please.wav": {
+    "synth_seconds_at_rate_1": 1.196,
+    "recorded_seconds": 0.9,
+    "ratio": 1.3283
+   },
+   "alphavox_i_need_my_medicine.wav": {
+    "synth_seconds_at_rate_1": 1.317,
+    "recorded_seconds": 0.99,
+    "ratio": 1.3308
+   },
+   "alphavox_i_need_to_use_the_bathroom.wav": {
+    "synth_seconds_at_rate_1": 1.762,
+    "recorded_seconds": 1.29,
+    "ratio": 1.3663
+   },
+   "alphavox_i_want_more.wav": {
+    "synth_seconds_at_rate_1": 0.837,
+    "recorded_seconds": 0.6,
+    "ratio": 1.3942
+   },
+   "alphavox_i_want_to_go_home.wav": {
+    "synth_seconds_at_rate_1": 1.34,
+    "recorded_seconds": 0.9,
+    "ratio": 1.4889
+   },
+   "alphavox_i_want_to_go_outside.wav": {
+    "synth_seconds_at_rate_1": 1.546,
+    "recorded_seconds": 1.02,
+    "ratio": 1.5152
+   },
+   "alphavox_i_want_to_listen_to_music.wav": {
+    "synth_seconds_at_rate_1": 1.883,
+    "recorded_seconds": 1.26,
+    "ratio": 1.4944
+   },
+   "alphavox_i_want_to_play.wav": {
+    "synth_seconds_at_rate_1": 1.067,
+    "recorded_seconds": 0.72,
+    "ratio": 1.4812
+   },
+   "alphavox_i_want_to_read_a_book.wav": {
+    "synth_seconds_at_rate_1": 1.429,
+    "recorded_seconds": 0.96,
+    "ratio": 1.488
+   },
+   "alphavox_no.wav": {
+    "synth_seconds_at_rate_1": 0.21,
+    "recorded_seconds": 0.24,
+    "ratio": 0.875
+   },
+   "alphavox_stop.wav": {
+    "synth_seconds_at_rate_1": 0.3,
+    "recorded_seconds": 0.39,
+    "ratio": 0.7692
+   },
+   "alphavox_thank_you.wav": {
+    "synth_seconds_at_rate_1": 0.577,
+    "recorded_seconds": 0.42,
+    "ratio": 1.3726
+   },
+   "alphavox_yes.wav": {
+    "synth_seconds_at_rate_1": 0.244,
+    "recorded_seconds": 0.3,
+    "ratio": 0.8133
+   }
+  }
+ },
+ "vowels": {
+  "AE": {
+   "f1_hz": 691.6,
+   "f2_hz": 1660.9,
+   "f3_hz": 2542.8,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 5,
+   "n_frames": 17,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 97.8,
+    "b2": 153.5,
+    "b3": 174.0
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 660.0,
+    "f2_hz": 1720.0,
+    "f3_hz": 2410.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_angry.wav",
+     "word": "angry",
+     "word_index": 2,
+     "vowel": "AE",
+     "vowel_in_word": 0,
+     "start_s": 0.24,
+     "end_s": 0.325,
+     "n_frames": 6,
+     "f1_hz": 330.1,
+     "f2_hz": 1581.9,
+     "f3_hz": 2347.6
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_happy.wav",
+     "word": "happy",
+     "word_index": 3,
+     "vowel": "AE",
+     "vowel_in_word": 0,
+     "start_s": 0.677,
+     "end_s": 0.793,
+     "n_frames": 7,
+     "f1_hz": 752.3,
+     "f2_hz": 1754.4,
+     "f3_hz": 2707.1
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_sad.wav",
+     "word": "sad",
+     "word_index": 3,
+     "vowel": "AE",
+     "vowel_in_word": 0,
+     "start_s": 0.746,
+     "end_s": 0.922,
+     "n_frames": 1,
+     "f1_hz": 691.6,
+     "f2_hz": 1727.2,
+     "f3_hz": 2562.1
+    },
+    {
+     "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+     "word": "bathroom",
+     "word_index": 5,
+     "vowel": "AE",
+     "vowel_in_word": 0,
+     "start_s": 0.849,
+     "end_s": 0.952,
+     "n_frames": 1,
+     "f1_hz": 727.7,
+     "f2_hz": 1529.2,
+     "f3_hz": 2542.8
+    },
+    {
+     "phrase": "alphavox_thank_you.wav",
+     "word": "thank",
+     "word_index": 0,
+     "vowel": "AE",
+     "vowel_in_word": 0,
+     "start_s": 0.123,
+     "end_s": 0.195,
+     "n_frames": 2,
+     "f1_hz": 278.2,
+     "f2_hz": 1660.9,
+     "f3_hz": 2407.2
+    }
+   ]
+  },
+  "AH": {
+   "f1_hz": 368.1,
+   "f2_hz": 1377.2,
+   "f3_hz": 2818.5,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 3,
+   "n_frames": 11,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 84.3,
+    "b2": 214.4,
+    "b3": 162.8
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 640.0,
+    "f2_hz": 1190.0,
+    "f3_hz": 2390.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+     "word": "hungry",
+     "word_index": 2,
+     "vowel": "AH",
+     "vowel_in_word": 0,
+     "start_s": 0.284,
+     "end_s": 0.362,
+     "n_frames": 5,
+     "f1_hz": 368.1,
+     "f2_hz": 1377.2,
+     "f3_hz": 2818.5
+    },
+    {
+     "phrase": "alphavox_i_love_you.wav",
+     "word": "love",
+     "word_index": 1,
+     "vowel": "AH",
+     "vowel_in_word": 0,
+     "start_s": 0.203,
+     "end_s": 0.277,
+     "n_frames": 5,
+     "f1_hz": 638.3,
+     "f2_hz": 1235.3,
+     "f3_hz": 2969.1
+    },
+    {
+     "phrase": "alphavox_i_want_to_listen_to_music.wav",
+     "word": "listen",
+     "word_index": 3,
+     "vowel": "AH",
+     "vowel_in_word": 1,
+     "start_s": 0.575,
+     "end_s": 0.63,
+     "n_frames": 1,
+     "f1_hz": 280.8,
+     "f2_hz": 1515.9,
+     "f3_hz": 2426.6
+    }
+   ]
+  },
+  "AY": {
+   "f1_hz": 497.8,
+   "f2_hz": 1921.1,
+   "f3_hz": 2625.9,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 23,
+   "n_frames": 95,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 177.4,
+    "b2": 109.9,
+    "b3": 146.2
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 660.0,
+    "f2_hz": 1720.0,
+    "f3_hz": 2410.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_angry.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 3,
+     "f1_hz": 608.1,
+     "f2_hz": 1919.5,
+     "f3_hz": 2569.7
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_happy.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 4,
+     "f1_hz": 632.0,
+     "f2_hz": 1836.4,
+     "f3_hz": 2543.7
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_sad.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 4,
+     "f1_hz": 632.0,
+     "f2_hz": 1836.4,
+     "f3_hz": 2543.7
+    },
+    {
+     "phrase": "alphavox_i_am_finished.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 4,
+     "f1_hz": 632.0,
+     "f2_hz": 1836.4,
+     "f3_hz": 2543.7
+    },
+    {
+     "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 6,
+     "f1_hz": 570.8,
+     "f2_hz": 1894.2,
+     "f3_hz": 2617.0
+    },
+    {
+     "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+     "word": "i",
+     "word_index": 3,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.96,
+     "end_s": 1.08,
+     "n_frames": 4,
+     "f1_hz": 460.8,
+     "f2_hz": 1964.3,
+     "f3_hz": 2527.8
+    },
+    {
+     "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 3,
+     "f1_hz": 411.8,
+     "f2_hz": 2054.3,
+     "f3_hz": 2633.6
+    },
+    {
+     "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+     "word": "i",
+     "word_index": 4,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 1.08,
+     "end_s": 1.17,
+     "n_frames": 1,
+     "f1_hz": 330.6,
+     "f2_hz": 2048.3,
+     "f3_hz": 2625.9
+    },
+    {
+     "phrase": "alphavox_i_am_scared.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.15,
+     "n_frames": 5,
+     "f1_hz": 635.3,
+     "f2_hz": 1950.7,
+     "f3_hz": 2632.4
+    },
+    {
+     "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 4,
+     "f1_hz": 632.0,
+     "f2_hz": 1836.4,
+     "f3_hz": 2543.7
+    },
+    {
+     "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "word": "i",
+     "word_index": 3,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.93,
+     "end_s": 1.05,
+     "n_frames": 3,
+     "f1_hz": 376.8,
+     "f2_hz": 2151.4,
+     "f3_hz": 2846.7
+    },
+    {
+     "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 3,
+     "f1_hz": 411.8,
+     "f2_hz": 2054.3,
+     "f3_hz": 2633.6
+    },
+    {
+     "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+     "word": "tired",
+     "word_index": 2,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.342,
+     "end_s": 0.523,
+     "n_frames": 9,
+     "f1_hz": 700.9,
+     "f2_hz": 1416.2,
+     "f3_hz": 2613.3
+    },
+    {
+     "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+     "word": "i",
+     "word_index": 3,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.99,
+     "end_s": 1.11,
+     "n_frames": 1,
+     "f1_hz": 327.4,
+     "f2_hz": 2047.0,
+     "f3_hz": 2628.2
+    },
+    {
+     "phrase": "alphavox_i_have_a_question.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 4,
+     "f1_hz": 775.1,
+     "f2_hz": 1921.1,
+     "f3_hz": 2647.0
+    },
+    {
+     "phrase": "alphavox_i_love_you.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 5,
+     "f1_hz": 497.8,
+     "f2_hz": 1674.8,
+     "f3_hz": 2763.1
+    },
+    {
+     "phrase": "alphavox_i_need_a_break.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.15,
+     "n_frames": 6,
+     "f1_hz": 378.5,
+     "f2_hz": 2149.5,
+     "f3_hz": 2659.6
+    },
+    {
+     "phrase": "alphavox_i_need_help_please.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.09,
+     "n_frames": 2,
+     "f1_hz": 351.1,
+     "f2_hz": 2039.8,
+     "f3_hz": 2613.0
+    },
+    {
+     "phrase": "alphavox_i_need_my_medicine.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.15,
+     "n_frames": 6,
+     "f1_hz": 378.5,
+     "f2_hz": 2149.5,
+     "f3_hz": 2659.6
+    },
+    {
+     "phrase": "alphavox_i_need_my_medicine.wav",
+     "word": "my",
+     "word_index": 2,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.4,
+     "end_s": 0.48,
+     "n_frames": 7,
+     "f1_hz": 573.0,
+     "f2_hz": 1644.7,
+     "f3_hz": 2516.2
+    },
+    {
+     "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.12,
+     "n_frames": 4,
+     "f1_hz": 336.1,
+     "f2_hz": 2156.6,
+     "f3_hz": 2851.7
+    },
+    {
+     "phrase": "alphavox_i_want_more.wav",
+     "word": "i",
+     "word_index": 0,
+     "vowel": "AY",
+     "vowel_in_word": 0,
+     "start_s": 0.0,
+     "end_s": 0.088,
+     "n_frames": 5,
+     "f1_hz": 337.1,
+     "f2_hz": 884.5,
+     "f3_hz": 2440.0
+    },
+    {
+     "phrase": "alphavox_i_want_to_go_outside.wav",
+     "word": "outside",
+     "word_index": 4,
+     "vowel": "AY",
+     "vowel_in_word": 1,
+     "start_s": 0.829,
+     "end_s": 0.966,
+     "n_frames": 2,
+     "f1_hz": 720.0,
+     "f2_hz": 1551.7,
+     "f3_hz": 2694.7
+    }
+   ]
+  },
+  "EH": {
+   "f1_hz": 636.2,
+   "f2_hz": 1670.7,
+   "f3_hz": 2696.1,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 4,
+   "n_frames": 13,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 91.9,
+    "b2": 123.9,
+    "b3": 154.2
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 530.0,
+    "f2_hz": 1840.0,
+    "f3_hz": 2480.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_scared.wav",
+     "word": "scared",
+     "word_index": 2,
+     "vowel": "EH",
+     "vowel_in_word": 0,
+     "start_s": 0.443,
+     "end_s": 0.584,
+     "n_frames": 5,
+     "f1_hz": 458.9,
+     "f2_hz": 2058.7,
+     "f3_hz": 2616.0
+    },
+    {
+     "phrase": "alphavox_i_have_a_question.wav",
+     "word": "question",
+     "word_index": 3,
+     "vowel": "EH",
+     "vowel_in_word": 0,
+     "start_s": 0.48,
+     "end_s": 0.568,
+     "n_frames": 1,
+     "f1_hz": 636.7,
+     "f2_hz": 1543.0,
+     "f3_hz": 2591.2
+    },
+    {
+     "phrase": "alphavox_i_need_help_please.wav",
+     "word": "help",
+     "word_index": 2,
+     "vowel": "EH",
+     "vowel_in_word": 0,
+     "start_s": 0.349,
+     "end_s": 0.409,
+     "n_frames": 5,
+     "f1_hz": 635.7,
+     "f2_hz": 1142.5,
+     "f3_hz": 2797.2
+    },
+    {
+     "phrase": "alphavox_yes.wav",
+     "word": "yes",
+     "word_index": 0,
+     "vowel": "EH",
+     "vowel_in_word": 0,
+     "start_s": 0.15,
+     "end_s": 0.244,
+     "n_frames": 2,
+     "f1_hz": 659.5,
+     "f2_hz": 1798.4,
+     "f3_hz": 2776.2
+    }
+   ]
+  },
+  "IH": {
+   "f1_hz": 344.2,
+   "f2_hz": 1749.6,
+   "f3_hz": 2707.3,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 7,
+   "n_frames": 34,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 130.5,
+    "b2": 160.6,
+    "b3": 131.3
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 390.0,
+    "f2_hz": 1990.0,
+    "f3_hz": 2550.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_feeling_happy.wav",
+     "word": "feeling",
+     "word_index": 2,
+     "vowel": "IH",
+     "vowel_in_word": 1,
+     "start_s": 0.467,
+     "end_s": 0.526,
+     "n_frames": 5,
+     "f1_hz": 344.2,
+     "f2_hz": 2012.6,
+     "f3_hz": 2730.8
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_sad.wav",
+     "word": "feeling",
+     "word_index": 2,
+     "vowel": "IH",
+     "vowel_in_word": 1,
+     "start_s": 0.448,
+     "end_s": 0.502,
+     "n_frames": 5,
+     "f1_hz": 352.0,
+     "f2_hz": 1265.4,
+     "f3_hz": 2609.1
+    },
+    {
+     "phrase": "alphavox_i_am_finished.wav",
+     "word": "finished",
+     "word_index": 2,
+     "vowel": "IH",
+     "vowel_in_word": 0,
+     "start_s": 0.33,
+     "end_s": 0.393,
+     "n_frames": 6,
+     "f1_hz": 334.3,
+     "f2_hz": 1749.6,
+     "f3_hz": 2689.6
+    },
+    {
+     "phrase": "alphavox_i_am_finished.wav",
+     "word": "finished",
+     "word_index": 2,
+     "vowel": "IH",
+     "vowel_in_word": 1,
+     "start_s": 0.456,
+     "end_s": 0.52,
+     "n_frames": 2,
+     "f1_hz": 280.9,
+     "f2_hz": 2327.1,
+     "f3_hz": 3184.3
+    },
+    {
+     "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+     "word": "in",
+     "word_index": 2,
+     "vowel": "IH",
+     "vowel_in_word": 0,
+     "start_s": 0.27,
+     "end_s": 0.315,
+     "n_frames": 3,
+     "f1_hz": 318.6,
+     "f2_hz": 1642.0,
+     "f3_hz": 2707.3
+    },
+    {
+     "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "word": "drink",
+     "word_index": 6,
+     "vowel": "IH",
+     "vowel_in_word": 0,
+     "start_s": 1.422,
+     "end_s": 1.496,
+     "n_frames": 8,
+     "f1_hz": 361.5,
+     "f2_hz": 2091.5,
+     "f3_hz": 2608.6
+    },
+    {
+     "phrase": "alphavox_i_want_to_listen_to_music.wav",
+     "word": "listen",
+     "word_index": 3,
+     "vowel": "IH",
+     "vowel_in_word": 0,
+     "start_s": 0.45,
+     "end_s": 0.505,
+     "n_frames": 5,
+     "f1_hz": 404.5,
+     "f2_hz": 1741.1,
+     "f3_hz": 2830.5
+    }
+   ]
+  },
+  "IY": {
+   "f1_hz": 329.1,
+   "f2_hz": 2317.0,
+   "f3_hz": 2853.7,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 11,
+   "n_frames": 68,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 52.2,
+    "b2": 84.2,
+    "b3": 140.3
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 270.0,
+    "f2_hz": 2290.0,
+    "f3_hz": 3010.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_feeling_happy.wav",
+     "word": "feeling",
+     "word_index": 2,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 0.324,
+     "end_s": 0.408,
+     "n_frames": 8,
+     "f1_hz": 407.3,
+     "f2_hz": 2182.2,
+     "f3_hz": 2702.6
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_sad.wav",
+     "word": "feeling",
+     "word_index": 2,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 0.317,
+     "end_s": 0.394,
+     "n_frames": 6,
+     "f1_hz": 299.5,
+     "f2_hz": 2136.4,
+     "f3_hz": 2616.5
+    },
+    {
+     "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+     "word": "need",
+     "word_index": 4,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 1.16,
+     "end_s": 1.263,
+     "n_frames": 7,
+     "f1_hz": 342.7,
+     "f2_hz": 2284.3,
+     "f3_hz": 2867.5
+    },
+    {
+     "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+     "word": "need",
+     "word_index": 5,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 1.24,
+     "end_s": 1.33,
+     "n_frames": 6,
+     "f1_hz": 331.3,
+     "f2_hz": 2317.0,
+     "f3_hz": 2908.7
+    },
+    {
+     "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "word": "need",
+     "word_index": 4,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 1.12,
+     "end_s": 1.21,
+     "n_frames": 7,
+     "f1_hz": 368.9,
+     "f2_hz": 2333.7,
+     "f3_hz": 2931.1
+    },
+    {
+     "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+     "word": "need",
+     "word_index": 4,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 1.178,
+     "end_s": 1.267,
+     "n_frames": 6,
+     "f1_hz": 300.6,
+     "f2_hz": 2336.1,
+     "f3_hz": 2868.5
+    },
+    {
+     "phrase": "alphavox_i_need_a_break.wav",
+     "word": "need",
+     "word_index": 1,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 0.23,
+     "end_s": 0.333,
+     "n_frames": 8,
+     "f1_hz": 326.4,
+     "f2_hz": 2391.8,
+     "f3_hz": 2808.4
+    },
+    {
+     "phrase": "alphavox_i_need_help_please.wav",
+     "word": "need",
+     "word_index": 1,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 0.16,
+     "end_s": 0.25,
+     "n_frames": 5,
+     "f1_hz": 329.1,
+     "f2_hz": 2322.3,
+     "f3_hz": 2910.2
+    },
+    {
+     "phrase": "alphavox_i_need_help_please.wav",
+     "word": "please",
+     "word_index": 3,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 0.668,
+     "end_s": 0.784,
+     "n_frames": 3,
+     "f1_hz": 340.9,
+     "f2_hz": 2212.2,
+     "f3_hz": 2642.3
+    },
+    {
+     "phrase": "alphavox_i_need_my_medicine.wav",
+     "word": "need",
+     "word_index": 1,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 0.22,
+     "end_s": 0.31,
+     "n_frames": 6,
+     "f1_hz": 309.6,
+     "f2_hz": 2309.0,
+     "f3_hz": 2800.3
+    },
+    {
+     "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+     "word": "need",
+     "word_index": 1,
+     "vowel": "IY",
+     "vowel_in_word": 0,
+     "start_s": 0.19,
+     "end_s": 0.28,
+     "n_frames": 6,
+     "f1_hz": 319.4,
+     "f2_hz": 2402.7,
+     "f3_hz": 2853.7
+    }
+   ]
+  },
+  "OW": {
+   "f1_hz": 488.2,
+   "f2_hz": 1056.2,
+   "f3_hz": 2772.8,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 4,
+   "n_frames": 21,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 222.4,
+    "b2": 73.5,
+    "b3": 162.2
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 430.0,
+    "f2_hz": 980.0,
+    "f3_hz": 2300.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_want_to_go_home.wav",
+     "word": "go",
+     "word_index": 3,
+     "vowel": "OW",
+     "vowel_in_word": 0,
+     "start_s": 0.447,
+     "end_s": 0.57,
+     "n_frames": 10,
+     "f1_hz": 458.2,
+     "f2_hz": 1079.1,
+     "f3_hz": 2663.8
+    },
+    {
+     "phrase": "alphavox_i_want_to_go_home.wav",
+     "word": "home",
+     "word_index": 4,
+     "vowel": "OW",
+     "vowel_in_word": 0,
+     "start_s": 0.65,
+     "end_s": 0.807,
+     "n_frames": 4,
+     "f1_hz": 470.9,
+     "f2_hz": 931.9,
+     "f3_hz": 2976.2
+    },
+    {
+     "phrase": "alphavox_i_want_to_go_outside.wav",
+     "word": "go",
+     "word_index": 3,
+     "vowel": "OW",
+     "vowel_in_word": 0,
+     "start_s": 0.437,
+     "end_s": 0.54,
+     "n_frames": 6,
+     "f1_hz": 505.5,
+     "f2_hz": 1073.8,
+     "f3_hz": 2337.8
+    },
+    {
+     "phrase": "alphavox_no.wav",
+     "word": "no",
+     "word_index": 0,
+     "vowel": "OW",
+     "vowel_in_word": 0,
+     "start_s": 0.144,
+     "end_s": 0.3,
+     "n_frames": 1,
+     "f1_hz": 614.9,
+     "f2_hz": 1038.5,
+     "f3_hz": 2881.8
+    }
+   ]
+  },
+  "UW": {
+   "f1_hz": 296.3,
+   "f2_hz": 1694.5,
+   "f3_hz": 2465.0,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 5,
+   "n_frames": 28,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 57.0,
+    "b2": 131.4,
+    "b3": 153.0
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 300.0,
+    "f2_hz": 870.0,
+    "f3_hz": 2240.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+     "word": "food",
+     "word_index": 5,
+     "vowel": "UW",
+     "vowel_in_word": 0,
+     "start_s": 1.472,
+     "end_s": 1.625,
+     "n_frames": 4,
+     "f1_hz": 328.0,
+     "f2_hz": 1254.7,
+     "f3_hz": 2410.3
+    },
+    {
+     "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+     "word": "use",
+     "word_index": 3,
+     "vowel": "UW",
+     "vowel_in_word": 0,
+     "start_s": 0.474,
+     "end_s": 0.582,
+     "n_frames": 10,
+     "f1_hz": 296.3,
+     "f2_hz": 1791.8,
+     "f3_hz": 2465.0
+    },
+    {
+     "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+     "word": "bathroom",
+     "word_index": 5,
+     "vowel": "UW",
+     "vowel_in_word": 1,
+     "start_s": 1.107,
+     "end_s": 1.21,
+     "n_frames": 3,
+     "f1_hz": 402.0,
+     "f2_hz": 1230.3,
+     "f3_hz": 2035.7
+    },
+    {
+     "phrase": "alphavox_i_want_to_listen_to_music.wav",
+     "word": "music",
+     "word_index": 5,
+     "vowel": "UW",
+     "vowel_in_word": 0,
+     "start_s": 0.936,
+     "end_s": 1.042,
+     "n_frames": 3,
+     "f1_hz": 282.2,
+     "f2_hz": 1766.8,
+     "f3_hz": 2529.7
+    },
+    {
+     "phrase": "alphavox_thank_you.wav",
+     "word": "you",
+     "word_index": 1,
+     "vowel": "UW",
+     "vowel_in_word": 0,
+     "start_s": 0.374,
+     "end_s": 0.48,
+     "n_frames": 8,
+     "f1_hz": 271.9,
+     "f2_hz": 1694.5,
+     "f3_hz": 2579.0
+    }
+   ]
+  }
+ },
+ "measured_not_applied": {
+  "AO": {
+   "f1_hz": 720.1,
+   "f2_hz": 2573.7,
+   "f3_hz": 3151.3,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 1,
+   "n_frames": 4,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 116.5,
+    "b2": 188.7,
+    "b3": 259.4
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 570.0,
+    "f2_hz": 840.0,
+    "f3_hz": 2410.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_want_more.wav",
+     "word": "more",
+     "word_index": 2,
+     "vowel": "AO",
+     "vowel_in_word": 0,
+     "start_s": 0.391,
+     "end_s": 0.509,
+     "n_frames": 4,
+     "f1_hz": 720.1,
+     "f2_hz": 2573.7,
+     "f3_hz": 3151.3
+    }
+   ],
+   "not_applied_because": "1 token; fewer than MIN_TOKENS_TO_APPLY = 2. Codec War's table value is used"
+  },
+  "AW": {
+   "f1_hz": 657.6,
+   "f2_hz": 1340.9,
+   "f3_hz": 2525.7,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 1,
+   "n_frames": 5,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 76.6,
+    "b2": 59.0,
+    "b3": 163.5
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 570.0,
+    "f2_hz": 980.0,
+    "f3_hz": 2300.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_want_to_go_outside.wav",
+     "word": "outside",
+     "word_index": 4,
+     "vowel": "AW",
+     "vowel_in_word": 0,
+     "start_s": 0.54,
+     "end_s": 0.692,
+     "n_frames": 5,
+     "f1_hz": 657.6,
+     "f2_hz": 1340.9,
+     "f3_hz": 2525.7
+    }
+   ],
+   "not_applied_because": "1 token; fewer than MIN_TOKENS_TO_APPLY = 2. Codec War's table value is used"
+  },
+  "ER": {
+   "f1_hz": 409.5,
+   "f2_hz": 1449.2,
+   "f3_hz": 1829.0,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 1,
+   "n_frames": 5,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 92.8,
+    "b2": 133.7,
+    "b3": 112.9
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 490.0,
+    "f2_hz": 1350.0,
+    "f3_hz": 1690.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "word": "thirsty",
+     "word_index": 2,
+     "vowel": "ER",
+     "vowel_in_word": 0,
+     "start_s": 0.338,
+     "end_s": 0.472,
+     "n_frames": 5,
+     "f1_hz": 409.5,
+     "f2_hz": 1449.2,
+     "f3_hz": 1829.0
+    }
+   ],
+   "not_applied_because": "1 token; fewer than MIN_TOKENS_TO_APPLY = 2. Codec War's table value is used"
+  },
+  "EY": {
+   "f1_hz": 381.6,
+   "f2_hz": 2238.1,
+   "f3_hz": 2821.8,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 1,
+   "n_frames": 11,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 307.0,
+    "b2": 120.0,
+    "b3": 165.1
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 400.0,
+    "f2_hz": 2000.0,
+    "f3_hz": 2550.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+     "word": "pain",
+     "word_index": 3,
+     "vowel": "EY",
+     "vowel_in_word": 0,
+     "start_s": 0.476,
+     "end_s": 0.704,
+     "n_frames": 11,
+     "f1_hz": 381.6,
+     "f2_hz": 2238.1,
+     "f3_hz": 2821.8
+    }
+   ],
+   "not_applied_because": "1 token; fewer than MIN_TOKENS_TO_APPLY = 2. Codec War's table value is used"
+  },
+  "UH": {
+   "f1_hz": 501.0,
+   "f2_hz": 1081.2,
+   "f3_hz": 2770.5,
+   "source": "median over the tokens below of each token's median frame",
+   "n_tokens": 1,
+   "n_frames": 2,
+   "measured_bandwidths_hz_not_applied": {
+    "b1": 96.6,
+    "b2": 49.3,
+    "b3": 103.1
+   },
+   "codec_war_table_it_replaces": {
+    "f1_hz": 440.0,
+    "f2_hz": 1020.0,
+    "f3_hz": 2240.0
+   },
+   "tokens": [
+    {
+     "phrase": "alphavox_i_want_to_read_a_book.wav",
+     "word": "book",
+     "word_index": 5,
+     "vowel": "UH",
+     "vowel_in_word": 0,
+     "start_s": 0.738,
+     "end_s": 0.852,
+     "n_frames": 2,
+     "f1_hz": 501.0,
+     "f2_hz": 1081.2,
+     "f3_hz": 2770.5
+    }
+   ],
+   "not_applied_because": "1 token; fewer than MIN_TOKENS_TO_APPLY = 2. Codec War's table value is used"
+  }
+ },
+ "not_measured": {
+  "AA": "no measured word in AlphaVox's aligned recordings carries this vowel; Codec War's table value is used",
+  "OY": "no measured word in AlphaVox's aligned recordings carries this vowel; Codec War's table value is used"
+ },
+ "words_left_out_of_vowel_measurement": [
+  {
+   "phrase": "alphavox_hello.wav",
+   "word": "hello",
+   "why": "its lexicon pronunciations differ in their vowels: AH OW / EH OW"
+  },
+  {
+   "phrase": "alphavox_i_am_angry.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_feeling_happy.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_feeling_sad.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_finished.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_scared.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+   "word": "a",
+   "why": "its lexicon pronunciations differ in their vowels: AH / EY"
+  },
+  {
+   "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+   "word": "am",
+   "why": "its lexicon pronunciations differ in their vowels: AE / EY EH"
+  },
+  {
+   "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+   "word": "rest",
+   "why": "its lexicon pronunciations differ in their vowels: EH / IH"
+  },
+  {
+   "phrase": "alphavox_i_have_a_question.wav",
+   "word": "have",
+   "why": "its lexicon pronunciations differ in their vowels: AE / AH / EY"
+  },
+  {
+   "phrase": "alphavox_i_have_a_question.wav",
+   "word": "a",
+   "why": "its lexicon pronunciations differ in their vowels: AH / EY"
+  },
+  {
+   "phrase": "alphavox_i_need_a_break.wav",
+   "word": "a",
+   "why": "its lexicon pronunciations differ in their vowels: AH / EY"
+  },
+  {
+   "phrase": "alphavox_i_need_my_medicine.wav",
+   "word": "medicine",
+   "why": "its lexicon pronunciations differ in their vowels: EH AH AH / EH IH IH"
+  },
+  {
+   "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+   "word": "to",
+   "why": "its lexicon pronunciations differ in their vowels: AH / IH / OW / UW"
+  },
+  {
+   "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+   "word": "the",
+   "why": "its lexicon pronunciations differ in their vowels:  / AH / IY"
+  },
+  {
+   "phrase": "alphavox_i_want_more.wav",
+   "word": "want",
+   "why": "its lexicon pronunciations differ in their vowels: AA / AO"
+  },
+  {
+   "phrase": "alphavox_i_want_to_go_home.wav",
+   "word": "want",
+   "why": "its lexicon pronunciations differ in their vowels: AA / AO"
+  },
+  {
+   "phrase": "alphavox_i_want_to_go_home.wav",
+   "word": "to",
+   "why": "its lexicon pronunciations differ in their vowels: AH / IH / OW / UW"
+  },
+  {
+   "phrase": "alphavox_i_want_to_go_outside.wav",
+   "word": "want",
+   "why": "its lexicon pronunciations differ in their vowels: AA / AO"
+  },
+  {
+   "phrase": "alphavox_i_want_to_go_outside.wav",
+   "word": "to",
+   "why": "its lexicon pronunciations differ in their vowels: AH / IH / OW / UW"
+  },
+  {
+   "phrase": "alphavox_i_want_to_listen_to_music.wav",
+   "word": "want",
+   "why": "its lexicon pronunciations differ in their vowels: AA / AO"
+  },
+  {
+   "phrase": "alphavox_i_want_to_listen_to_music.wav",
+   "word": "to",
+   "why": "its lexicon pronunciations differ in their vowels: AH / IH / OW / UW"
+  },
+  {
+   "phrase": "alphavox_i_want_to_listen_to_music.wav",
+   "word": "to",
+   "why": "its lexicon pronunciations differ in their vowels: AH / IH / OW / UW"
+  },
+  {
+   "phrase": "alphavox_i_want_to_play.wav",
+   "word": "want",
+   "why": "its lexicon pronunciations differ in their vowels: AA / AO"
+  },
+  {
+   "phrase": "alphavox_i_want_to_play.wav",
+   "word": "to",
+   "why": "its lexicon pronunciations differ in their vowels: AH / IH / OW / UW"
+  },
+  {
+   "phrase": "alphavox_i_want_to_read_a_book.wav",
+   "word": "want",
+   "why": "its lexicon pronunciations differ in their vowels: AA / AO"
+  },
+  {
+   "phrase": "alphavox_i_want_to_read_a_book.wav",
+   "word": "to",
+   "why": "its lexicon pronunciations differ in their vowels: AH / IH / OW / UW"
+  },
+  {
+   "phrase": "alphavox_i_want_to_read_a_book.wav",
+   "word": "read",
+   "why": "its lexicon pronunciations differ in their vowels: EH / IY"
+  },
+  {
+   "phrase": "alphavox_i_want_to_read_a_book.wav",
+   "word": "a",
+   "why": "its lexicon pronunciations differ in their vowels: AH / EY"
+  }
+ ]
+}

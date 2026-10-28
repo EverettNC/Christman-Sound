@@ -37,7 +37,7 @@ include = ["christman_voice_sdk*", "christman_sound*"]
 christman_voice_sdk = ["py.typed"]
 # The compiled DSP engine rides inside the package for wheel installs;
 # editable installs find it at the repo root (core.py checks both homes).
-christman_sound = ["*.so"]
+christman_sound = ["*.so", "*.json"]  # *.json: alphavox_voice.json, AlphaVox's measured voice (2026-10-28)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
