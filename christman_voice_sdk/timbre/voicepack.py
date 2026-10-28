@@ -11,6 +11,24 @@ WHAT CHANGED AND WHY
 2. ELIMINATED PICKLE SERIALIZATION.
    Voicepack internal archives now store profiles as secure JSON metadata 
    and `.npz` array payloads.
+
+3. ZIP MEMBERS ARE CHECKED BEFORE ANYTHING IS EXTRACTED (2026-10-28, Lane 6).
+   `load` called `zipf.extractall(cache_dir)` on whatever archive it was
+   handed. A member named with an absolute path, a drive letter, a ".."
+   step, or a symlink is now refused with `UnsafeVoicepack`, naming the
+   member, and nothing from that archive is written. A voicepack can come from
+   someone else; it does not get to choose where its files land.
+
+4. NO FOLDER IN THE WORKING DIRECTORY ON CONSTRUCTION (2026-10-28, Lane 6).
+   `VoicepackBuilder()` made data/voicepacks under whatever directory the
+   process started in, just by being built. The default is now the user data
+   folder ($CHRISTMAN_AI_HOME/voice_sdk/voicepacks, default
+   ~/.christman_ai/voice_sdk/voicepacks), and it is created when a voicepack
+   is built or loaded, not before.
+
+5. training_hours AND quality_score ARE None UNTIL SOMEONE MEASURES THEM.
+   They defaulted to 0.0, and nothing in the repository computes either, so
+   every voicepack carried two zeros that read as measurements.
 """
 
 from __future__ import annotations
@@ -19,7 +37,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
+import stat
 import tempfile
 import zipfile
 from dataclasses import asdict, dataclass
@@ -27,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..audio.config import user_data_root
 from ..timbre.timbre_modeler import TimbreModeler, VoiceProfile
 from .logger import get_logger
 
@@ -39,6 +60,43 @@ except ImportError:
     _crypto_ok = False
 
 
+class UnsafeVoicepack(ValueError):
+    """A voicepack archive names a file outside the folder it unpacks into."""
+
+
+_DRIVE = re.compile(r"^[A-Za-z]:")
+
+
+def check_members(zipf: zipfile.ZipFile, dest: Path) -> None:
+    """
+    Refuse the whole archive if any member could land outside `dest`.
+
+    Rejected: an empty name, an absolute path ("/x", "\\x"), a drive letter
+    ("C:x"), any ".." step (with / or \\ as the separator), a symlink entry,
+    and anything that still resolves outside `dest`. Raises UnsafeVoicepack
+    naming the member. Checks every member before anything is written.
+    """
+    root = Path(dest).resolve()
+    for info in zipf.infolist():
+        name = info.filename
+        norm = name.replace("\\", "/")
+        if not norm:
+            raise UnsafeVoicepack("voicepack member with an empty name")
+        if norm.startswith("/") or _DRIVE.match(norm):
+            raise UnsafeVoicepack(f"voicepack member {name!r} is an absolute path")
+        if ".." in norm.split("/"):
+            raise UnsafeVoicepack(f"voicepack member {name!r} steps out with '..'")
+        if stat.S_ISLNK(info.external_attr >> 16):
+            raise UnsafeVoicepack(f"voicepack member {name!r} is a symlink")
+        target = (root / norm).resolve()
+        if target != root and root not in target.parents:
+            raise UnsafeVoicepack(f"voicepack member {name!r} resolves outside {root}")
+
+
+def default_voicepack_dir() -> Path:
+    return user_data_root() / "voice_sdk" / "voicepacks"
+
+
 @dataclass
 class VoicepackMetadata:
     name: str
@@ -48,9 +106,9 @@ class VoicepackMetadata:
     gender: Optional[str] = None
     age_range: Optional[str] = None
     accent: Optional[str] = None
-    training_hours: float = 0.0
+    training_hours: Optional[float] = None   # None: not measured
     sample_count: int = 0
-    quality_score: float = 0.0
+    quality_score: Optional[float] = None    # None: not measured
     emotions: Optional[List[str]] = None
     checksum: str = ""
     encrypted: bool = False
@@ -65,10 +123,10 @@ class VoicepackMetadata:
 class VoicepackBuilder:
     """Builds, validates, and unpacks .voicepack archives securely."""
 
-    def __init__(self, output_dir: Path = Path("data/voicepacks")):
-        self.output_dir = output_dir
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("VoicepackBuilder initialized: %s", output_dir)
+    def __init__(self, output_dir: Optional[Path] = None):
+        # Path only; created when a voicepack is built or loaded.
+        self.output_dir = Path(output_dir) if output_dir is not None else default_voicepack_dir()
+        logger.info("VoicepackBuilder initialized: %s", self.output_dir)
 
     def build(
         self,
@@ -117,6 +175,7 @@ class VoicepackBuilder:
             with open(validation_path, "w", encoding="utf-8") as f:
                 json.dump(validation, f, indent=2)
 
+            self.output_dir.mkdir(parents=True, exist_ok=True)
             output_path = self.output_dir / f"{name}.voicepack"
 
             if compress:
@@ -207,6 +266,7 @@ class VoicepackBuilder:
             archive_to_open = temp_zip
 
         with zipfile.ZipFile(archive_to_open, "r") as zipf:
+            check_members(zipf, cache_dir)  # raises UnsafeVoicepack; nothing written yet
             zipf.extractall(cache_dir)
 
         metadata_path = cache_dir / "metadata.json"
