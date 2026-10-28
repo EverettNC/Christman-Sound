@@ -1,36 +1,20 @@
-# WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
-# Everett's ruling: every outside speech engine is cut. Removed from
-# install_requires:
-#         "pyttsx3",
-# pyttsx3 is the operating system's speech engine; nothing in the package
-# imports it any more. (pygame was removed on 2026-10-13. Coqui TTS was never
-# a declared dependency here.)
-from setuptools import setup, find_packages
+# WHAT CHANGED AND WHY (2026-10-28, Lane 6)
+# This file used to carry its own dependency list. pyproject.toml carries one
+# too, and setuptools reads pyproject.toml's [project] table, so the two lists
+# drifted apart (this one had no Intel Mac markers for torch, and both carried
+# librosa, which nothing imports and which broke the install on Intel Mac).
+# Everything now lives in pyproject.toml. This shim stays so tools that still
+# call setup.py work.
+#
+# setup.py does NOT build the C library, and never did. Build it with
+#
+#     python3 scripts/build_dsp.py --check
+#
+# which compiles christman_dsp.c and christman_synth.c into
+# christman_sound/christman_dsp.so, the file christman_sound/dsp.py loads.
+#
+# 2026-10-17: pyttsx3 was removed (Everett's ruling cuts every outside speech
+# engine). pygame was removed on 2026-10-13.
+from setuptools import setup
 
-setup(
-    name="christman-sound",
-    version="1.0.0",
-    author="Everett Nathaniel Christman",
-    author_email="lumacognify@thechristmanaiproject.com",
-    description="The Christman Voice SDK — complete voice intelligence package",
-    packages=find_packages(),
-    python_requires=">=3.10",
-    install_requires=[
-        # numpy<2 required: torch<2.3 wheels (the ceiling on Intel Mac, where
-        # PyTorch stopped publishing builds after 2.2.2) were compiled against
-        # NumPy 1.x and crash under NumPy 2.x ("_ARRAY_API not found").
-        "numpy<2",
-        "librosa",
-        "soundfile",
-        "torch",
-        "torchaudio",
-        # transformers>=5 hard-requires torch>=2.4, which has no wheel for
-        # Intel Mac (torch tops out at 2.2.2 there) — pin <5 so the torch
-        # backend stays enabled instead of silently disabling itself.
-        "transformers>=4.40,<5",
-        "flask",
-        "fastapi",
-        "rich",
-        "praat-parselmouth",  # PyPI name is praat-parselmouth, not parselmouth
-    ],
-)
+setup()
