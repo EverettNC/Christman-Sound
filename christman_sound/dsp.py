@@ -137,6 +137,14 @@ _SYNTH_REASONS = {
 }
 
 
+_VOCODER_REASONS = {
+    1: "bad arguments (no frames, an envelope grid under 2 points, no band, or arrays that do not match the frames)",
+    2: "sample rate outside 8000 to 24000",
+    3: "a value that is not finite, a negative pitch, an aperiodicity outside 0 to 1, jitter or shimmer "
+       "outside 0 to 0.2, or an envelope grid or band edges that do not rise from 0 (to half the sample rate)",
+}
+
+
 _PLAY_REASONS = {
     1: "bad arguments (empty buffer, bad rate, or channels not 1 or 2)",
     2: "no audio system on this platform",
@@ -208,6 +216,8 @@ class ChristmanDSP:
         self.synth_error: Optional[str] = None
         self.synth_clear_available = False
         self.synth_clear_error: Optional[str] = None
+        self.vocoder_available = False
+        self.vocoder_error: Optional[str] = None
         self._lib: Optional[ctypes.CDLL] = None
 
         paths = [library_path] if library_path else candidate_paths()
@@ -231,6 +241,7 @@ class ChristmanDSP:
             self.path = Path(path)
             self.available = True
             self._bind_synth(lib)
+            self._bind_vocoder(lib)
             return
         self.error = f"christman_dsp failed to load ({last_error}). Rebuild: {BUILD_COMMAND}"
 
@@ -297,6 +308,25 @@ class ChristmanDSP:
             )
             return
         self.synth_clear_available = True
+
+    def _bind_vocoder(self, lib: ctypes.CDLL) -> None:
+        # (2026-10-28) The frame mouth, christman_vocoder.c (the port of Codec
+        # War's vocoder.ts). A library built before it keeps everything else.
+        try:
+            lib.christman_vocoder_length.argtypes = [ctypes.c_int, ctypes.c_int]
+            lib.christman_vocoder_length.restype = ctypes.c_size_t
+            lib.christman_vocoder_render.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                _DOUBLE_P, _DOUBLE_P, ctypes.c_int, _DOUBLE_P,
+                _DOUBLE_P, ctypes.c_int, _DOUBLE_P,
+                ctypes.c_double, ctypes.c_double, ctypes.c_uint,
+                _FLOAT_P, ctypes.c_size_t,
+            ]
+            lib.christman_vocoder_render.restype = ctypes.c_int
+        except AttributeError as exc:
+            self.vocoder_error = f"{self.path} was built before christman_vocoder ({exc}). Rebuild: {BUILD_COMMAND}"
+            return
+        self.vocoder_available = True
 
     # -- guards ---------------------------------------------------------------
 
@@ -519,6 +549,46 @@ class ChristmanDSP:
         del out_c
         if status != 0:
             raise SynthRefused(status, _SYNTH_REASONS.get(status, "unknown reason"))
+        return out
+
+    def vocoder_render(
+        self,
+        f0: Sequence[float],
+        env_db: Sequence[float],
+        env_hz: Sequence[float],
+        ap: Sequence[float],
+        band_edges: Sequence[float],
+        hop: int,
+        sample_rate: int,
+        jitter: float,
+        shimmer: float,
+        seed: int,
+    ) -> array.array:
+        """
+        Raw call into christman_vocoder_render (2026-10-28): a voice rendered
+        from its frames. f0 one value per frame (0 unvoiced); env_db
+        len(env_hz) values per frame; ap len(band_edges) - 1 values per
+        frame. Returns array('f') of len(f0) * hop samples, or raises
+        `SynthRefused` with the engine's reason. christman_sound.stitch is
+        the friendly entry point.
+        """
+        lib = self._require()
+        if not self.vocoder_available:
+            raise SynthUnavailable(self.vocoder_error or "christman_vocoder not bound")
+        n, ne, nb = len(f0), len(env_hz), len(band_edges) - 1
+        if len(env_db) != n * ne or len(ap) != n * max(nb, 0):
+            raise SynthRefused(1, _VOCODER_REASONS[1] + f" ({n} frames, {len(env_db)} envelope values, {len(ap)} aperiodicity values)")
+        length = lib.christman_vocoder_length(n, int(hop))
+        out = array.array("f", bytes(4 * max(length, 1)))
+        out_c = (ctypes.c_float * max(length, 1)).from_buffer(out)
+        dbl = lambda xs: (ctypes.c_double * max(len(xs), 1))(*xs)  # noqa: E731
+        status = lib.christman_vocoder_render(
+            n, int(hop), int(sample_rate), dbl(f0), dbl(env_db), ne, dbl(env_hz), dbl(ap), nb, dbl(band_edges),
+            float(jitter), float(shimmer), int(seed) & 0xFFFFFFFF, out_c, length,
+        )
+        del out_c
+        if status != 0:
+            raise SynthRefused(status, _VOCODER_REASONS.get(status, "unknown reason"))
         return out
 
     # -- contours ---------------------------------------------------------------
