@@ -2,6 +2,18 @@
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
+# This file is the one place the package's metadata and dependencies live.
+# setup.py is a shim that calls setup() with nothing in it (see its header).
+#
+# THE C LIBRARY IS NOT BUILT BY pip. christman_dsp.c and christman_synth.c are
+# compiled into christman_sound/christman_dsp.so by scripts/build_dsp.py, run
+# once per machine after installing:
+#
+#     pip install -e .
+#     python3 scripts/build_dsp.py --check
+#
+# Nothing here declares a C extension, so pip install builds nothing in C.
+
 [project]
 name = "christman-sound"
 version = "1.0.0"
@@ -11,32 +23,61 @@ requires-python = ">=3.10"
 authors = [
     { name = "Everett Nathaniel Christman", email = "lumacognify@thechristmanaiproject.com" },
 ]
+# WHAT CHANGED AND WHY (2026-10-28, Lane 6)
+# - "librosa" removed. No file in the package imports it. It pulled
+#   numba -> llvmlite 0.50.0, which has no Intel Mac (x86_64 macOS) wheel and
+#   does not build from source there, so a fresh `pip install -e .` failed on
+#   Everett's Intel Mac before anything else was installed. With librosa gone,
+#   nothing declared here pulls numba or llvmlite, so no pin is needed for
+#   them. If one is ever added back, pin numba<0.61 and llvmlite<0.44 on
+#   Intel Mac: those are the last versions with x86_64 macOS wheels.
+# - Added what the package imports at module top but did not declare:
+#   scipy (audio_processor, voice_capture_client, the tone engines),
+#   PyYAML (audio/config.py, imported by christman_voice_sdk/__init__.py),
+#   websockets (integration/voice_capture_client.py, whose capture and profile
+#   functions the package exports, and christman_ocr_shared.py), and
+#   werkzeug (synthesis/tts_service.py imports it by name; flask needs it too).
+# - cryptography is optional (voicepack encryption, crypto_bridge.py), so it
+#   is the "crypto" extra, not a base dependency.
 dependencies = [
     "numpy<2",
-    "librosa",
+    "scipy",
     "soundfile",
+    "PyYAML",
+    "websockets",
     # Intel Mac ceiling: PyTorch stopped publishing x86_64 macOS wheels after
-    # 2.2.2 (see setup.py note). The marker keeps other platforms unpinned.
+    # 2.2.2. The marker keeps other platforms unpinned.
     "torch<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "torch; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "torchaudio<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # transformers>=5 hard-requires torch>=2.4, which has no Intel Mac wheel.
     "transformers>=4.40,<5",
     # 2026-10-17: "pyttsx3" removed — the OS speech engine. Everett's ruling
     # cuts every outside speech engine; nothing in the package imports it.
     "flask",
+    "werkzeug",
     "fastapi",
     "rich",
-    "praat-parselmouth",
+    "praat-parselmouth",  # PyPI name is praat-parselmouth, not parselmouth
 ]
+
+[project.optional-dependencies]
+# Voicepack encryption (timbre/voicepack.py) and crypto_bridge.py.
+# crypto_bridge.py also needs a clone of Harvest-Now-Decrypt-Later at
+# ~/Harvest-Now-Decrypt-Later; that tree is not a pip package.
+crypto = ["cryptography"]
+# Microphone capture (integration/voice_capture_client.capture_audio).
+capture = ["sounddevice"]
 
 [tool.setuptools.packages.find]
 include = ["christman_voice_sdk*", "christman_sound*"]
 
 [tool.setuptools.package-data]
 christman_voice_sdk = ["py.typed"]
-# The compiled DSP engine rides inside the package for wheel installs;
-# editable installs find it at the repo root (core.py checks both homes).
+# The compiled DSP engine rides inside the package for wheel installs, if
+# scripts/build_dsp.py ran before the wheel was built; editable installs find
+# it in christman_sound/ where build_dsp.py writes it.
 christman_sound = ["*.so", "*.json"]  # *.json: alphavox_voice.json, AlphaVox's measured voice (2026-10-28)
 
 [tool.pytest.ini_options]
