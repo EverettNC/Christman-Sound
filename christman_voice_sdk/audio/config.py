@@ -29,13 +29,45 @@ Everett's own synthesizer is wired, and the config does not claim one. The
 sampling block (temperature / top_k / top_p) was the outside models'
 generation setting; nothing in the package read it. The wav2vec2 model name
 stays — that is the ear side, not a voice.
+
+WHAT CHANGED AND WHY (2026-10-28, Lane 6) — NO FOLDERS INSIDE THE PACKAGE
+-------------------------------------------------------------------------
+`Config.__init__` made models/, data/ and logs/ inside the installed package
+every time it ran, and voice_capture_client.py and christman_ocr_shared.py run
+it at import, so importing them wrote into site-packages (or the clone).
+Removed (quoted from main 1100f72):
+
+        self.models_dir = self.root_dir / "models"
+        self.data_dir = self.root_dir / "data"
+        self.logs_dir = self.root_dir / "logs"
+
+        for directory in (self.models_dir, self.data_dir, self.logs_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+
+The three folders now live under the user data folder,
+`$CHRISTMAN_AI_HOME/voice_sdk` (default `~/.christman_ai/voice_sdk`, beside the
+logs, voice profiles and voice cache the SDK already keeps there). Building a
+Config creates nothing. A caller that needs one calls `config.ensure_dir(...)`,
+which makes it then, owner-only (0700).
+
+The default config also named a Hugging Face model id
+("jonatasgrosman/wav2vec2-large-xlsr-53-english"). Nothing read it, and a model
+id is what from_pretrained downloads. Everett's rule is offline, no downloads,
+so it is gone; a model is loaded from a local directory its caller gives.
 """
 
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
 import yaml
+
+
+def user_data_root() -> Path:
+    """The SDK's user data folder: $CHRISTMAN_AI_HOME, else ~/.christman_ai."""
+    raw = os.environ.get("CHRISTMAN_AI_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".christman_ai"
 
 
 class Tier(Enum):
@@ -94,12 +126,17 @@ class Config:
         else:
             self._config = self._get_default_config()
 
-        self.models_dir = self.root_dir / "models"
-        self.data_dir = self.root_dir / "data"
-        self.logs_dir = self.root_dir / "logs"
+        # Paths only. Nothing is created until a caller asks (ensure_dir).
+        self.data_root = user_data_root() / "voice_sdk"
+        self.models_dir = self.data_root / "models"
+        self.data_dir = self.data_root / "data"
+        self.logs_dir = self.data_root / "logs"
 
-        for directory in (self.models_dir, self.data_dir, self.logs_dir):
-            directory.mkdir(parents=True, exist_ok=True)
+    def ensure_dir(self, directory: Path) -> Path:
+        """Create `directory` now (owner-only), because a caller needs it."""
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return directory
 
     def _get_default_config(self) -> Dict[str, Any]:
         return {
@@ -114,9 +151,6 @@ class Config:
                 "silence_threshold_db": -40.0,
                 "segment_length_seconds": 10.0,
                 "overlap_seconds": 2.0,
-            },
-            "models": {
-                "wav2vec2_model": "jonatasgrosman/wav2vec2-large-xlsr-53-english",
             },
         }
 
@@ -150,7 +184,7 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
 def require_local_or_tls(uri: str, what: str = "endpoint") -> str:
     """
-    Accept a WebSocket URI only if it cannot carry a user's voice off the
+    Accept a WebSocket URI only if it cannot carry a client's voice off the
     machine in the clear: `ws://` to a loopback host, or `wss://` anywhere.
 
     Rule 12. Voice biometrics and OCR'd text go over these sockets. The

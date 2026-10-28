@@ -13,8 +13,10 @@ This seats it: SpeechRecognitionEngine.recognize_from_bytes(...).
 
 What this is:
   - A localhost-only HTTP receiver. It binds 127.0.0.1 and nothing else.
-    A vulnerable user's voice does not leave the device; a bind address
+    A vulnerable client's voice does not leave the device; a bind address
     is how that promise is kept, not a comment.
+  - It has no port of its own. The caller passes one (`port=`, `--port`,
+    or CHRISTMAN_WORD_EAR_PORT). See PORTS below.
   - One POST route. The body is WAV bytes, a multipart file, or JSON
     {audioBase64}. Anything else is a 400 with the reason in the body.
 
@@ -33,7 +35,16 @@ Failure behaviour (Rule 6):
     Diagnostics live in metadata.error. Never in the text slot.
 
 Nothing is constructed at import. Build a receiver with `create_receiver`
-or run `python3 -m christman_voice_sdk.audio.word_ear_receiver`.
+or run `python3 -m christman_voice_sdk.audio.word_ear_receiver --port N`.
+
+PORTS (2026-10-28, Lane 6)
+The default was 5487, "next door" to Corti's 5486. But 5487 is AlphaVox's
+launcher, the origin Corti-in-the-being posts from (corti_receiver.py names
+it), so starting the word-ear with no port took the launcher's port. There is
+no default now. The port comes from the caller: `create_receiver(port=...)`,
+`--port` on the command line, or CHRISTMAN_WORD_EAR_PORT. With none of them,
+it raises and says so. Ports another part of the voice system already uses are
+refused by name (RESERVED_PORTS). Port 0 asks the system for a free port.
 """
 
 from __future__ import annotations
@@ -66,7 +77,15 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:8080",
 )
 
-DEFAULT_PORT = 5487  # Corti cards live on 5486. Words live next door.
+#: Ports already taken elsewhere in the voice system. The word-ear never binds them.
+RESERVED_PORTS = {
+    5173: "a browser front end that posts here (see DEFAULT_ALLOWED_ORIGINS)",
+    5485: "AlphaVox's acoustic keys",
+    5486: "corti_receiver (Corti cards)",
+    5487: "the AlphaVox launcher (Corti-in-the-being posts from it)",
+    5497: "in use on Everett's Mac, not to be taken (2026-10-28)",
+}
+PORT_ENV = "CHRISTMAN_WORD_EAR_PORT"
 BIND_HOST = "127.0.0.1"  # Not configurable. Offline-first is a bind address.
 MAX_BODY_BYTES = 8 * 1024 * 1024
 EVENT_PATH = "/api/sound/word-ear"
@@ -309,18 +328,38 @@ def _make_handler(receiver: WordEarReceiver) -> type:
     return Handler
 
 
+def resolve_port(port: Optional[int] = None) -> int:
+    """
+    The port to bind: the one passed, else CHRISTMAN_WORD_EAR_PORT.
+
+    Raises ValueError when neither is given, when it is not a port number, or
+    when it is one of RESERVED_PORTS (named with what holds it).
+    """
+    if port is None:
+        raw = os.environ.get(PORT_ENV)
+        if raw is None or not raw.strip():
+            raise ValueError(
+                "word-ear has no default port: pass port=, --port, or set "
+                f"{PORT_ENV} (it may not be one of {sorted(RESERVED_PORTS)})"
+            )
+        try:
+            port = int(raw)
+        except ValueError:
+            raise ValueError(f"{PORT_ENV}={raw!r} is not a port number") from None
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+        raise ValueError(f"word-ear port {port!r} is not a port number")
+    if port in RESERVED_PORTS:
+        raise ValueError(
+            f"word-ear port {port} is taken by {RESERVED_PORTS[port]}; choose another"
+        )
+    return port
+
+
 def create_receiver(
     port: Optional[int] = None,
     engine: Optional[SpeechRecognitionEngine] = None,
 ) -> Tuple[ThreadingHTTPServer, WordEarReceiver]:
-    if port is None:
-        raw = os.environ.get("CHRISTMAN_WORD_EAR_PORT", str(DEFAULT_PORT))
-        try:
-            port = int(raw)
-        except ValueError:
-            raise ValueError(
-                f"CHRISTMAN_WORD_EAR_PORT={raw!r} is not a port number"
-            ) from None
+    port = resolve_port(port)
     receiver = WordEarReceiver(engine=engine)
     server = ThreadingHTTPServer((BIND_HOST, port), _make_handler(receiver))
     return server, receiver
@@ -339,9 +378,14 @@ def start_in_thread(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    del argv
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Word-ear receiver (127.0.0.1 only)")
+    parser.add_argument("--port", type=int, default=None,
+                        help=f"port to bind; else {PORT_ENV}. There is no default.")
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server, receiver = create_receiver()
+    server, receiver = create_receiver(port=args.port)
     host, port = server.server_address[0], server.server_address[1]
     logger.info("Word-ear listening on http://%s:%d%s", host, port, EVENT_PATH)
     logger.info("health: http://%s:%d%s", host, port, HEALTH_PATH)
@@ -364,7 +408,8 @@ __all__ = [
     "main",
     "EVENT_PATH",
     "HEALTH_PATH",
-    "DEFAULT_PORT",
+    "RESERVED_PORTS",
+    "resolve_port",
     "pcm_from_wav",
 ]
 
