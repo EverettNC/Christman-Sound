@@ -5,7 +5,7 @@ No license — express or implied — is granted without prior written permissio
 — Grounder.
 
 Short, repeatable, safe grounding techniques the voice surface can offer when
-emotional metrics indicate the user is escalating or dissociating.
+emotional metrics indicate the client is escalating or dissociating.
 
 This module is *content-only*. It returns scripted prompts; it does NOT
 auto-deliver them and does NOT constitute clinical care. Callers must respect
@@ -49,7 +49,7 @@ WHAT CHANGED AND WHY
 
        return responses.get(state, responses[CompanionState.WORRIED])
 
-   An unrecognized state produced the worried script, telling the user their
+   An unrecognized state produced the worried script, telling the client their
    companion was worried when nothing had said so. Raises now.
 
 4. `format_script_for_voice` joined every line including the empty separators,
@@ -67,8 +67,10 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 try:
-    # One number, one place. See note 1.
-    from emotion_quantifier import BREATHING_RISE as _BREATHING_RISE
+    # One number, one place. See note 1. (2026-10-28: this was a bare
+    # `from emotion_quantifier import ...`, which never resolves in an
+    # installed package, so the local copy below was what always ran.)
+    from ..tone.emotion_quantifier import BREATHING_RISE as _BREATHING_RISE
     _THRESHOLD_SOURCE = "emotion_quantifier.BREATHING_RISE"
 except ImportError:
     _BREATHING_RISE = 0.10
@@ -105,7 +107,7 @@ class Grounder:
         """
         Args:
             companion_name: Enables the companion-externalization technique.
-                The caller is responsible for supplying a name the user has
+                The caller is responsible for supplying a name the client has
                 already consented to. Ambiguity is not consent.
         """
         self.companion_name = companion_name
@@ -221,7 +223,7 @@ class Grounder:
         """
         Optional externalization. Returns None when no companion is configured.
 
-        The caller MUST NOT invent a companion the user has not consented to.
+        The caller MUST NOT invent a companion the client has not consented to.
         """
         if not self.companion_name:
             return None
@@ -245,7 +247,7 @@ class Grounder:
 
         Raises:
             KeyError: for a state with no script. The predecessor defaulted to
-                the WORRIED script, which told the user their companion was
+                the WORRIED script, which told the client their companion was
                 worried when nothing had established that.
         """
         if not self.companion_name:
@@ -366,7 +368,7 @@ class Grounder:
         companion_mode: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
-        Pick a technique from the user's current metrics.
+        Pick a technique from the client's current metrics.
 
         Args:
             stress_level: RISE above baseline, from
@@ -382,7 +384,7 @@ class Grounder:
         if stress_level is None and grounding_level is None:
             logger.warning(
                 "No metrics supplied — returning no technique. Do not read "
-                "this as 'the user is fine'."
+                "this as 'the client is fine'."
             )
             return None
 

@@ -1,6 +1,6 @@
 # Christman Sound — Unified Audio, Voice, and Speech System
 
-A comprehensive framework for the Christman family of autonomous beings. This system integrates speech recognition, voice synthesis, tone analysis, music generation, and audio processing into a cohesive voice and sound ecosystem.
+A comprehensive framework for the Christman family of autonomous beings. It brings together hearing, local speech recognition, the beings' own voice, tone and voice measurement, music composition data, and audio processing.
 
 ## Overview
 
@@ -65,84 +65,125 @@ Sound does not import grunt, tick, or stimming. Two organs, one job.
 ### christman_voice_sdk
 
 #### Audio (`audio/`)
-- `audio_processor.py` — WAV processing, normalization, format conversion
-- `audio_encoder.py` — Audio encoding and compression
-- `speech_recognition_engine.py` — Base speech-to-text
-- `enhanced_speech_recognition.py` — Multi-model speech recognition
-- `real_speech_recognition.py` — Production speech recognition
-- `sound_recognition_service.py` — Sound classification and detection
-- `fusion_engine.py` — Carbon + Silicon under Aegis. Decide, or unknown.
 - `hearing.py` — Corti sits on top. Composes ingest + affect + harm_frame.
 - `corti_ingest.py` — Corti JSON → VocalEvent + tape. Null F0 stays None.
 - `corti_receiver.py` — localhost 127.0.0.1:5486. Seats a posted card under Hearing. Not running unless you start it.
+- `word_ear_receiver.py` — localhost-only receiver for words: one WAV in, local recognition out. It has no default port; pass `--port` or set `CHRISTMAN_WORD_EAR_PORT` (5173, 5485, 5486, 5487 and 5497 are refused).
 - `prosody.py` — Relative arousal from the Corti card. No valence.
+- `tape_contour.py` — Tape contour (null F0 is a hole)
 - `structural_affect.py` — Clause-level affect. Structure decides.
 - `harm_frame.py` — Who did what to whom. Grief is not crisis.
-- `tape_contour.py` — Tape contour (null F0 is a hole)
+- `fusion_engine.py` — Carbon + Silicon under Aegis. Decide, or unknown.
+- `face_reading.py` — What Sound hands the face: structure and arousal, no emotion names
+- `face_vector.py` — The 8-dim face vector, Christman-Sound → Soul Mirror
+- `body_signals.py` — The body-signal input contract
+- `speech_recognition_engine.py` — Local speech recognition (Vosk). Audio never leaves the machine
+- `enhanced_speech_recognition.py` — Coordinates speech and nonverbal sound recognition; recognizes nothing itself
+- `real_speech_recognition.py` — Voice activity detection and capture; detects that someone spoke
+- `sound_recognition_service.py` — Sound pattern recognition for nonverbal communicators
 - `recognition_result.py` — Honest recognition contract
+- `audio_processor.py` — Raw audio intake: noise reduction, segmentation, quality analysis
+- `audio_encoder.py` — Wav2Lip audio encoder: mel spectrogram to audio embedding
+- `config.py` — SDK configuration. Its folders live under `$CHRISTMAN_AI_HOME/voice_sdk` (default `~/.christman_ai/voice_sdk`) and are made only when needed
 
 #### Engines (`engines/`)
-- `synthesis_result.py` — The result contract (`SynthesisResult`) and the typed failure (`SynthesisUnavailable`) every speaking path raises when no voice can be made
+- `synthesis_result.py` — The result contract (`SynthesisResult`) and the typed failure (`SynthesisUnavailable`) a speaking path raises when no voice can be made
+- `logger.py` — Logger bridge
 
-On 2026-10-17 Everett ruled that every outside speech engine is cut. `base_synthesizer.py`, `xtts_engine.py` (Coqui XTTS) and `gpt_sovits_engine.py` are in `quarantine/2026-10_outside_voices/`; see `WHY.md` there. Speech from text is unavailable until his own synthesizer is wired in.
+On 2026-10-17 Everett ruled that every outside speech engine is cut. `base_synthesizer.py`, `xtts_engine.py` (Coqui XTTS) and `gpt_sovits_engine.py` are in `quarantine/2026-10_outside_voices/`; see `WHY.md` there. The voice is his own synthesizer, `christman_sound`, described below.
 
 #### Synthesis (`synthesis/`)
-- `voice_synthesis.py` — Core synthesis pipeline
-- `voice_synthesis_orchestrator.py` — Synthesis coordination
-- `tts_service.py` — TTS service layer
-- `phoneme_labeler.py` — Phoneme timing and alignment
-- `speech_response.py` — `speak()`; raises `SynthesisUnavailable` (it was a pyttsx3 wrapper, now quarantined)
+- `voice_synthesis.py` — The mouth. Speaks text in the voice its caller gives, through `christman_sound.synth`
+- `tts_service.py` — Local Flask service (127.0.0.1) in front of the mouth
+- `phoneme_labeler.py` — Phoneme and viseme timing
+- `speech_response.py` — `speak()`; raises `SynthesisUnavailable`. It does not reach the mouth; use `voice_synthesis`
+- `shorty_voice_engine_v3.py` — Emotion quantification; its `synthesize()` raises `SynthesisUnavailable`
+- `voice_synthesis_orchestrator.py` — Voicepack, timbre and emotion pipeline; its `synthesize()` raises `SynthesisUnavailable`
 
 #### Tone (`tone/`)
-- `tone_analyzer.py` — Tone and emotion detection
-- `tonescore_engine.py` — ToneScore calculation (file path; not a live producer on Corti)
-- `tonescore_analyzer.py` — Detailed tone analysis
-- `emotion_quantifier.py` — Emotion metric computation
-- `emotion_embedder.py` — Emotion representation
-- `christman_tone_engine_v2.py` — Production tone engine
-- `speech_personality.py` — Personality extraction from speech
-- `written_tone.py` — Tone analysis for text
+- `voice_measure.py` — The one place the SDK measures a voice
+- `tonescore_engine.py` — ToneScore: raw audio → measured features → response
+- `tonescore_analyzer.py` — Multi-layer tone analysis: pitch, jitter, shimmer, HNR (Praat)
+- `christman_tone_engine_v2.py` — Emotion and ToneScore engine v2. Its classifier loads only from local files; nothing is downloaded
+- `emotion_quantifier.py` — Stress, coherence, grounding and crisis signals from text
+- `emotion_embedder.py` — Maps emotional states to voice parameters
 - `emotion_labels.py` — Labels from model.config.id2label
+- `analyze_emotion.py` — Emotional tagging for a being's memory file
+- `speech_personality.py` — Phrasing for BROCKSTON's spoken responses
+- `tone_manager.py` — Communication adjustments after tone is read
+- `tone_classifier.py` — Superseded; delegates to `written_tone.py`
+- `written_tone.py` — Tone analysis for text
 
 #### Timbre (`timbre/`)
-- `timbre_modeler.py` — Voice timbre modeling
-- `shorty_emotion.py` — Emotion-based timbre modification
-- `voicepack.py` — Voice pack management
+- `timbre_modeler.py` — Voice timbre measurement
+- `shorty_emotion.py` — Emotion scores from a local wav2vec2 model and a PCA projection. Loads only from local paths the caller gives; nothing is downloaded. No projection file is in this repository
+- `voicepack.py` — Voicepack archives. Every member is checked before anything is extracted
+- `logger.py` — Logger bridge
 
 #### Music (`music/`)
-- `music_engine.py` — Music generation and synthesis
-- `christman_studio.py` — Music studio orchestration
+- `music_engine.py` — Melodies and rhythms as composition data. Makes no sound
+- `christman_studio.py` — Song arrangements as data. Makes no sound. Rendering, mixing, mastering and singing are not built (`NOT_BUILT`)
+- `resonance_player.py` — Volume-capped player: peak −12 dBFS, RMS −30 dBFS, fades, checked before it plays
 
 #### Nonverbal (`nonverbal/`)
 - `nonverbal_engine.py` — Named AAC map engine
 - `engine_temporal.py` — Temporal sequence classification
+- `acoustic_live.py` — Live acoustic key from the Corti client into AlphaVox
 
 #### Integration (`integration/`)
-- `christman_speech_to_speech.py` — Speech-to-speech conversion
-- `speech_integration.py` — Speech service integration
-- `voice_capture_client.py` — Voice capture and streaming
+- `voice_capture_client.py` — Microphone capture, frequency signature, voice profiles
+
+(`speech_integration.py` and `christman_speech_to_speech.py` were removed on 2026-10-28: neither worked on any path. `tests/test_integration_truth.py` records why.)
 
 #### Utils (`utils/`)
-- `voice_diagnostics.py` — Audio quality analysis
-- `grounder.py` — Context and grounding utilities
-- `presence_guide.py` — User presence detection
+- `grounder.py` — Grounding scripts (breathing, 5-4-3-2-1, feet on the ground) chosen from stress metrics
+- `presence_guide.py` — Reads text for states that need presence, not solutions, and checks a reply for toxic positivity
+- `voice_diagnostics.py` — Runs a local synthesis backend over voice profiles and reports byte-identical outputs
+- `logger.py` — Logging
 
-### Core Modules
-- `core.py` / `christman_sound/core.py` — kept for the record; nothing in the package imports them (Everett, 2026-10-11)
-- `logger.py` — Unified logging
-- `christman_dsp.c` — the bare-metal DSP engine. Build: `python3 scripts/build_dsp.py --check`; loaded by `christman_sound/dsp.py`
+### christman_sound — the voice
+
+- `synth.py` — `synthesize()` and `speak()`: text or phones in, sound out
+- `stitch.py` — Frame voices: a voice speaking new sentences from its own recordings
+- `lexicon.py` — Words to phones, from Everett's Vosk lexicon
+- `formants.py` — F1, F2, F3 and their bandwidths, measured from a recording
+- `voice_profile.py` — A being's measured voice, applied to the synthesizer
+- `dsp.py` — The one loader for the C library
+- `alphavox_voice.json` — AlphaVox's measured voice profile
+- `logger.py` — Logging
+- `core.py` — Kept for the record. Nothing imports it, and it is not touched (Everett, 2026-10-11)
+
+### C engine (repository root)
+
+- `christman_dsp.c` — Measurement (RMS, ZCR, YIN pitch, LPC) and playback
+- `christman_synth.c` — The synthesizer, ported from Codec War
+- `christman_vocoder.c` — The frame mouth, ported from Codec War's `vocoder.ts`
+
+All three are compiled into `christman_sound/christman_dsp.so` by `scripts/build_dsp.py`. pip does not build them (see Installation).
+
+### Other root modules and scripts
+
+- `christman_ocr_shared.py` — OCR for screens and documents (PaddleOCR); read-aloud through Derek
+- `crypto_bridge.py` — Voicepack encryption and signing through Harvest-Now-Decrypt-Later
+- `_paths.py` — Path setup for scripts
+- `scripts/build_dsp.py` — Builds the C library; `--check` runs its smoke test
+- `scripts/build_voice_bank.py` — Builds a frame voice (below)
+- `scripts/measure_alphavox_voice.py` — Measures AlphaVox's voice profile from AlphaVox's recordings
+- `scripts/run_crisis_table.py`, `scripts/verify_corti_wire.py`, `scripts/verify_hearing_seat.py` — Checks run by hand
 
 ## Quick Start
 
 ### Basic Voice I/O
 
 ```python
-from christman_voice_sdk import listen                      # timed mic grab; needs sounddevice + PortAudio
-from christman_voice_sdk.integration.voice_capture_client import extract_frequency_signature
+from christman_voice_sdk import listen                      # timed mic grab; needs the capture extra
+from christman_voice_sdk.integration.voice_capture_client import (
+    CAPTURE_SAMPLE_RATE, extract_frequency_signature,
+)
 from christman_voice_sdk.audio.hearing import Hearing
 
-audio = listen(8)                                           # 8 s, 44.1 kHz, float32
-print(extract_frequency_signature(audio))                   # None for anything that was not measured
+audio = listen(8)                                           # 8 s at CAPTURE_SAMPLE_RATE (44.1 kHz), float32
+print(extract_frequency_signature(audio, CAPTURE_SAMPLE_RATE))  # None for anything that was not measured
 
 
 def page_a_human(safety_result, context) -> bool:
@@ -157,42 +198,53 @@ print(turn.decision.mode, turn.decision.safety.status)      # gentle-lift clear
 
 ### Speech Recognition
 
-```python
-from christman_voice_sdk.audio import enhanced_speech_recognition
+Recognition is local (Vosk). Install the `asr` extra and point it at a Vosk model folder with `VOSK_MODEL_PATH`.
 
-recognizer = enhanced_speech_recognition.EnhancedSpeechRecognizer()
-text = recognizer.recognize(wav_file="input.wav")
-print(f"Recognized: {text}")
+```python
+from christman_voice_sdk.audio.speech_recognition_engine import get_speech_recognition_engine
+
+engine = get_speech_recognition_engine()                    # unavailable, with the reason, if no model
+result = engine.recognize_from_bytes(pcm16_mono, sample_rate=16000)
+print(result.status, result.text)                           # text is "" on every non-OK status
 ```
 
 ### Voice Synthesis
 
-```python
-from christman_voice_sdk.synthesis import voice_synthesis
+The mouth speaks only in the voice its caller gives: generate_speech_audio(text, voice=<frame voice folder>) or $CHRISTMAN_VOICE. Controls are keywords (cadence, breath, jitter, shimmer, timbre, articulation, intonation, prosody, resonance, affect, rate, f0); each is applied and listed in last_applied, or refused with the reason.
 
+```python
+from christman_voice_sdk.synthesis.voice_synthesis import SpeechSynthesisEngine
 from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable
 
+mouth = SpeechSynthesisEngine(lexicon_path="<align_lexicon.txt>")   # or $CHRISTMAN_LEXICON_PATH
 try:
-    wav_path = voice_synthesis.synthesize_speech("Hello, I am Seraphinia")
+    wav_path = mouth.generate_speech_audio(
+        "I am here.",
+        voice="~/.christman_ai/voices/<voice>",             # the being's own frame voice
+        play_audio=False,                                   # True plays it, or raises PlaybackFailed
+        cadence=0.5,
+    )
+    print(wav_path, mouth.last_applied)
 except SynthesisUnavailable as err:
-    # No outside voice is ever substituted. Until the sovereign synthesizer
-    # is wired, this is where every call lands: err.available is False and
-    # err.reason says why. Show the client a plain notice.
+    # No outside voice is ever substituted. err.available is False and
+    # err.reason says why (for example, no voice was given).
     print(err.reason)
 ```
+
+A lexicon problem (none configured, a word not in it) raises `christman_sound.lexicon.LexiconError` and a control the voice cannot apply raises `christman_sound.stitch.StitchRefused`, each with the reason; nothing is dropped silently. `synthesis_readiness()` says whether a voice and lexicon are ready, and why not.
 
 ### A frame voice: a voice spoken from its own recordings
 
 Added 2026-10-28. A frame voice is a folder built from one voice's own
 recordings and nothing else. It holds the recordings measured every 4.99 ms
 (pitch, a 96-point spectral envelope, aperiodicity in 8 bands), every word the
-Filament heard in them cut into phone units, and the voice's measured profile
-(pitch, phrase pitch range, syllable rate, breath, long-term spectrum, level,
-and jitter, shimmer, HNR and CPPS by Praat through the SDK). New sentences are
-stitched from stretches of those frames (`christman_sound.stitch`, the port of
-Codec War's `stitch.ts`) and rendered by `christman_vocoder.c` (the port of
-Codec War's `vocoder.ts`; the tests hold both ports to Codec War sample for
-sample).
+Filament (Everett's Vosk) heard in them cut into phone units, and the voice's
+measured profile (pitch, phrase pitch range, syllable rate, breath, long-term
+spectrum, level, and jitter, shimmer, HNR and CPPS by Praat through the SDK).
+New sentences are stitched from stretches of those frames
+(`christman_sound.stitch`, the port of Codec War's `stitch.ts`) and rendered by
+`christman_vocoder.c` (the port of Codec War's `vocoder.ts`; the tests hold
+both ports to Codec War sample for sample).
 
 The folder is built on the machine that speaks; it is not kept in git (the
 AlphaVox voice is about 78 MB). Build it with the repository's script:
@@ -215,77 +267,76 @@ praat-parselmouth. Only the voice's own recordings go in: never another
 being's, never a person's. `--measure-only` keeps a built bank and measures
 the profile again.
 
-### Speech-to-Speech
-
-```python
-from christman_voice_sdk.integration import christman_speech_to_speech
-
-converter = christman_speech_to_speech.ChristmanSpeechToSpeech()
-output_wav = converter.convert(
-    input_wav="user_voice.wav",
-    target_voice="derek",
-    emotion="authoritative"
-)
-```
-
 ### OCR & Screen Reading
 
 ```python
 import asyncio
 from christman_ocr_shared import ChristmanOCR               # needs paddleocr (+ pymupdf for PDFs)
 
-ocr = ChristmanOCR(being_name="AlphaVox")                   # speaks via Derek, falls back to local TTS on stdin
+ocr = ChristmanOCR(being_name="AlphaVox")                   # reads aloud through Derek; no fallback voice
 result = asyncio.run(ocr.read_document("/path/to/document.pdf"))
 print(result["pages"], result["confidence"], result["text"])
 ```
+
+If Derek does not answer, the read-aloud raises `SynthesisUnavailable` with the reason. PaddleOCR fetches its model files the first time it is constructed; that is an open item against the offline rule (`tests/test_offline.py`).
 
 ## Configuration
 
 ### Environment Variables
 
 ```bash
+# The voice
+export CHRISTMAN_VOICE=~/.christman_ai/voices/<voice>        # frame voice folder, when the caller passes none
+export CHRISTMAN_LEXICON_PATH=<vosk model>/graph/phones/align_lexicon.txt
+export CHRISTMAN_VOICE_CACHE=~/.christman_ai/voice_cache     # where spoken WAVs are written
+export CHRISTMAN_DSP_LIB=/path/to/christman_dsp.so           # only to override where the library is found
+
+# Hearing
+export VOSK_MODEL_PATH=~/models/vosk-model-en-us-0.22        # local speech recognition
+export CHRISTMAN_SOUND_PORT=5486                             # corti_receiver
+export CHRISTMAN_WORD_EAR_PORT=<port>                        # word_ear_receiver; no default
+
+# The SDK's own folders: config folders, voicepacks, music memory
+export CHRISTMAN_AI_HOME=~/.christman_ai
+export CHRISTMAN_LOG_DIR=~/.christman_ai/logs                # logs
+
 # MCP Server root (Derek configuration)
 export DEREK_ROOT=/path/to/DerekMCPServer
-
-# Voice SDK root
-export CHRISTMAN_VOICE_SDK_ROOT=/path/to/christman_voice_sdk
-
-# Audio device settings
-export CHRISTMAN_AUDIO_DEVICE=0
-export CHRISTMAN_SAMPLE_RATE=16000
 ```
 
 ### Voice Profiles
 
 ```bash
-python3 -m christman_voice_sdk.integration.voice_capture_client --capture everett   # 8 s from the mic
+python3 -m christman_voice_sdk.integration.voice_capture_client --capture <profile-name>   # 8 s from the mic
 python3 -m christman_voice_sdk.integration.voice_capture_client --list
-python3 -m christman_voice_sdk.integration.voice_capture_client --speak "I'm here." --profile everett
+python3 -m christman_voice_sdk.integration.voice_capture_client --speak "I'm here." --profile <profile-name>
 ```
 
-A profile stores only what was measured. Silence yields `fundamental_hz: null`, never 150.
+A profile stores only what was measured. Silence yields `fundamental_hz: null`, never 150. `--speak` sends the text to Derek; with no Derek it raises `SynthesisUnavailable`. A being's profile is made from that being's own voice.
 
 ## Architecture
 
 ```
-User Input
+Client input (Corti card, words, text)
     ↓
-[christman_voice_sdk] (Production engines)
-    ├── Audio → Speech Recognition → Text
-    ├── Text → Synthesis → Audio
-    ├── Audio → Tone Analysis → Emotions
-    └── Audio → Feature Extraction → Voice Profile
+[christman_voice_sdk]
+    ├── Corti card + tape → hearing → affect, harm frame → decision
+    ├── Audio → local speech recognition → text
+    ├── Audio → tone and voice measurement → measured features
+    └── Text → the mouth (voice_synthesis) ─┐
+                                            ↓
+[christman_sound]  lexicon → synth / stitch → christman_dsp.so (C) → sound
     ↓
-User Output (Speech, Sound, Feedback)
+Client output (the being's own voice)
 ```
 
 ## Key Features
 
 - **Own Voice Only** — No outside speech engine (no XTTS, GPT-SoVITS, `say`, espeak, pyttsx3, gTTS or pygame). A being speaks in its own voice or raises `SynthesisUnavailable` with the reason
-- **Real-Time Processing** — Streaming speech recognition and synthesis
+- **Offline** — `tests/test_offline.py` fails on any new download. The downloads still open are listed there by file, with their owners
 - **Honesty Rule** — Truthful reporting of engine capabilities
-- **No Fakes** — Fallback modes clearly indicated, never pretending
-- **Voice Profiles** — Frequency-based speaker identification
+- **No Fakes** — A path that cannot do its work says so, never pretending
+- **Voice Profiles** — Measured frequency signatures, stored as JSON; only what was measured
 
 ## Beings
 
@@ -301,18 +352,25 @@ Each being can have custom voice profiles, emotional ranges, and personality set
 
 ## Requirements
 
-- Python 3.8+
-- FFmpeg (for audio encoding)
+- Python 3.10+
+- A C compiler (Xcode Command Line Tools on a Mac) for `scripts/build_dsp.py`
 
 ## Installation
-
-Both kinds of editable:
 
 ```bash
 # local clone — edits land immediately
 pip install -e /Users/EverettN/Christman-Sound
+python3 scripts/build_dsp.py --check        # builds the C library; pip does not
 
-# git clone in a temp tree, still editable
+# extras
+pip install -e '.[crypto]'                  # voicepack encryption, crypto_bridge.py
+pip install -e '.[capture]'                 # microphone capture (sounddevice)
+pip install -e '.[asr]'                     # local speech recognition (vosk)
+```
+
+From git, still editable:
+
+```bash
 pip install -e git+https://github.com/The-ChristmanAI-Project/Christman-Sound.git#egg=christman-sound
 ```
 
@@ -322,7 +380,9 @@ Frozen (no edit):
 pip install git+https://github.com/The-ChristmanAI-Project/Christman-Sound.git
 ```
 
-Then:
+Then run `scripts/build_dsp.py` from a clone, so `christman_sound/christman_dsp.so` exists. Without it, measurement and the voice raise `DSPUnavailable` with the reason.
+
+Tested 2026-10-28 on Everett's Intel Mac: a fresh `uv venv --python 3.11`, `uv pip install -e .`, `python3 scripts/build_dsp.py --check`, then the full test suite. librosa is not a dependency: nothing imports it, and its numba and llvmlite chain has no Intel Mac wheel.
 
 ```python
 from christman_voice_sdk.nonverbal.acoustic_live import deliver_acoustic_key
@@ -331,7 +391,7 @@ from christman_voice_sdk.audio.hearing import Hearing
 
 ## Logging
 
-All modules use unified logging via `logger.py`. Enable debug output:
+Modules log through Python's `logging`; most add a `NullHandler` and print nothing until the application configures logging. `christman_voice_sdk.utils.logger` adds rich console output and rotating files under `~/.christman_ai/logs` (`CHRISTMAN_LOG_DIR`). Enable debug output:
 
 ```python
 import logging
@@ -348,4 +408,4 @@ Proprietary — Christman Family of Autonomous Beings
 
 ## Support
 
-For integration issues or audio problems, check `christman_voice_sdk/utils/voice_diagnostics.py`.
+For integration issues or audio problems, run the tests (`python3 -m pytest tests -q`) and `python3 scripts/build_dsp.py --check`. `synthesis_readiness()` in `voice_synthesis` says whether the voice is ready and why not.

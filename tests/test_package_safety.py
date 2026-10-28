@@ -16,6 +16,7 @@ Three safety fixes, each proven against the real code (Lane 6, 2026-10-28).
 
 from __future__ import annotations
 
+import re
 import socket
 import stat
 import subprocess
@@ -219,3 +220,37 @@ def test_word_ear_takes_the_port_it_is_given(monkeypatch):
         assert host == "127.0.0.1" and bound not in wer.RESERVED_PORTS and bound != 0
     finally:
         server.server_close()
+
+
+# ---------------------------------------------------------------------- words
+
+LANE6_FILES = [
+    *sorted((ROOT / "christman_voice_sdk" / "utils").glob("*.py")),
+    *sorted((ROOT / "christman_voice_sdk" / "music").glob("*.py")),
+    ROOT / "christman_voice_sdk" / "timbre" / "shorty_emotion.py",
+    ROOT / "christman_voice_sdk" / "timbre" / "voicepack.py",
+    ROOT / "christman_voice_sdk" / "audio" / "config.py",
+    ROOT / "christman_sound" / "__init__.py",
+    ROOT / "crypto_bridge.py",
+    ROOT / "christman_ocr_shared.py",
+]
+
+
+def test_the_people_served_are_clients_in_these_files():
+    """Everett: clients, never "users". (word_ear_receiver reads the
+    is_user_speech property of recognition_result.py, which is not this lane's.)"""
+    pattern = re.compile(r"\busers?\b|\buser'?s\b|user_input|user_said", re.I)
+    hits = []
+    for path in LANE6_FILES:
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line.replace("/Users/", "")):
+                hits.append(f"{path.relative_to(ROOT)}:{n}: {line.strip()}")
+    assert hits == [], "\n".join(hits)
+
+
+def test_grounder_reads_the_one_breathing_number():
+    from christman_voice_sdk.tone import emotion_quantifier
+    from christman_voice_sdk.utils import grounder
+
+    assert grounder._THRESHOLD_SOURCE == "emotion_quantifier.BREATHING_RISE"
+    assert grounder.BREATHING_FIRST_THRESHOLD == emotion_quantifier.BREATHING_RISE

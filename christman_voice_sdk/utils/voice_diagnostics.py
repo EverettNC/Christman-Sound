@@ -8,7 +8,7 @@ configurations produce identical audio — the actual diagnostic value: proving 
 WHAT CHANGED AND WHY
 --------------------
 
-1. IT SENT THE USER'S TEXT TO GOOGLE. FOURTEEN TIMES.
+1. IT SENT THE CLIENT'S TEXT TO GOOGLE. FOURTEEN TIMES.
 
        from gtts import gTTS
        tts = gTTS(text=text, lang=language, slow=slow_mode, tld=region_code)
@@ -74,7 +74,7 @@ class SynthesisBackend(Protocol):
 
     Implementations must not make network calls. There is deliberately no
     interface here for a remote service and none should be added — this file
-    previously shipped a user's text to a third party fourteen times per run.
+    previously shipped a client's text to a third party fourteen times per run.
     """
 
     name: str

@@ -39,7 +39,7 @@ WHAT CHANGED AND WHY
        logger = get_logger(name="christman_voice_sdk",
                            log_dir=Path.home() / ".christman_ai" / "logs", ...)
 
-   Importing this module created directories in the user's home and opened a
+   Importing this module created directories in the home folder and opened a
    file handle. Import should not touch the filesystem. The module-level
    `logger` is now lazy — the handler is built on first use.
 

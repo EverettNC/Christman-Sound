@@ -20,3 +20,4 @@ Already merged on 2026-10-28:
 - AlphaVox #63, #64 and #65.
 - VCC #3 to #10: being-neutral, and the engine renders through Christman-Sound.
 - Lane 2 Measurement: done 2026-10-28. Christman-Sound #25 (f8251e0) and #29. One YIN pitch, one Praat jitter, shimmer and HNR. Reading of a person held for Everett's ruling. See decisions/sde/voice-system.md.
+- Lane 6 Packaging and truth: done 2026-10-28. Christman-Sound #23, #24, #26, #28, #30 and the docs PR. Installs on Intel Mac, offline scan, zip check, honest music and integration, README true to main. License mismatch held for Everett. See decisions/sde/voice-system.md.

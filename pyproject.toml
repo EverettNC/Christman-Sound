@@ -69,6 +69,9 @@ dependencies = [
 crypto = ["cryptography"]
 # Microphone capture (integration/voice_capture_client.capture_audio).
 capture = ["sounddevice"]
+# Local speech recognition (audio/speech_recognition_engine.py, Vosk). The
+# model is not a package: point VOSK_MODEL_PATH at a model folder on disk.
+asr = ["vosk"]
 
 [tool.setuptools.packages.find]
 include = ["christman_voice_sdk*", "christman_sound*"]
