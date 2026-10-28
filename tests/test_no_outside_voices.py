@@ -122,7 +122,7 @@ def test_paths_marker_points_at_a_file_that_stays():
 
 
 def test_local_speak_fallback_raises_the_typed_failure():
-    pytest.importorskip("websockets", reason="not run: websockets not installed (voice_capture_client imports it at module top)")
+    # voice_capture_client imports websockets only inside speak_via_derek (2026-10-28).
     from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
     from christman_voice_sdk.integration import voice_capture_client as vcc
 

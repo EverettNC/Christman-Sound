@@ -86,7 +86,10 @@ import numpy as np
 import scipy.signal as signal
 
 import argparse
-import websockets  # pyright: ignore[reportMissingImports]
+
+# websockets is needed only to reach Derek (speak_via_derek). It is imported
+# there, so measuring a voice does not depend on it (2026-10-28: the module
+# failed to import without it, and two tests with it).
 
 # sounddevice needs the PortAudio system library. Only capture_audio() needs
 # sounddevice. Analysis, profiles and speaking must not die at import on a
@@ -294,6 +297,8 @@ def list_profiles() -> list[str]:
 async def speak_via_derek(text: str, signature: Optional[Dict] = None) -> str:
     """Send TTS request to Derek. Unmeasured profile fields travel as null."""
     try:
+        import websockets  # pyright: ignore[reportMissingImports]
+
         async with websockets.connect(DEREK_WS_URI, open_timeout=5) as ws:
             payload: Dict[str, Any] = {"text": text, "mode": "stealth"}
             if signature:

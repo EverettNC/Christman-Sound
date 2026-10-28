@@ -173,8 +173,9 @@ class ChristmanToneEngine:
             return
 
         try:
-            self.processor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
-            self.model = Wav2Vec2ForSequenceClassification.from_pretrained(model_name)
+            # Offline only (Everett's ruling): read from this machine, never fetched.
+            self.processor = Wav2Vec2FeatureExtractor.from_pretrained(model_name, local_files_only=True)
+            self.model = Wav2Vec2ForSequenceClassification.from_pretrained(model_name, local_files_only=True)
             self.model.eval()
             self.device = torch.device(
                 "mps" if getattr(torch.backends, "mps", None)

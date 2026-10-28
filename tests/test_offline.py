@@ -62,12 +62,6 @@ LOOPBACK_ONLY = {
 #: break this test. A file may only go down from its count, never up. When an
 #: owner removes a download, lower the count or delete the entry.
 OPEN = {
-    "christman_voice_sdk/tone/tonescore_engine.py":
-        (2, "Lane 2: from_pretrained(emotion_model) fetches from Hugging Face"),
-    "christman_voice_sdk/tone/tone_analyzer.py":
-        (2, "Lane 2: from_pretrained(name) fetches from Hugging Face"),
-    "christman_voice_sdk/tone/christman_tone_engine_v2.py":
-        (2, "tone/ owner (Lane 2): from_pretrained(model_name) fetches from Hugging Face"),
     "christman_ocr_shared.py":
         (2, "Lane 6, not yet fixed: PaddleOCR fetches its model files on first construction; "
             "paddleocr is not installed here, so a local-model path cannot be proven yet"),
