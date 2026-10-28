@@ -14,7 +14,7 @@ nothing like the files I gave", and ruled that the voice be matched by the
 numbers: "if you add the mathematical numbers precisely to the matching voice
 pattern, there shouldn't be any difference." This module is the runtime port
 of Codec War's frame mouth (CODECWAR5TH src/lib/audio/stitch.ts, main
-b148879), step for step, in the Python standard library only (Everett's
+c0cbc5b), step for step, in the Python standard library only (Everett's
 ruling for the mouth: C and the standard library). Codec War is the canonical
 source; a change is made there first. tests/test_frame_voice.py holds the two
 to the same units, the same frames and the same applied values.
@@ -42,7 +42,9 @@ Speaking a sentence:
      listed with its value, or StitchRefused with the reason.
   4. render: christman_vocoder (C, the port of Codec War's vocoder.ts).
 
-Controls (the names the Voice Creation Center sends): breath, jitter,
+Controls (the names the Voice Creation Center sends): cadence (the timing
+and the pauses: the speaking rate times 0.84 to 1.19, pauses and edges held
+for the inverse), breath, jitter,
 shimmer, timbre, articulation, intonation, prosody (0 to 1, 0.5 = the voice
 as measured), resonance ("chest", "mid", "head"), affect ("neutral" only; any
 other affect is refused: this mouth has no affect input, and mapping an
@@ -58,6 +60,7 @@ import json
 import math
 import mmap
 import struct
+from operator import sub as _sub
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -89,7 +92,8 @@ CANDIDATES = 40
 JOIN_SMOOTH = 3
 EDGE_FRAMES = 20
 AP_LOW_BANDS = 5
-REACH = {"breath": 1.0, "intonation": 1.0, "jitter": 1.0, "shimmer": 1.0, "prosody": 0.5, "articulation": 0.4}
+REACH = {"breath": 1.0, "intonation": 1.0, "jitter": 1.0, "shimmer": 1.0, "prosody": 0.5, "articulation": 0.4,
+         "cadence": 0.25}
 CLAMP_RANGE = (0.5, 2.0)
 CLAMP_TIME = (0.6, 1.6)
 CLAMP_AP = (0.25, 4.0)
@@ -102,6 +106,7 @@ F0_RANGE = (60.0, 400.0)
 LOCAL_PER_SD = 2.0 / math.sqrt(math.pi)
 
 NEUTRAL_CONTROLS: Dict[str, Any] = {
+    "cadence": 0.5,
     "breath": 0.5,
     "jitter": 0.5,
     "shimmer": 0.5,
@@ -265,22 +270,29 @@ def load_frame_voice(path: Union[str, Path]) -> FrameVoice:
 @dataclass
 class Selection:
     units: List[int]
+    pauses_after: List[int]
     joins: int
     whole_words: int
     cost: float
 
 
-def _targets(words: Sequence[Tuple[str, Sequence[str]]]) -> List[Dict[str, Any]]:
+def _word(w) -> Tuple[str, Sequence[str], bool]:
+    """(word, phones) or (word, phones, pause_after)."""
+    return (w[0], w[1], bool(w[2]) if len(w) > 2 else False)
+
+
+def _targets(words: Sequence[Tuple]) -> List[Dict[str, Any]]:
+    ws = [_word(w) for w in words]
     out = []
-    for wi, (word, phones) in enumerate(words):
+    for wi, (word, phones, pause) in enumerate(ws):
         for pi, p in enumerate(phones):
-            prev_w = words[wi - 1] if wi > 0 else None
-            next_w = words[wi + 1] if wi + 1 < len(words) else None
+            prev_w = ws[wi - 1] if wi > 0 else None
+            next_w = ws[wi + 1] if wi + 1 < len(ws) else None
             out.append({
                 "phone": p, "word": word, "pos": pi, "wordLen": len(phones),
-                "prev": phones[pi - 1] if pi > 0 else (prev_w[1][-1] if prev_w else "SIL"),
-                "next": phones[pi + 1] if pi < len(phones) - 1 else (next_w[1][0] if next_w else "SIL"),
-                "first": wi == 0, "last": wi == len(words) - 1,
+                "prev": phones[pi - 1] if pi > 0 else (prev_w[1][-1] if prev_w and not prev_w[2] else "SIL"),
+                "next": phones[pi + 1] if pi < len(phones) - 1 else (next_w[1][0] if next_w and not pause else "SIL"),
+                "first": wi == 0 or bool(prev_w and prev_w[2]), "last": wi == len(ws) - 1 or pause,
             })
     return out
 
@@ -303,11 +315,8 @@ def _target_cost(u: Unit, t: Dict[str, Any], med: Dict[str, int]) -> float:
 
 
 def _frame_dist(a: Tuple, b: Tuple, ne: int) -> float:
-    s = 0.0
-    ea, eb = a[1], b[1]
-    for k in range(ne):
-        d = ea[k] - eb[k]
-        s += d * d
+    # The squares are summed left to right from 0, the order stitch.ts sums them in.
+    s = sum([d * d for d in map(_sub, a[1], b[1])])
     c = math.sqrt(s / ne) / COST_ENV_DB
     fa, fb = a[0], b[0]
     if fa > 0 and fb > 0:
@@ -331,11 +340,21 @@ def _join_cost(bank: FrameBank, ui: int, vi: int) -> float:
     )
 
 
-def select_units(bank: FrameBank, words: Sequence[Tuple[str, Sequence[str]]]) -> Selection:
-    """One recorded unit for every phone of the sentence. words: (word, Booth phone ids)."""
+def select_units(bank: FrameBank, words: Sequence[Tuple]) -> Selection:
+    """
+    One recorded unit for every phone of the sentence. words: (word, Booth
+    phone ids) or (word, phone ids, pause_after): the text pauses after it.
+    """
     tg = _targets(words)
     if not tg:
         raise StitchRefused("nothing to say")
+    pause_at = set()
+    pos = 0
+    ws = [_word(w) for w in words]
+    for wi, (_, phones, pause) in enumerate(ws):
+        pos += len(phones)
+        if pause and wi < len(ws) - 1:
+            pause_at.add(pos - 1)
     missing = []
     for t in tg:
         if t["phone"] not in bank.by_phone and t["phone"] not in missing:
@@ -366,7 +385,7 @@ def select_units(bank: FrameBank, words: Sequence[Tuple[str, Sequence[str]]]) ->
         for v in cur:
             best, arg = math.inf, 0
             for b, u in enumerate(prev):
-                s = score[b] + _join_cost(bank, u, v)
+                s = score[b] + (0.0 if (i - 1) in pause_at else _join_cost(bank, u, v))
                 if s < best:
                     best, arg = s, b
             sc.append(best + tcost[i][v])
@@ -381,10 +400,10 @@ def select_units(bank: FrameBank, words: Sequence[Tuple[str, Sequence[str]]]) ->
     for i in range(len(lists) - 1, -1, -1):
         chosen[i] = lists[i][k]
         k = back[i][k]
-    joins = sum(1 for i in range(1, len(chosen)) if bank.units[chosen[i - 1]].succ != chosen[i])
+    joins = sum(1 for i in range(1, len(chosen)) if (i - 1) not in pause_at and bank.units[chosen[i - 1]].succ != chosen[i])
     whole = 0
     at = 0
-    for word, phones in words:
+    for word, phones, _ in ws:
         seg = chosen[at:at + len(phones)]
         first = bank.units[seg[0]]
         ok = first.pos == 0 and first.word == word and first.wordLen == len(phones)
@@ -396,7 +415,7 @@ def select_units(bank: FrameBank, words: Sequence[Tuple[str, Sequence[str]]]) ->
         if ok:
             whole += 1
         at += len(phones)
-    return Selection(units=chosen, joins=joins, whole_words=whole, cost=cost)
+    return Selection(units=chosen, pauses_after=sorted(pause_at), joins=joins, whole_words=whole, cost=cost)
 
 
 # --- joining -----------------------------------------------------------------
@@ -446,12 +465,17 @@ def join_units(bank: FrameBank, sel: Selection) -> Stitched:
     lead = (max(0, first.start - EDGE_FRAMES), first.start) if first.phraseStart else tuple(bank.recordings[first.rec]["pause"])
     for i in range(lead[0], lead[1]):
         push(first.rec, i, "SIL")
+    pauses = set(sel.pauses_after)
     for n, ui in enumerate(sel.units):
         u = bank.units[ui]
-        if n > 0 and bank.units[sel.units[n - 1]].succ != ui:
+        if n > 0 and (n - 1) not in pauses and bank.units[sel.units[n - 1]].succ != ui:
             joins_at.append(len(f0))
         for i in range(u.start, u.end):
             push(u.rec, i, u.phone)
+        if n in pauses:
+            a, b = bank.recordings[u.rec]["pause"]
+            for i in range(a, b):
+                push(u.rec, i, "SIL")
     n_last = int(bank.recordings[last.rec]["n"])
     trail = (last.end, min(n_last, last.end + EDGE_FRAMES)) if last.phraseEnd else tuple(bank.recordings[last.rec]["pause"])
     for i in range(trail[0], trail[1]):
@@ -516,7 +540,7 @@ def check_controls(c: Dict[str, Any]) -> Dict[str, Any]:
     if unknown:
         raise StitchRefused(f"not controls of this mouth: {', '.join(unknown)} (it takes {', '.join(CONTROL_NAMES)})", unknown)
     bad = []
-    for k in ("breath", "jitter", "shimmer", "timbre", "articulation", "intonation", "prosody"):
+    for k in ("cadence", "breath", "jitter", "shimmer", "timbre", "articulation", "intonation", "prosody"):
         v = c.get(k)
         if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 1:
             bad.append(k)
@@ -570,13 +594,16 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
     speech = sum(1 for p in phones if p != "SIL")
     nuclei = sum(1 for i, p in enumerate(phones) if p in vowel_set and (i == 0 or phones[i - 1] != p))
     rate = nuclei / ((speech * hop) / sr) if speech > 0 else m["syllable_rate"]
-    want_rate = m["syllable_rate"] * c["rate"]
+    cad = _span(c["cadence"], REACH["cadence"])
+    want_rate = m["syllable_rate"] * c["rate"] * cad
     time_factor = _clamp(rate / want_rate, *CLAMP_TIME)
     consonant = _span(c["articulation"], REACH["articulation"] / 2)
-    stretch = [1 if p == "SIL" else time_factor if p in vowel_set else time_factor * consonant for p in phones]
+    stretch = [1 / cad if p == "SIL" else time_factor if p in vowel_set else time_factor * consonant for p in phones]
     t, phones, rec_of = _resample(t, phones, rec_of, stretch, ne, nb)
     applied.append(_applied("rate", m["syllable_rate"], c["rate"],
                             f"syllable rate {rate:.2f}/s -> {rate / time_factor:.2f}/s (time x{time_factor:.3f})", time_factor))
+    applied.append(_applied("cadence", m["syllable_rate"], c["cadence"],
+                            f"speaking rate x{cad:.3f} (in the rate above), pauses and edges x{1 / cad:.3f}", cad))
     applied.append(_applied("articulation", "consonant and vowel timing of the recordings", c["articulation"],
                             f"consonant frames x{consonant:.3f} against vowels", consonant))
 

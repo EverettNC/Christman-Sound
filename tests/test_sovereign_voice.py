@@ -95,7 +95,10 @@ def lexicon_file(tmp_path) -> Path:
 
 @pytest.fixture()
 def mouth(dsp, lexicon_file, tmp_path) -> vs.SpeechSynthesisEngine:
-    return vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), lexicon_path=str(lexicon_file))
+    # (2026-10-28) The caller passes its own voice; these tests pass AlphaVox's
+    # measured formant profile, the voice the mouth spoke in before.
+    return vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), lexicon_path=str(lexicon_file),
+                                    voice=load_alphavox_voice())
 
 
 def _voiced_yin(dsp, samples, sr, frame=2048, hop=512):
@@ -183,12 +186,39 @@ def test_generate_speech_audio_writes_the_samples_and_reports_christman(mouth, t
     assert max(abs(a - b) for a, b in zip(samples, r.audio)) <= 0.5 / 32767 + 1 / 32768
 
 
-def test_readiness_is_true_only_with_library_and_lexicon(dsp, lexicon_file, monkeypatch):
-    ready, reason = vs.synthesis_readiness(str(lexicon_file))
+def test_readiness_is_true_only_with_library_lexicon_and_a_voice(dsp, lexicon_file, monkeypatch):
+    ready, reason = vs.synthesis_readiness(str(lexicon_file), load_alphavox_voice())
     assert ready is True and reason.startswith("christman:") and "149.3" in reason
+    monkeypatch.delenv("CHRISTMAN_VOICE", raising=False)
+    ready, reason = vs.synthesis_readiness(str(lexicon_file))
+    assert ready is False and "no voice given" in reason
     monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
     ready, reason = vs.synthesis_readiness()
     assert ready is False and "no lexicon configured" in reason
+
+
+def test_the_mouth_speaks_only_in_the_voice_its_caller_gives(dsp, lexicon_file, tmp_path, monkeypatch):
+    """No voice is fixed inside the SDK: without one from the caller, nothing is voiced and the reason says so."""
+    monkeypatch.delenv("CHRISTMAN_VOICE", raising=False)
+    bare = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "c"), lexicon_path=str(lexicon_file))
+    with pytest.raises(vs.NothingVoiced, match="no voice given"):
+        bare.generate_speech_audio("hello", play_audio=False)
+    assert not hasattr(vs, "VOICE_NAME")
+    path = bare.generate_speech_audio("hello", play_audio=False, voice=load_alphavox_voice())
+    assert path and bare.last_voice == "AlphaVox" and bare.last_engine == "christman"
+    monkeypatch.setenv("CHRISTMAN_VOICE", str(tmp_path / "no_such_voice"))
+    with pytest.raises(vs.NothingVoiced, match="voice.json is missing"):
+        bare.generate_speech_audio("hello", play_audio=False)
+
+
+def test_controls_reach_the_voice_or_are_refused(mouth):
+    """A control the voice has no input for is refused with the reason, never dropped."""
+    from christman_sound.stitch import StitchRefused
+
+    with pytest.raises(StitchRefused, match="no input for these controls"):
+        mouth.generate_speech_audio("hello", play_audio=False, breath=0.7)
+    with pytest.raises(StitchRefused, match="not controls of this mouth: warmth"):
+        mouth.generate_speech_audio("hello", play_audio=False, warmth=0.7)
 
 
 # ------------------------------------------------------------------ refusals
@@ -221,6 +251,7 @@ def test_missing_word_raises_the_typed_error_through_every_public_entry_point(mo
     monkeypatch.setenv("CHRISTMAN_LEXICON_PATH", str(lexicon_file))
     monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", cache)
     monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
+    vs.get_speech_synthesis_engine(voice=load_alphavox_voice())
     with pytest.raises(WordNotInLexicon) as e4:
         vs.synthesize_speech(text)
     check(e4)
@@ -239,11 +270,12 @@ def test_missing_word_raises_the_typed_error_through_every_public_entry_point(mo
 
 def test_missing_lexicon_and_non_speech_phone_surface_unchanged(dsp, lexicon_file, tmp_path):
     no_lex = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "c1"),
-                                      lexicon_path=str(tmp_path / "no_such_lexicon.txt"))
+                                      lexicon_path=str(tmp_path / "no_such_lexicon.txt"), voice=load_alphavox_voice())
     with pytest.raises(LexiconUnavailable) as e1:
         no_lex.generate_speech_audio("hello", play_audio=False)
     assert type(e1.value) is LexiconUnavailable
-    good = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "c2"), lexicon_path=str(lexicon_file))
+    good = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "c2"), lexicon_path=str(lexicon_file),
+                                    voice=load_alphavox_voice())
     with pytest.raises(PhoneNotMapped) as e2:
         good.generate_speech_audio("uh", play_audio=False)
     assert type(e2.value) is PhoneNotMapped and e2.value.phone == "UHH"
@@ -260,13 +292,21 @@ def test_other_language_is_refused_not_spoken_in_english(mouth):
     assert mouth._render("hello", None, "en-US").engine == "christman"
 
 
-def test_emotion_params_are_not_applied_and_that_is_recorded(mouth):
-    plain = mouth._render("hello", None, "en")
+def test_emotion_params_are_refused_with_the_reason_not_dropped(mouth):
+    """
+    (2026-10-28) Before, an emotion was logged as not applied and the audio
+    made anyway. Nothing is dropped silently now: emotion reaches the mouth
+    only as its named controls, and anything else is refused with the reason.
+    """
+    from christman_sound.stitch import StitchRefused
+
+    mouth._render("hello", None, "en")
     assert mouth.last_emotion_unapplied is None
     asked = {"emotion": "happy", "exaggeration": 0.5}
-    moved = mouth._render("hello", asked, "en")
+    with pytest.raises(StitchRefused, match="are not applied") as e:
+        mouth._render("hello", asked, "en")
+    assert sorted(e.value.missing) == ["emotion", "exaggeration"]
     assert mouth.last_emotion_unapplied == asked
-    assert list(moved.audio) == list(plain.audio), "nothing invented from the emotion"
 
 
 # ------------------------------------------------------------------ sovereignty
@@ -291,7 +331,9 @@ import os
 os.environ["CHRISTMAN_DSP_LIB"] = {str(built_dsp.path)!r}
 from pathlib import Path
 from christman_voice_sdk.synthesis import voice_synthesis as vs
-eng = vs.SpeechSynthesisEngine(cache_dir={str(tmp_path / "cache")!r}, lexicon_path={str(lexicon_file)!r})
+from christman_sound.voice_profile import load_alphavox_voice
+eng = vs.SpeechSynthesisEngine(cache_dir={str(tmp_path / "cache")!r}, lexicon_path={str(lexicon_file)!r},
+                               voice=load_alphavox_voice())
 path = eng.generate_speech_audio("hello christman", play_audio=False)
 samples, rate, ch = vs._read_wav(Path(path))
 print(eng.last_engine, len(samples), sorted(m for m in sys.modules if m.split(".")[0] in BLOCK))
@@ -357,6 +399,7 @@ def test_tts_service_voices_and_never_serves_another_voices_file(dsp, lexicon_fi
     monkeypatch.setenv("CHRISTMAN_LEXICON_PATH", str(lexicon_file))
     monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
+    vs.get_speech_synthesis_engine(voice=load_alphavox_voice())
     # A file at the key the service used before 2026-10-18, as an old renderer
     # would have left it. It must not be served as this voice.
     audio_dir = tmp_path / "static" / "audio"
@@ -404,6 +447,54 @@ def test_lexicon_that_is_not_utf8_is_reported_not_crashed(dsp, tmp_path):
     bad.write_bytes(b"hello hello h_B @_I l_I oU_E\ncaf\xe9 caf\xe9 k_B {_I f_I eI_E\n")
     ready, reason = vs.synthesis_readiness(str(bad))
     assert ready is False and ":2: not UTF-8" in reason
-    mouth = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), lexicon_path=str(bad))
+    mouth = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), lexicon_path=str(bad), voice=load_alphavox_voice())
     with pytest.raises(LexiconFormatError, match=":2:"):
         mouth.generate_speech_audio("hello", play_audio=False)
+
+
+# ------------------------------------------------------------------ the frame voice
+
+def _frame_voice_folder():
+    path = Path(os.environ.get("CHRISTMAN_TEST_VOICE", "~/.christman_ai/voices/alphavox")).expanduser()
+    if not (path / "voice.json").is_file():
+        pytest.skip(f"not run: no frame voice at {path} (build one with scripts/build_voice_bank.py, or set "
+                    "CHRISTMAN_TEST_VOICE); runs on Everett's Mac")
+    lex = os.environ.get("CHRISTMAN_LEXICON_PATH")
+    if not lex:
+        import json as _json
+
+        lex = (_json.loads((path / "voice.json").read_text()).get("provenance") or {}).get("lexicon")
+    if not lex or not Path(lex).is_file():
+        pytest.skip("not run: needs the voice's lexicon (CHRISTMAN_LEXICON_PATH)")
+    return path, lex
+
+
+def test_the_mouth_speaks_a_frame_voice_from_its_folder_and_lists_what_it_applied(dsp, tmp_path):
+    """The caller names its frame voice folder; every control is applied and listed; each moves the sound."""
+    folder, lex = _frame_voice_folder()
+    eng = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), lexicon_path=lex, voice=str(folder))
+    text = "I am here with you, can we go outside today"
+    path = eng.generate_speech_audio(text, play_audio=False, output_path=str(tmp_path / "a.wav"))
+    assert eng.last_engine == "christman" and eng.last_renderer == "christman_vocoder"
+    names = [a["name"] for a in eng.last_applied]
+    for want in ("rate", "cadence", "articulation", "intonation", "f0", "breath", "resonance", "timbre", "prosody",
+                 "jitter", "shimmer", "affect"):
+        assert want in names, want
+    assert eng.last_selection["pauses"] == 1
+    base, rate, _ = vs._read_wav(Path(path))
+    assert rate == 22050 and len(base) > 0
+
+    def render(**controls):
+        p = eng.generate_speech_audio(text, play_audio=False, output_path=str(tmp_path / "b.wav"), **controls)
+        return vs._read_wav(Path(p))[0], {a["name"]: a["value"] for a in eng.last_applied}
+
+    slow, applied = render(cadence=0.0)
+    assert len(slow) > len(base) and applied["cadence"] < 1
+    for name, value in (("breath", 0.9), ("jitter", 0.9), ("shimmer", 0.9), ("timbre", 0.9), ("articulation", 0.9),
+                        ("intonation", 0.9), ("prosody", 0.9), ("resonance", "head"), ("rate", 1.3), ("f0", 180.0)):
+        moved, applied = render(**{name: value})
+        assert list(moved) != list(base), name
+    from christman_sound.stitch import StitchRefused
+
+    with pytest.raises(StitchRefused, match='affect "calm" is not applied'):
+        eng.generate_speech_audio(text, play_audio=False, affect="calm")

@@ -57,7 +57,9 @@ def test_mouth_without_a_lexicon_raises_the_lexicon_failure_and_writes_nothing(t
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
     monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
-    eng = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path))
+    from christman_sound.voice_profile import load_alphavox_voice
+
+    eng = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path), voice=load_alphavox_voice())
     for play in (False, True):
         with pytest.raises(LexiconUnavailable) as excinfo:
             eng.generate_speech_audio("hello", play_audio=play)
@@ -79,8 +81,10 @@ def test_mouth_without_the_engine_raises_nothing_voiced_with_the_loaders_reason(
     assert not broken.available
     monkeypatch.setattr(dsp_mod, "_instance", broken)
     cache = tmp_path / "cache"
-    eng = vs.SpeechSynthesisEngine(cache_dir=str(cache), lexicon_path=str(lex))
-    ready, reason = vs.synthesis_readiness(str(lex))
+    from christman_sound.voice_profile import load_alphavox_voice
+
+    eng = vs.SpeechSynthesisEngine(cache_dir=str(cache), lexicon_path=str(lex), voice=load_alphavox_voice())
+    ready, reason = vs.synthesis_readiness(str(lex), load_alphavox_voice())
     assert ready is False and "no_such_library.so" in reason
     with pytest.raises(vs.NothingVoiced) as excinfo:
         eng.generate_speech_audio("hello", play_audio=False)
@@ -97,6 +101,9 @@ def test_synthesize_speech_raises_instead_of_returning_none(tmp_path, monkeypatc
     monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
     monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path)
     monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
+    from christman_sound.voice_profile import load_alphavox_voice
+
+    vs.get_speech_synthesis_engine(voice=load_alphavox_voice())
     with pytest.raises(LexiconUnavailable):
         vs.synthesize_speech("hello")
     assert vs.synthesize_speech("   ") is None, "empty text is not a synthesis request"

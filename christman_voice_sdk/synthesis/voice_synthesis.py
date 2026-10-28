@@ -1,6 +1,27 @@
 """
 Speech synthesis module ("the mouth").
 
+WHAT CHANGED AND WHY (2026-10-28, later) — THE CALLER'S VOICE, AND ITS CONTROLS
+-------------------------------------------------------------------------------
+The SDK no longer fixes whose voice the mouth speaks in (it was VOICE_NAME =
+"AlphaVox", inside the SDK). The caller passes its own:
+`generate_speech_audio(text, voice=...)` or `SpeechSynthesisEngine(voice=...)`
+with a frame voice folder (built from the voice's own recordings by
+scripts/build_voice_bank.py), a loaded FrameVoice, or a measured
+VoiceProfile; or names a frame voice folder in $CHRISTMAN_VOICE. With none,
+nothing is voiced and NothingVoiced says so. A frame voice is spoken from its
+own frames and rendered by christman_vocoder (christman_sound.synth).
+
+The controls reach the voice by name, as keywords of generate_speech_audio:
+cadence, breath, jitter, shimmer, timbre, articulation, intonation, prosody,
+resonance, affect, rate, f0 (christman_sound.synth.synthesize says what each
+does). Each is applied and listed in `last_applied` with its value, or the
+call raises StitchRefused with the reason; a keyword that is not a control is
+refused too. emotion_params are no longer logged and dropped: a dict of
+control names is applied as controls, and any other key is refused.
+`last_renderer` and `last_selection` say which renderer spoke and how the
+sentence was cut.
+
 WHAT CHANGED AND WHY (2026-10-28) — THE MOUTH SPEAKS IN ALPHAVOX'S VOICE
 -----------------------------------------------------------------------
 `_render()` now passes AlphaVox's measured voice to christman_synth:
@@ -236,12 +257,18 @@ try:
         UnknownPhone,
         synthesize as christman_synthesize,
     )
-    from christman_sound.voice_profile import VoiceProfileError, load_alphavox_voice
+    from christman_sound.voice_profile import VoiceProfile, VoiceProfileError, load_alphavox_voice
+    from christman_sound.stitch import FrameVoice, FrameVoiceUnavailable, StitchRefused, load_frame_voice
     _SYNTH_IMPORT_ERROR: Optional[str] = None
 except Exception as _synth_exc:  # christman_sound itself is not importable
     christman_synthesize = None  # type: ignore[assignment]
     load_lexicon = None  # type: ignore[assignment]
     load_alphavox_voice = None  # type: ignore[assignment]
+    load_frame_voice = None  # type: ignore[assignment]
+    class VoiceProfile: ...  # type: ignore[no-redef]
+    class FrameVoice: ...  # type: ignore[no-redef]
+    class FrameVoiceUnavailable(RuntimeError): ...  # type: ignore[no-redef]
+    class StitchRefused(ValueError): ...  # type: ignore[no-redef]
     class VoiceProfileError(ValueError): ...  # type: ignore[no-redef]
     class LexiconError(RuntimeError): ...  # type: ignore[no-redef]
     class NothingToSay(ValueError): ...  # type: ignore[no-redef]
@@ -266,12 +293,54 @@ ENGINE_NAME = "christman"
 #: pitch are AlphaVox's and nobody else's; the synthesizer is Everett's.)
 ALPHAVOX_F0_MEDIAN_HZ = 149.3
 
-#: Which measured voice the mouth speaks with.
-VOICE_NAME = "AlphaVox"
+#: (2026-10-28) The mouth no longer fixes whose voice it speaks in. The caller
+#: passes its own: `voice=` a frame voice folder (or a loaded FrameVoice, from
+#: christman_sound.stitch.load_frame_voice) or a measured VoiceProfile
+#: (christman_sound.voice_profile). A caller that passes none may name a frame
+#: voice folder in $CHRISTMAN_VOICE; with neither, nothing is voiced and the
+#: reason says so. (Before: VOICE_NAME = "AlphaVox", fixed inside the SDK.)
+VOICE_ENV = "CHRISTMAN_VOICE"
 
 #: Failures from the lexicon and the synthesizer that reach the caller as the
 #: same object they were raised as — never wrapped, never spelled, never silent.
-_SURFACE_UNCHANGED = (LexiconError, NothingToSay, UnknownPhone, SynthRefused)
+#: StitchRefused (2026-10-28): a frame voice refused a control or a phone, with the reason.
+_SURFACE_UNCHANGED = (LexiconError, NothingToSay, UnknownPhone, SynthRefused, StitchRefused)
+
+_frame_voices: Dict[str, "FrameVoice"] = {}
+
+#: The controls the mouth passes to a frame voice (christman_sound.synth.synthesize's keywords).
+CONTROL_KEYWORDS = ("cadence", "breath", "jitter", "shimmer", "timbre", "articulation", "intonation", "prosody",
+                    "resonance", "affect", "rate", "f0")
+
+
+def resolve_voice(voice=None):
+    """
+    The voice to speak in: a FrameVoice or VoiceProfile as given, a frame
+    voice folder (str or Path) loaded once and kept, or $CHRISTMAN_VOICE.
+    Raises SynthesisUnavailable with the reason when there is none or it
+    cannot be read.
+    """
+    where = "voice_synthesis.resolve_voice"
+    if voice is None:
+        env = os.getenv(VOICE_ENV)
+        if not env:
+            raise SynthesisUnavailable(
+                f"no voice given: the caller passes its own voice (voice=<frame voice folder>) or names one in "
+                f"${VOICE_ENV}", where=where)
+        voice = env
+    if isinstance(voice, (FrameVoice, VoiceProfile)):
+        return voice
+    if isinstance(voice, (str, Path)):
+        key = str(Path(voice).expanduser())
+        if key not in _frame_voices:
+            if load_frame_voice is None:
+                raise SynthesisUnavailable(f"christman_sound.stitch not importable: {_SYNTH_IMPORT_ERROR}", where=where)
+            try:
+                _frame_voices[key] = load_frame_voice(key)
+            except FrameVoiceUnavailable as exc:
+                raise SynthesisUnavailable(f"frame voice {key}: {exc}", where=where) from exc
+        return _frame_voices[key]
+    raise SynthesisUnavailable(f"not a voice: {type(voice).__name__}", where=where)
 
 DEFAULT_CACHE_DIR = Path(os.getenv("CHRISTMAN_VOICE_CACHE", str(Path.home() / ".christman_ai" / "voice_cache")))
 
@@ -292,12 +361,13 @@ def _is_english(language: Optional[str]) -> bool:
     return language is None or language.lower().replace("_", "-").split("-")[0] == "en"
 
 
-def synthesis_readiness(lexicon_path: Optional[str] = None) -> tuple:
+def synthesis_readiness(lexicon_path: Optional[str] = None, voice=None) -> tuple:
     """
-    (ready, reason) for making speech from text through christman_synth.
-    Ready only when the C library is loaded, its synthesizer symbols are
-    bound, and the lexicon (`lexicon_path`, else $CHRISTMAN_LEXICON_PATH)
-    loads. The reason is the real one from whichever piece is missing.
+    (ready, reason) for making speech from text. Ready only when the C
+    library is loaded, its synthesizer symbols are bound, the lexicon
+    (`lexicon_path`, else $CHRISTMAN_LEXICON_PATH) loads, and the voice
+    (`voice`, else $CHRISTMAN_VOICE) loads. The reason is the real one from
+    whichever piece is missing.
     """
     if christman_synthesize is None:
         return False, f"christman_sound.synth not importable: {_SYNTH_IMPORT_ERROR}"
@@ -313,12 +383,17 @@ def synthesis_readiness(lexicon_path: Optional[str] = None) -> tuple:
     except LexiconError as exc:
         return False, str(exc)
     try:
-        voice = load_alphavox_voice()
-    except VoiceProfileError as exc:
-        return False, str(exc)
+        v = resolve_voice(voice)
+    except SynthesisUnavailable as exc:
+        return False, exc.reason
+    if isinstance(v, FrameVoice):
+        if not dsp.vocoder_available:
+            return False, dsp.vocoder_error or "christman_vocoder not bound"
+        return True, (f"{ENGINE_NAME}: christman_vocoder, frame voice {v.name} ({v.path}: "
+                      f"{len(v.bank.units)} recorded units), lexicon {lex.path} ({len(lex)} words)")
     return True, (
-        f"{ENGINE_NAME}: christman_synth, voice {voice.name} ({voice.path.name}: f0 {voice.f0_median_hz} Hz, "
-        f"rate {voice.rate}, {len(voice.vowel_formants)} measured vowels), lexicon {lex.path} ({len(lex)} words)"
+        f"{ENGINE_NAME}: christman_synth, voice {v.name} ({v.path.name}: f0 {v.f0_median_hz} Hz, "
+        f"rate {v.rate}, {len(v.vowel_formants)} measured vowels), lexicon {lex.path} ({len(lex)} words)"
     )
 
 
@@ -437,8 +512,17 @@ class SpeechSynthesisEngine:
         cache_dir: Optional[str] = None,
         reference_audio: Optional[str] = None,
         lexicon_path: Optional[str] = None,
+        voice=None,
     ) -> None:
         self.cache_dir = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
+        #: (2026-10-28) The caller's voice: a frame voice folder, a FrameVoice
+        #: or a VoiceProfile. None: $CHRISTMAN_VOICE, read at each call.
+        self.voice = voice
+        #: Every parameter the last audio was made with (frame voice), and how
+        #: its sentence was cut. Empty for a VoiceProfile voice.
+        self.last_applied: list = []
+        self.last_selection: Optional[dict] = None
+        self.last_renderer: Optional[str] = None
         #: The align_lexicon.txt to read words from. None: $CHRISTMAN_LEXICON_PATH.
         self.lexicon_path = lexicon_path
         self.default_language = "en"
@@ -460,7 +544,7 @@ class SpeechSynthesisEngine:
         self.last_voice: Optional[str] = None
         self.reference_audio = Path(reference_audio) if reference_audio else None
 
-        ready, reason = synthesis_readiness(self.lexicon_path)
+        ready, reason = synthesis_readiness(self.lexicon_path, self.voice)
         if not ready:
             logger.warning("Speech from text is unavailable: %s. Recorded audio still plays.", reason)
         logger.info("Speech synthesis engine initialized (local only).")
@@ -477,7 +561,8 @@ class SpeechSynthesisEngine:
         self.cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         return Path(tempfile.NamedTemporaryFile(suffix=".wav", dir=self.cache_dir, delete=False).name)
 
-    def _render(self, text: str, emotion_params: Optional[Dict], language: str) -> SynthesisResult:
+    def _render(self, text: str, emotion_params: Optional[Dict], language: str, voice=None,
+                controls: Optional[Dict] = None) -> SynthesisResult:
         """
         The one place audio is made from text: lexicon -> christman_synth ->
         samples, in AlphaVox's measured voice (christman_sound/alphavox_voice.json:
@@ -496,28 +581,40 @@ class SpeechSynthesisEngine:
                 f"the lexicon is English (vosk-model-en-us-0.22); there is none for language {language!r}",
                 where=where,
             )
+        controls = dict(controls or {})
         if emotion_params:
-            # christman_synth has no emotion input. Not applied, and said so.
-            self.last_emotion_unapplied = dict(emotion_params)
-            logger.warning("emotion_params %r not applied: christman_synth has no emotion input", emotion_params)
-        else:
-            self.last_emotion_unapplied = None
+            # (2026-10-28) Nothing is dropped silently any more. An emotion
+            # reaches the mouth only as the named controls; a key that is not
+            # one is refused with the reason, not logged and ignored.
+            unknown = [k for k in emotion_params if k not in CONTROL_KEYWORDS]
+            if unknown:
+                self.last_emotion_unapplied = dict(emotion_params)
+                raise StitchRefused(
+                    f"emotion_params {sorted(unknown)} are not applied: the mouth takes emotion only as its named "
+                    f"controls ({', '.join(CONTROL_KEYWORDS)}); mapping an emotion onto them is the caller's "
+                    "choice (the Voice Creation Center's presets), not one made here", sorted(unknown))
+            controls = {**dict(emotion_params), **controls}
+        self.last_emotion_unapplied = None
 
-        try:
-            voice = load_alphavox_voice()
-        except VoiceProfileError as exc:
-            raise SynthesisUnavailable(f"AlphaVox's voice profile: {exc}", where=where) from exc
-
+        v = resolve_voice(voice if voice is not None else self.voice)
         started = time.perf_counter()
         try:
-            made = christman_synthesize(
-                text, voice=voice, lexicon_path=self.lexicon_path, engine=get_dsp()
-            )
+            if isinstance(v, FrameVoice):
+                made = christman_synthesize(text, voice=v, lexicon_path=self.lexicon_path, engine=get_dsp(), **controls)
+            else:
+                if controls:
+                    raise StitchRefused(
+                        f"{', '.join(sorted(controls))}: the voice {v.name} is a measured formant profile, which has "
+                        "no input for these controls; they need a frame voice", sorted(controls))
+                made = christman_synthesize(text, voice=v, lexicon_path=self.lexicon_path, engine=get_dsp())
         except _SURFACE_UNCHANGED:
             raise
         except (SynthUnavailable, DSPUnavailable) as exc:
             raise SynthesisUnavailable(str(exc), where=where) from exc
         self.last_voice = made.voice
+        self.last_applied = list(made.applied)
+        self.last_selection = made.selection
+        self.last_renderer = made.renderer
         return SynthesisResult(
             audio=made.samples,
             sample_rate=made.sample_rate,
@@ -533,6 +630,8 @@ class SpeechSynthesisEngine:
         language: Optional[str] = None,
         play_audio: bool = True,
         output_path: Optional[str] = None,
+        voice=None,
+        **controls,
     ) -> Optional[str]:
         """
         Text -> WAV path (and playback when asked). Raises `NothingVoiced`
@@ -547,7 +646,11 @@ class SpeechSynthesisEngine:
         logger.info(f"Generating local speech audio: language={selected_language}")
 
         try:
-            result = self._render(text, emotion_params, selected_language)
+            bad = [k for k in controls if k not in CONTROL_KEYWORDS]
+            if bad:
+                raise StitchRefused(f"not controls of this mouth: {', '.join(sorted(bad))} "
+                                    f"(it takes {', '.join(CONTROL_KEYWORDS)})", sorted(bad))
+            result = self._render(text, emotion_params, selected_language, voice=voice, controls=controls)
             if result.degraded or result.audio is None or len(result.audio) == 0:
                 raise SynthesisUnavailable(
                     result.error_reason or "the renderer returned no audio",
@@ -658,15 +761,18 @@ class SpeechSynthesisEngine:
 
 _speech_synthesis_engine: Optional[SpeechSynthesisEngine] = None
 
-def get_speech_synthesis_engine(reference_audio: Optional[str] = None) -> SpeechSynthesisEngine:
+def get_speech_synthesis_engine(reference_audio: Optional[str] = None, voice=None) -> SpeechSynthesisEngine:
     """
     Shared engine. A different `reference_audio` on a later call re-points
     the voice; the predecessor ignored it, so the second speaker got the
-    first speaker's voice.
+    first speaker's voice. `voice` (2026-10-28): the caller's voice for this
+    engine (see resolve_voice); a later call that names one sets it.
     """
     global _speech_synthesis_engine
     if _speech_synthesis_engine is None:
-        _speech_synthesis_engine = SpeechSynthesisEngine(reference_audio=reference_audio)
+        _speech_synthesis_engine = SpeechSynthesisEngine(reference_audio=reference_audio, voice=voice)
+    elif voice is not None:
+        _speech_synthesis_engine.voice = voice
     elif reference_audio and Path(reference_audio) != _speech_synthesis_engine.reference_audio:
         _speech_synthesis_engine.load_voice(reference_audio)
     return _speech_synthesis_engine

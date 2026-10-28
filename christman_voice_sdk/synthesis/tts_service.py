@@ -234,7 +234,9 @@ def serve_audio(filename: str):
 @app.route("/status", methods=["GET"])
 def status():
     """Health check: the service is up; whether it can make a voice is reported, not assumed."""
-    ready, reason = synthesis_readiness()
+    # (2026-10-28) The voice this service speaks in is the shared engine's
+    # (the caller's, or $CHRISTMAN_VOICE); readiness is checked for that voice.
+    ready, reason = synthesis_readiness(None, get_speech_synthesis_engine().voice)
     return jsonify({
         "status": "online",
         "cloud_dependencies": False,
