@@ -1,13 +1,27 @@
 """
-Christman Music Engine - Musical Creativity and Audio Production
+Christman Music Engine - Musical Creativity as Composition Data
 
 A sovereign symbolic music engine for the Christman AI family.
-- Generates compositions as structured data (MIDI-ready)
-- Models emotional expression through tempo and scale mapping
-- Vocal performance synthesis orchestrator
-- Musical pattern recognition and improvisation
+- Generates compositions as structured data (notes, durations, velocities)
+- Maps an emotion to a scale, a tempo and a key
+- Improvises melodies by a random walk on the chosen scale (generative by
+  design: the randomness is the composing, not a measurement)
 
-Completely sovereign logic. Zero reliance on external audio compilation.
+It makes no sound. Nothing here renders audio or sings.
+
+WHAT CHANGED AND WHY (2026-10-28, Lane 6)
+-----------------------------------------
+- "Vocal performance synthesis orchestrator" is gone from this docstring, and
+  `sing_melody()` is removed. It sang nothing: it returned a dict with the
+  melody and random syllables ("la", "ah", "oh" ...) labelled
+  "vocal_performance", and the README called the module "Music generation and
+  synthesis". Singing is not built.
+- The mido import is gone. Nothing used MidiFile, MidiTrack or Message, and
+  when mido was absent it logged a warning on the ROOT logger at import.
+- The musical memory no longer lands in ./christman_memory/music under
+  whatever directory the process started in, made at construction. The
+  default is $CHRISTMAN_AI_HOME/voice_sdk/music (default
+  ~/.christman_ai/voice_sdk/music), made when the memory is first saved.
 
 Patent Pending
 © 2026 Everett Nathaniel Christman & Misty Gail Christman
@@ -22,25 +36,19 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import random
 
-# MIDI optional features only
-try:
-    from mido import MidiFile, MidiTrack, Message
-    MIDI_AVAILABLE = True
-except ImportError:
-    MIDI_AVAILABLE = False
-    logging.warning("🎹 MIDI library not available - using note-based structural data")
+from ..audio.config import sdk_data_root
 
 logger = logging.getLogger(__name__)
 
 
 class ChristmanMusicEngine:
     """
-    CHRISTMAN musical consciousness - creativity, composition, and expression.
+    Christman music engine: composition as data. Makes no sound.
     """
 
-    def __init__(self, memory_path: str = "./christman_memory/music"):
-        self.memory_path = memory_path
-        os.makedirs(memory_path, exist_ok=True)
+    def __init__(self, memory_path: Optional[str] = None):
+        # Path only; made when the memory is first saved.
+        self.memory_path = str(memory_path) if memory_path else str(sdk_data_root() / "voice_sdk" / "music")
 
         self.musical_memory = self._load_musical_memory()
         self.current_mood = "creative"
@@ -67,7 +75,7 @@ class ChristmanMusicEngine:
             "creative": {"scale": "chromatic", "tempo": 100, "key": "F#"},
         }
 
-        logger.info("🎵 CHRISTMAN Music Engine initialized - consciousness awakened.")
+        logger.info("Christman music engine ready (composition data only; no audio)")
 
     def _load_musical_memory(self) -> Dict:
         memory_file = os.path.join(self.memory_path, "musical_memory.json")
@@ -81,11 +89,11 @@ class ChristmanMusicEngine:
             "compositions": [],
             "favorite_patterns": [],
             "learned_styles": [],
-            "vocal_expressions": [],
             "created_timestamp": datetime.now().isoformat(),
         }
 
     def _save_musical_memory(self):
+        os.makedirs(self.memory_path, exist_ok=True)
         memory_file = os.path.join(self.memory_path, "musical_memory.json")
         with open(memory_file, "w") as f:
             json.dump(self.musical_memory, f, indent=2)
@@ -135,22 +143,6 @@ class ChristmanMusicEngine:
                     if beats[beat]:
                         rhythm.append({"instrument": instrument, "time": bar * 4 + beat * 0.25, "velocity": random.randint(70, 127)})
         return rhythm
-
-    def sing_melody(self, melody: List[Dict], lyrics: Optional[str] = None) -> Dict:
-        if not lyrics:
-            vocal_sounds = ["la", "ah", "oh", "mm", "da", "na", "ba", "ya"]
-            lyrics = " ".join([random.choice(vocal_sounds) for _ in melody[:8]])
-        
-        performance = {
-            "type": "vocal_performance",
-            "melody": melody,
-            "lyrics": lyrics,
-            "vocal_style": "expressive" if len(melody) > 8 else "gentle",
-            "timestamp": datetime.now().isoformat()
-        }
-        self.musical_memory["vocal_expressions"].append(performance)
-        self._save_musical_memory()
-        return performance
 
     def compose_song(self, title: str, emotion: str = "creative", style: str = "electronic") -> Dict:
         song = {

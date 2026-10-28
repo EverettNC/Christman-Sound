@@ -9,7 +9,7 @@ Three safety fixes, each proven against the real code (Lane 6, 2026-10-28).
    folder it unpacks into. Absolute paths, drive letters, ".." steps and
    symlinks are refused before anything is extracted.
 2. audio/config.py: building a Config creates no folder, inside the package
-   or anywhere. Folders are made under the user data folder when asked.
+   or anywhere. Folders are made under the SDK's data folder when asked.
 3. audio/word_ear_receiver.py: no default port, and never AlphaVox's
    launcher port 5487 or the other ports the voice system already holds.
 """
@@ -163,7 +163,7 @@ def test_importing_the_capture_client_writes_nothing_into_the_package(tmp_path):
     assert proc.returncode == 0, proc.stderr[-2000:]
     after = {p.name for p in package.iterdir()}
     assert after - before - {"__pycache__"} == set(), f"import created {sorted(after - before)}"
-    assert not (tmp_path / "home").exists(), "import created the user data folder"
+    assert not (tmp_path / "home").exists(), "import created the SDK's data folder"
 
 
 def test_no_default_model_id_in_the_config():
