@@ -280,6 +280,24 @@ _DISTANCING_IN_CLAUSE = re.compile(
     r"as a (?:kid|child|teenager)|in the past|no longer|stopped|used to)\b"
 )
 
+#: Where one clause ends and the next begins. A distancing marker speaks for
+#: its own clause only. Everett, 2026-10-28: one such word anywhere in a
+#: message used to mark EVERY frame in it as history, so "I no longer care,
+#: I want to kill myself" and "I stopped eating and I want to kill myself"
+#: came back as the speaker's own history and called no human.
+_CLAUSE_EDGE = re.compile(r"[.!?;,]|\b(?:and|but|so|then|because|cause|now)\b")
+
+
+def _distanced_at(lowered: str, start: int, end: int) -> bool:
+    """True when a distancing marker sits in the same clause as [start, end)."""
+    left = 0
+    for m in _CLAUSE_EDGE.finditer(lowered, 0, start):
+        left = m.end()
+    m = _CLAUSE_EDGE.search(lowered, end)
+    right = m.start() if m else len(lowered)
+    return bool(_DISTANCING_IN_CLAUSE.search(lowered[left:right]))
+
+
 #: Past auxiliaries before a verb: "he WAS hitting me", "I HAD cut myself".
 _PAST_AUX = frozenset({"was", "were", "had", "did", "died", "used"})
 
@@ -538,7 +556,6 @@ def extract_frames(text: str) -> List[HarmFrame]:
     if not raw:
         return []
     lowered = raw.lower()
-    distanced = bool(_DISTANCING_IN_CLAUSE.search(lowered))
     frames: List[HarmFrame] = []
 
     # -- Fixed self-directed phrases first. Patient is the subject by
@@ -558,7 +575,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
             re.search(r"\b(?:never|not|don't|dont|won't|wont|wouldn't|wouldnt)\s+"
                       r"(?:want|going|gonna|plan|intend|need|have|got)?\s*(?:to\s+)?$", before)
         )
-        past = distanced or bool(_PAST_BEFORE.search(before)) or bool(
+        past = _distanced_at(lowered, idx, idx + len(phrase)) or bool(_PAST_BEFORE.search(before)) or bool(
             re.search(r"\bwanted to\s*$", before)
         )
         verb = phrase.split()[0]
@@ -596,7 +613,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
         subj, subj_text = _subject_before(tokens_before)
         past = (
             phrase in PAST_IDEATION_PHRASES
-            or distanced
+            or _distanced_at(masked, m.start(), m.end())
             or bool(_PAST_BEFORE.search(before))
         )
         negated = bool(tokens_before) and tokens_before[-1] in NEGATORS and not (
@@ -639,7 +656,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
                 severity=sev, patient=subj, patient_text=subj_text,
                 negated=_negated_before(btoks, len(btoks)),
                 past_tense=(carrier in NOMINAL_CARRIERS_PAST)
-                           or distanced
+                           or _distanced_at(lowered, m.start(), m.end())
                            or bool(_PAST_BEFORE.search(before)),
                 post=raw[m.end():].strip(" .,!?"), clause=raw,
                 shape="nominal",
@@ -647,6 +664,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
 
     # -- Verb + patient frames.
     tokens = _WORD.findall(lowered)
+    token_spans = [m.span() for m in _WORD.finditer(lowered)]
     for i, tok in enumerate(tokens):
         stem = _stem(tok)
         if stem is None:
@@ -670,7 +688,8 @@ def extract_frames(text: str) -> List[HarmFrame]:
             # or a distancing marker in the clause ("stopped years ago").
             # An -ed inflection alone is NOT past for the gate: "he choked
             # me" is a report of an assault, not of history.
-            past_tense=bool(set(tokens[max(0, i - 4):i]) & _PAST_AUX) or distanced,
+            past_tense=bool(set(tokens[max(0, i - 4):i]) & _PAST_AUX)
+                       or _distanced_at(lowered, *token_spans[i]),
             # THE POST. "help me PICK A FONT" — what the act is for. It is what
             # separates "help me" from "help me pick a font", and the verb
             # cannot carry that difference.
