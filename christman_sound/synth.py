@@ -39,6 +39,15 @@ own 26 recordings: AlphaVox's F0 median and pitch contour, AlphaVox's rate,
 and AlphaVox's F1-F3 for each vowel measured from at least two tokens, through
 christman_synth_voiced. The recordings and the pitch are AlphaVox's, never
 Everett's; the synthesizer is Everett's.
+
+Rendered clear (added 2026-10-28, later the same day). Through
+christman_synth_voiced, Everett's Filament ear heard AlphaVox's free text as
+"the" (4 of 53 words on twelve sentences). A measured voice is now rendered
+by christman_synth_clear (christman_synth.c says what changed and why): the
+same pitch, rate and vowel rows, plus the voice's measured glides
+(VoiceProfile.glide_rows). SynthResult.renderer names the renderer.
+Without a voice, nothing changed: Codec War's table voice, synth.ts sample
+for sample.
 """
 
 from __future__ import annotations
@@ -86,6 +95,9 @@ CODECWAR_SAMPLE_RATE = 16000
 CHRISTMAN_SOUND_SAMPLE_RATE = 22050
 #: Codec War's default pitch, synth.ts:31.
 CODECWAR_F0 = 148.0
+#: (2026-10-28) The two C renderers SynthResult.renderer names.
+RENDERER_CODECWAR = "christman_synth"
+RENDERER_CLEAR = "christman_synth_clear"
 
 # Codec War's textToPhones constants (phonemes.ts:228, 236, 240).
 _LEAD_SIL = 0.12
@@ -126,6 +138,9 @@ class SynthResult:
     #: The measured voice the samples were made with (e.g. "AlphaVox"), or
     #: None for Codec War's own table voice.
     voice: Optional[str] = None
+    #: (2026-10-28) Which C renderer made the samples: "christman_synth"
+    #: (Codec War's synth.ts, sample for sample) or "christman_synth_clear".
+    renderer: str = field(default="christman_synth")
 
     @property
     def duration(self) -> float:
@@ -237,17 +252,28 @@ def synthesize(
     ids = [table[pid][0] for pid, _, _ in seq]
     durs = [d for _, d, _ in seq]
     rows = None
+    glides = None
     if voice is not None:
-        # The voice's own pitch, contour, rate and vowel resonances.
+        # The voice's own pitch, contour, rate, vowel resonances and glides.
         rate = voice.rate
         f0 = voice.f0_median_hz
         f0_contour = voice.f0_contour(durs, [pid != "SIL" for pid, _, _ in seq])
-        rows = voice.formant_rows([pid for pid, _, _ in seq], dsp.synth_phone_formants())
+        names = [pid for pid, _, _ in seq]
+        formant_table = dsp.synth_phone_formants()
+        rows = voice.formant_rows(names, formant_table)
+        glides = voice.glide_rows(names, formant_table)
     if f0 is None:
         f0 = CODECWAR_F0
     if rate is None:
         rate = 1.0
-    samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour, rows)
+    if voice is not None:
+        # A measured voice is rendered by christman_synth_clear (2026-10-28):
+        # through christman_synth_voiced the ear heard 4 of 53 words.
+        samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour, rows, clear=True, glides=glides)
+        renderer = RENDERER_CLEAR
+    else:
+        samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour, rows)
+        renderer = RENDERER_CODECWAR
 
     # The timeline exactly as the C computes it (dur / rate, running sum).
     timeline: List[TimedPhone] = []
@@ -263,6 +289,7 @@ def synthesize(
         f0=tuple(f0_contour) if f0_contour is not None else float(f0),
         rate=float(rate),
         voice=voice.name if voice is not None else None,
+        renderer=renderer,
     )
 
 

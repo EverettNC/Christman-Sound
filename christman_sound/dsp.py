@@ -132,6 +132,8 @@ _SYNTH_REASONS = {
     7: "output length does not match christman_synth_length",
     8: "allocation failed",
     9: "a voice formant value is not greater than zero, finite and below half the sample rate",
+    10: "a glide row is not all zeros and has a frequency not greater than zero, finite and below half "
+        "the sample rate, or a start and end not 0 <= start < end <= 1",
 }
 
 
@@ -204,6 +206,8 @@ class ChristmanDSP:
         self.error: Optional[str] = None
         self.synth_available = False
         self.synth_error: Optional[str] = None
+        self.synth_clear_available = False
+        self.synth_clear_error: Optional[str] = None
         self._lib: Optional[ctypes.CDLL] = None
 
         paths = [library_path] if library_path else candidate_paths()
@@ -278,6 +282,21 @@ class ChristmanDSP:
             )
             return
         self.synth_available = True
+        # (2026-10-28) The clear renderer. A library built before it still
+        # serves christman_synth and christman_synth_voiced; asking it for the
+        # clear renderer raises SynthUnavailable with this reason.
+        try:
+            lib.christman_synth_clear.argtypes = [
+                _INT_P, _DOUBLE_P, ctypes.c_size_t, _DOUBLE_P, ctypes.c_double,
+                ctypes.c_double, ctypes.c_int, _DOUBLE_P, _DOUBLE_P, _FLOAT_P, ctypes.c_size_t,
+            ]
+            lib.christman_synth_clear.restype = ctypes.c_int
+        except AttributeError as exc:
+            self.synth_clear_error = (
+                f"{self.path} was built before christman_synth_clear ({exc}). Rebuild: {BUILD_COMMAND}"
+            )
+            return
+        self.synth_clear_available = True
 
     # -- guards ---------------------------------------------------------------
 
@@ -425,6 +444,8 @@ class ChristmanDSP:
         sample_rate: int,
         f0_contour: Optional[Sequence[float]] = None,
         formants: Optional[Sequence[Sequence[float]]] = None,
+        clear: bool = False,
+        glides: Optional[Sequence[Sequence[float]]] = None,
     ) -> array.array:
         """
         Raw call into christman_synth. Returns array('f') of float PCM, or
@@ -434,8 +455,18 @@ class ChristmanDSP:
         formants (2026-10-28): None for Codec War's own table, or one row
         (F1, F2, F3, BW1, BW2 in Hz) per phone in the sequence — a voice's
         own resonances, through christman_synth_voiced.
+
+        clear (2026-10-28): render through christman_synth_clear, the
+        renderer built so the words can be understood (see its header in
+        christman_synth.c). Same inputs, plus `glides`: None, or one row of 8
+        per phone (onset F1-F3, offset F1-F3, start and end of the glide in
+        the phone, 0..1; eight zeros for a phone that does not glide).
         """
         lib = self._require_synth()
+        if glides is not None and not clear:
+            raise ValueError("glides are drawn only by the clear renderer; pass clear=True")
+        if clear and not self.synth_clear_available:
+            raise SynthUnavailable(self.synth_clear_error or "christman_synth_clear not bound")
         n = len(phone_ids)
         if len(durations) != n:
             raise ValueError(f"{n} phones but {len(durations)} durations")
@@ -447,6 +478,12 @@ class ChristmanDSP:
             bad = [i for i, row in enumerate(formants) if len(row) != 5]
             if bad:
                 raise ValueError(f"formant rows {bad[:5]} do not hold 5 values (F1 F2 F3 BW1 BW2)")
+        if glides is not None:
+            if len(glides) != n:
+                raise ValueError(f"{n} phones but {len(glides)} glide rows")
+            bad = [i for i, row in enumerate(glides) if len(row) != 8]
+            if bad:
+                raise ValueError(f"glide rows {bad[:5]} do not hold 8 values")
         ids_c = (ctypes.c_int * max(n, 1))(*phone_ids)
         durs_c = (ctypes.c_double * max(n, 1))(*durations)
         contour_c = (ctypes.c_double * n)(*f0_contour) if f0_contour is not None else None
@@ -454,15 +491,26 @@ class ChristmanDSP:
             (ctypes.c_double * (5 * n))(*(float(v) for row in formants for v in row))
             if formants is not None else None
         )
+        glides_c = (
+            (ctypes.c_double * (8 * n))(*(float(v) for row in glides for v in row))
+            if glides is not None else None
+        )
         length = lib.christman_synth_length(durs_c, n, float(rate), int(sample_rate))
         if length == 0:
             # Let the engine name the reason: the length helper only says "refused".
-            status = lib.christman_synth_voiced(ids_c, durs_c, n, contour_c, float(f0), float(rate),
-                                                int(sample_rate), rows_c, (ctypes.c_float * 1)(), 0)
+            if clear:
+                status = lib.christman_synth_clear(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                                   int(sample_rate), rows_c, glides_c, (ctypes.c_float * 1)(), 0)
+            else:
+                status = lib.christman_synth_voiced(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                                    int(sample_rate), rows_c, (ctypes.c_float * 1)(), 0)
             raise SynthRefused(status, _SYNTH_REASONS.get(status, "unknown reason"))
         out = array.array("f", bytes(4 * length))
         out_c = (ctypes.c_float * length).from_buffer(out)
-        if rows_c is None:
+        if clear:
+            status = lib.christman_synth_clear(ids_c, durs_c, n, contour_c, float(f0), float(rate),
+                                               int(sample_rate), rows_c, glides_c, out_c, length)
+        elif rows_c is None:
             status = lib.christman_synth(ids_c, durs_c, n, contour_c, float(f0), float(rate),
                                          int(sample_rate), out_c, length)
         else:

@@ -76,6 +76,12 @@
 //       the synthesizer: christman_sound/voice_profile.py builds the rows
 //       from christman_sound/alphavox_voice.json. Extra return code:
 //         9 a formant row value not > 0, finite and below sample_rate / 2
+//   int christman_synth_clear(ids, durs, n, f0_contour_or_NULL, f0, rate,
+//                             sample_rate, formants_or_NULL, glides_or_NULL,
+//                             out, out_len)
+//       (added 2026-10-28) The same voice rendered so its words can be
+//       understood; christman_synth and christman_synth_voiced above are not
+//       changed. See its own header at the end of this file.
 //   int christman_synth_phone_count(void)            -> 40
 //   const char* christman_synth_phone_name(int id)   -> "AA" etc, NULL if bad id
 //   int christman_synth_phone_id(const char* name)   -> id, or -1 if unknown
@@ -381,6 +387,344 @@ int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_ph
     }
 
     // ---- Peak normalise to 0.7, synth.ts:81-84 ----------------------------
+    double peak = 1e-6;
+    for (size_t i = 0; i < n; i++) {
+        double a = fabs((double)out[i]);
+        if (a > peak) peak = a;
+    }
+    double g = 0.7 / peak;
+    for (size_t i = 0; i < n; i++) out[i] = (float)((double)out[i] * g);
+
+    free(starts);
+    free(scaled);
+    return 0;
+}
+
+// =============================================================================
+// christman_synth_clear — the same voice, rendered so it can be understood
+// (added 2026-10-28)
+// =============================================================================
+// WHY. AlphaVox's free text came out of christman_synth_voiced as sound the
+// Filament ear (Everett's Vosk, vosk-model-en-us-0.22-lgraph, 127.0.0.1:4850)
+// heard as "the" for almost every sentence: 4 of 53 words right on twelve
+// test sentences (7.5%), and 3 of 53 (5.7%) for Vosk run directly with the
+// full vosk-model-en-us-0.22. AlphaVox's own recordings are heard word for
+// word by the same ear. Measured on his Mac on 2026-10-28, the causes found:
+//
+//   1. The resonator gain. synth.ts gives each resonator g = 1 - r. That is
+//      not unity gain anywhere: below its own frequency each resonator passes
+//      only a few percent, so in a three-stage cascade the vowel's formants
+//      cancel each other and what is left is the voicing's low end.
+//      Measured in "I want to go home": the spectral centroid of AY, AH and
+//      the two OWs sat at 76-117 Hz (AA at 359 Hz), and the vowels were
+//      12-27 dB quieter than W, M and HH. Here each
+//      resonator has unity gain at 0 Hz (g = 1 - a - b), as a cascade of
+//      formants needs, so each vowel's F1, F2 and F3 stand where they are.
+//   2. Every phone's level dipped to 0.3 at its edges (synth.ts:53-54), and
+//      the noise for S, SH, F, the bursts and HH ran through the same
+//      cascade as the vowels, at F1 200-500 Hz. Here voicing, aspiration
+//      and frication each have their own level per kind of phone, eased
+//      over 6 ms, and frication has its own resonator at the band where
+//      that consonant's noise lives (Codec War's table has no such band).
+//   3. The formants jumped. synth.ts eases them 0.14 per sample: 0.4 ms at
+//      16 kHz, so a consonant's place never shows in the vowel next to it.
+//      Here they ease with a 15 ms time constant (tried from 6 to 40 ms;
+//      15 was heard best).
+//   4. Silence pulled the formants to SIL's row (200/900/2200 Hz), so every
+//      word began with a W-like rise ("I" heard as "wait"). Here, during
+//      silence, the formants move to the next phone's row.
+//   5. AY and OW were one steady row. AlphaVox's voice glides in them; the
+//      measured onset and offset (christman_sound/alphavox_voice.json,
+//      "glides") are drawn across the vowel. A gliding vowel with no
+//      measured glide moves from its own row toward its offglide vowel.
+//
+// AFTER, same machine, same day, same twelve sentences: the Filament ear
+// 22 of 53 words (41.5%), Vosk direct 25 of 53 (47.2%); on 24 sentences the
+// ear 41.2% and Vosk 52.0% (before: 4.9% and 2.9%). Better, and still not
+// clear speech: about half the words are heard. Still lost most often: the
+// first word of a sentence, "my" heard as "made", H heard as P, and G, B
+// and D at the start of a word.
+//
+// What did NOT help, measured and left out: closing the gaps between words
+// (worse: 19% with no gap), lengthening vowels, a sharper glottal pulse with
+// pre-emphasis to match AlphaVox's high band (worse: 28%), wider bandwidths,
+// jitter and shimmer, breath noise.
+//
+// WHAT IS KEPT. The voice: the per-phone pitch the caller passes (AlphaVox's
+// F0 median and contour), the rate, the vibrato (synth.ts:57), each phone's
+// F1, F2, F3, BW1, BW2 from `formants` (AlphaVox's measured vowels; Codec
+// War's table for the rest; a vowel with a glide row draws that glide for
+// its F1-F3 instead), BW3 160 Hz (synth.ts:142), the glottal pulse's
+// shape (synth.ts:6-13), the deterministic noise (synth.ts:15-19), the
+// timeline (durations / rate), the length (christman_synth_length), the edge
+// fade and the peak of 0.7. christman_synth and christman_synth_voiced are
+// not changed: they stay Codec War's synth.ts sample for sample.
+//
+// Every level and time below is a chosen starting value, written with the
+// reason it was chosen, held until listening by AlphaVox's clients replaces
+// it.
+//
+// CONTRACT
+//   int christman_synth_clear(ids, durs, n, f0_contour_or_NULL, f0, rate,
+//                             sample_rate, formants_or_NULL, glides_or_NULL,
+//                             out, out_len)
+//   Same inputs, refusals and length as christman_synth_voiced, plus
+//   `glides`: NULL, or n rows of 8 doubles, one per phone: onset F1, F2, F3,
+//   offset F1, F2, F3 (Hz), and where in the phone (0..1) the glide starts
+//   and ends. A row of eight zeros means the phone does not glide. Extra
+//   return code:
+//     10 a glide row that is not all zeros and has a frequency not > 0,
+//        finite and below sample_rate / 2, or a start and end not
+//        0 <= start < end <= 1
+// =============================================================================
+
+// Levels of the voicing source per kind of phone (a vowel is 1).
+#define CL_AV_VOWEL 1.0
+#define CL_AV_SONORANT 0.75   // W, Y, L, R: a little under a vowel
+#define CL_AV_NASAL 0.6       // M, N, NG: the mouth is shut, the sound is softer
+#define CL_AV_VOICED_FRIC 0.45 // V, DH, Z, ZH, JH: voicing under the noise
+#define CL_VOICE_BAR 0.12     // B, D, G closure: the low hum of voicing behind closed lips
+// Aspiration (breath through the open glottis, shaped by the mouth).
+#define CL_ASP_HH 0.2         // HH, shaped by the vowel after it
+#define CL_ASP_STOP 0.15      // after P, T, K are released
+#define CL_ASP_TAIL 0.25      // share of a P, T, K kept for its aspiration
+#define CL_VOT_S 0.030        // P, T, K: the next vowel's first 30 ms is breath, not voice
+#define CL_ASP_BW1 400.0      // F1 bandwidth while breathing: the open glottis damps F1
+// Frication.
+#define CL_FRIC_GAIN 0.6
+#define CL_BURST_GAIN 0.4
+#define CL_BURST_S 0.012      // a stop's release burst lasts 12 ms
+#define CL_FRIC_POST 0.1      // frication joins after the radiation step, at this weight
+// Easing.
+#define CL_TAU_FORMANT 0.015
+#define CL_TAU_LEVEL 0.006
+// The voicing pulse is open for this share of each period (synth.ts's pulse
+// fills the whole period; a closed part gives the harmonics their strength).
+#define CL_OPEN_QUOTIENT 0.7
+// Two fixed higher formants above F3, so the cascade does not fall off a cliff
+// above it. AlphaVox's own recordings carry energy to 4-5 kHz.
+#define CL_F4 3600.0
+#define CL_BW4 250.0
+#define CL_F5 4600.0
+#define CL_BW5 300.0
+
+// Where each consonant's noise lives: centre and bandwidth in Hz, and its
+// level (S and SH are strong; F, TH, V, DH are faint). Not in Codec War's table.
+typedef struct { const char* id; double fc, bw, level; } cl_band;
+static const cl_band CL_FRIC[] = {
+    {"S", 5500, 2500, 1.0},  {"Z", 5500, 2500, 0.5},
+    {"SH", 2800, 1400, 1.0}, {"ZH", 2800, 1400, 0.5},
+    {"CH", 2800, 1400, 1.0}, {"JH", 2800, 1400, 0.5},
+    {"F", 4500, 4000, 0.12}, {"V", 4500, 4000, 0.05},
+    {"TH", 4500, 4000, 0.10}, {"DH", 4500, 4000, 0.04},
+};
+// A stop's release burst: lips (P, B) low and spread, tongue tip (T, D)
+// high, tongue back (K, G) in the middle.
+static const cl_band CL_BURST[] = {
+    {"P", 1200, 2000, 0.3}, {"B", 1200, 2000, 0.15},
+    {"T", 4200, 2500, 0.5}, {"D", 4200, 2500, 0.25},
+    {"K", 2000, 1000, 0.5}, {"G", 2000, 1000, 0.3},
+};
+
+static const cl_band* cl_find(const cl_band* t, size_t n, const char* id) {
+    for (size_t i = 0; i < n; i++)
+        if (strcmp(t[i].id, id) == 0) return &t[i];
+    return NULL;
+}
+
+// One resonator with unity gain at 0 Hz: y = (1 - a - b) x + a y1 + b y2.
+typedef struct { double a, b; } cl_res;
+static cl_res cl_make(double f, double bw, int sr) {
+    cl_res p;
+    double r = exp((-M_PI * bw) / sr);
+    p.a = 2 * r * cos((2 * M_PI * f) / sr);
+    p.b = -r * r;
+    return p;
+}
+
+static int cl_is_voiceless_stop(int pid) {
+    const char* id = CM_PHONES[pid].id;
+    return strcmp(id, "P") == 0 || strcmp(id, "T") == 0 || strcmp(id, "K") == 0;
+}
+
+int christman_synth_clear(const int* phone_ids, const double* durs, size_t n_phones,
+                          const double* f0_contour, double f0, double rate, int sample_rate,
+                          const double* formants, const double* glides, float* out, size_t out_len) {
+    if (!phone_ids || !durs || !out || n_phones == 0) return 1;
+    for (size_t k = 0; k < n_phones; k++)
+        if (phone_ids[k] < 0 || phone_ids[k] >= CM_N_PHONES) return 2;
+    for (size_t k = 0; k < n_phones; k++)
+        if (!isfinite(durs[k]) || durs[k] <= 0) return 3;
+    if (!cm_check_sr(sample_rate)) return 6;
+    const double nyquist = sample_rate / 2.0;
+    if (f0_contour) {
+        for (size_t k = 0; k < n_phones; k++)
+            if (!isfinite(f0_contour[k]) || f0_contour[k] <= 0 || f0_contour[k] >= nyquist) return 4;
+    } else if (!isfinite(f0) || f0 <= 0 || f0 >= nyquist) {
+        return 4;
+    }
+    if (!cm_check_rate(rate)) return 5;
+    if (formants) {
+        for (size_t k = 0; k < n_phones * 5; k++)
+            if (!isfinite(formants[k]) || formants[k] <= 0 || formants[k] >= nyquist) return 9;
+    }
+    if (glides) {
+        for (size_t k = 0; k < n_phones; k++) {
+            const double* g = glides + 8 * k;
+            int zero = 1;
+            for (int j = 0; j < 8; j++)
+                if (g[j] != 0) zero = 0;
+            if (zero) continue;
+            for (int j = 0; j < 6; j++)
+                if (!isfinite(g[j]) || g[j] <= 0 || g[j] >= nyquist) return 10;
+            if (!isfinite(g[6]) || !isfinite(g[7]) || g[6] < 0 || g[7] > 1 || g[6] >= g[7]) return 10;
+        }
+    }
+
+    double* starts = (double*)malloc(n_phones * sizeof(double));
+    double* scaled = (double*)malloc(n_phones * sizeof(double));
+    if (!starts || !scaled) { free(starts); free(scaled); return 8; }
+    double t_total = cm_starts(durs, n_phones, rate, starts, scaled);
+    size_t n = cm_length_from_total(t_total, sample_rate);
+    if (out_len != n) { free(starts); free(scaled); return 7; }
+
+    const double SR = (double)sample_rate;
+    const double kf = 1 - exp(-1 / (CL_TAU_FORMANT * SR));
+    const double ka = 1 - exp(-1 / (CL_TAU_LEVEL * SR));
+    const cl_res r4 = cl_make(CL_F4, CL_BW4, sample_rate);
+    const cl_res r5 = cl_make(CL_F5, CL_BW5, sample_rate);
+
+    // The row of phone k: the voice's, else the table's.
+#define CL_ROW(k, j) (formants ? formants[5 * (k) + (j)] \
+        : ((j) == 0 ? CM_PHONES[phone_ids[k]].f1 : (j) == 1 ? CM_PHONES[phone_ids[k]].f2 \
+        : (j) == 2 ? CM_PHONES[phone_ids[k]].f3 : (j) == 3 ? CM_PHONES[phone_ids[k]].bw1 \
+        : CM_PHONES[phone_ids[k]].bw2))
+
+    double f[3] = {CL_ROW(0, 0), CL_ROW(0, 1), CL_ROW(0, 2)};
+    double bw[2] = {CL_ROW(0, 3), CL_ROW(0, 4)};
+    double av = 0, ah = 0, af = 0;
+    double fc = 4000, fb = 3000;          // the frication band before any consonant names one
+    double y[5][2] = {{0}};
+    double yf[2] = {0, 0};
+    double rad = 0, lp = 0, phase = 0;
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++) {
+        double time = (double)i / SR;
+        while (k + 1 < n_phones && time >= starts[k + 1]) k++;
+        const cm_phone* ph = &CM_PHONES[phone_ids[k]];
+        double local = (time - starts[k]) / scaled[k];
+        int has_next = k + 1 < n_phones;
+        double trow[5];
+        for (int j = 0; j < 5; j++) trow[j] = CL_ROW(k, j);
+        double tav = 0, tah = 0, taf = 0;
+        const cl_band* band = NULL;
+
+        if (ph->kind == K_STOP) {
+            double burst = CL_BURST_S / scaled[k];
+            double close = 1 - burst - (ph->voiced ? 0 : CL_ASP_TAIL);
+            if (close < 0.3) close = 0.3;
+            if (local < close) {
+                tav = ph->voiced ? CL_VOICE_BAR : 0;
+            } else if (local < close + burst) {
+                band = cl_find(CL_BURST, sizeof CL_BURST / sizeof CL_BURST[0], ph->id);
+                taf = band->level * CL_BURST_GAIN;
+                tav = ph->voiced ? CL_VOICE_BAR : 0;
+            } else {
+                tah = CL_ASP_STOP;
+                if (has_next) for (int j = 0; j < 5; j++) trow[j] = CL_ROW(k + 1, j);
+            }
+        } else if (ph->kind == K_VOWEL) {
+            tav = CL_AV_VOWEL;
+        } else if (ph->kind == K_GLIDE || ph->kind == K_LIQ) {
+            tav = CL_AV_SONORANT;
+        } else if (ph->kind == K_NASAL) {
+            tav = CL_AV_NASAL;
+        } else if (strcmp(ph->id, "HH") == 0) {
+            tah = CL_ASP_HH;                 // HH is breath shaped by the vowel after it
+            if (has_next) for (int j = 0; j < 5; j++) trow[j] = CL_ROW(k + 1, j);
+        } else if (ph->kind == K_FRIC || ph->kind == K_AFFRIC) {
+            band = cl_find(CL_FRIC, sizeof CL_FRIC / sizeof CL_FRIC[0], ph->id);
+            tav = ph->voiced ? CL_AV_VOICED_FRIC : 0;
+            taf = band->level * CL_FRIC_GAIN;
+        }
+        if (glides && ph->kind == K_VOWEL) {
+            const double* g = glides + 8 * k;
+            if (g[7] > 0) {
+                double u = (local - g[6]) / (g[7] - g[6]);
+                if (u < 0) u = 0;
+                if (u > 1) u = 1;
+                for (int j = 0; j < 3; j++) trow[j] = g[j] + u * (g[3 + j] - g[j]);
+            }
+        }
+        if (k > 0 && cl_is_voiceless_stop(phone_ids[k - 1]) &&
+            (ph->kind == K_VOWEL || ph->kind == K_GLIDE || ph->kind == K_LIQ) &&
+            time - starts[k] < CL_VOT_S) {
+            tav = 0;
+            tah = CL_ASP_STOP;
+        }
+        if (ph->kind == K_SIL) {
+            // Silence: the formants go where the next phone needs them.
+            if (has_next) for (int j = 0; j < 5; j++) trow[j] = CL_ROW(k + 1, j);
+            else { trow[0] = f[0]; trow[1] = f[1]; trow[2] = f[2]; trow[3] = bw[0]; trow[4] = bw[1]; }
+        }
+        if (band) { fc = band->fc; fb = band->bw; }
+
+        av += ka * (tav - av);
+        ah += ka * (tah - ah);
+        af += ka * (taf - af);
+        for (int j = 0; j < 3; j++) f[j] += kf * (trow[j] - f[j]);
+        double tb1 = trow[3];
+        if (tah > 0 && tb1 < CL_ASP_BW1) tb1 = CL_ASP_BW1;
+        bw[0] += kf * (tb1 - bw[0]);
+        bw[1] += kf * (trow[4] - bw[1]);
+
+        // Source: synth.ts's pulse, open for CL_OPEN_QUOTIENT of the period,
+        // its mean taken out; synth.ts's vibrato and noise.
+        double vibrato = 1 + 0.012 * sin(2 * M_PI * 5.1 * time);   // synth.ts:57
+        double f0i = (f0_contour ? f0_contour[k] : f0) * vibrato;
+        phase += f0i / SR;
+        phase -= floor(phase);
+        const double oq = CL_OPEN_QUOTIENT;
+        double pulse = ((phase < oq ? cm_glottal(phase / oq) : 0.0) - 0.563 * oq) / oq;
+        double nz = cm_hash_noise((uint32_t)i, 7u);
+        double nz2 = cm_hash_noise((uint32_t)i, 11u);
+        lp = 0.75 * lp + nz;                 // breath noise tilted down; the radiation step lifts it back
+        double src = av * pulse + ah * lp * 0.25;
+
+        // Cascade: F1, F2, F3 (BW3 160, synth.ts:142), then F4, F5; each at
+        // unity gain at 0 Hz.
+        double fr[5] = {f[0], f[1], f[2], CL_F4, CL_F5};
+        double br[5] = {bw[0], bw[1], 160, CL_BW4, CL_BW5};
+        double x = src;
+        for (int j = 0; j < 5; j++) {
+            cl_res p = j == 3 ? r4 : j == 4 ? r5 : cl_make(fr[j], br[j], sample_rate);
+            double yy = (1 - p.a - p.b) * x + p.a * y[j][0] + p.b * y[j][1];
+            y[j][1] = y[j][0];
+            y[j][0] = yy;
+            x = yy;
+        }
+        // Frication: one resonator at the consonant's band, gain 1 at its centre.
+        cl_res pf = cl_make(fc, fb, sample_rate);
+        double th = 2 * M_PI * fc / SR;
+        double re = 1 - pf.a * cos(th) - pf.b * cos(2 * th);
+        double im = pf.a * sin(th) + pf.b * sin(2 * th);
+        double peak = sqrt(re * re + im * im);
+        double yff = peak * af * nz2 + pf.a * yf[0] + pf.b * yf[1];
+        yf[1] = yf[0];
+        yf[0] = yff;
+
+        out[i] = (float)((x - rad) + yff * CL_FRIC_POST);   // radiation: synth.ts:152 with a full step
+        rad = x;
+    }
+#undef CL_ROW
+
+    // Edge fade and peak 0.7, as synth.ts:76-84.
+    size_t fade = n / 20 < 400 ? n / 20 : 400;
+    for (size_t i = 0; i < fade; i++) {
+        double w = (double)i / (double)fade;
+        out[i] = (float)((double)out[i] * w);
+        out[n - 1 - i] = (float)((double)out[n - 1 - i] * w);
+    }
     double peak = 1e-6;
     for (size_t i = 0; i < n; i++) {
         double a = fabs((double)out[i]);

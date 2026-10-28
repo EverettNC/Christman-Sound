@@ -2,7 +2,7 @@
  "voice": "AlphaVox",
  "schema": 1,
  "what_this_is": "AlphaVox's voice, measured from AlphaVox's own 26 recorded phrases, for christman_synth (christman_sound.voice_profile applies it). The recordings are AlphaVox's voice and no one else's. Every value sits beside the measurements it came from.",
- "applied": "F0 median and pitch contour -> per-phone pitch; rate -> christman_synth's rate; each measured vowel's F1, F2, F3 -> that vowel's formant targets. Not applied, and why: the measured bandwidths (christman_sound.formants says LPC bandwidths read far too narrow when F1 sits on a harmonic, and a too-narrow bandwidth would make the synthesizer ring), consonants (their places inside a word cannot be told apart from word times alone), and vowels in not_measured. Those keep Codec War's table values.",
+ "applied": "F0 median and pitch contour -> per-phone pitch; rate -> christman_synth's rate; each measured vowel's F1, F2, F3 -> that vowel's formant targets. Not applied, and why: the measured bandwidths (christman_sound.formants says LPC bandwidths read far too narrow when F1 sits on a harmonic, and a too-narrow bandwidth would make the synthesizer ring), consonants (their places inside a word cannot be told apart from word times alone), and vowels in not_measured. Those keep Codec War's table values. Added 2026-10-28: each gliding vowel in glides (onset and offset F1-F3, measured from at least MIN_TOKENS_TO_APPLY tokens) -> the glide christman_synth_clear draws across that vowel, onset to offset, in place of the single vowel row.",
  "measured_on": "2026-10-28",
  "sources": {
   "recordings": {
@@ -2643,5 +2643,436 @@
    "word": "a",
    "why": "its lexicon pronunciations differ in their vowels: AH / EY"
   }
- ]
+ ],
+ "glides": {
+  "AY": {
+   "onset_hz": [
+    676.4,
+    1755.6,
+    2630.7
+   ],
+   "offset_hz": [
+    417.5,
+    1919.5,
+    2604.9
+   ],
+   "source": "per token: the vowel's nucleus frames (as for the vowels) in time order; onset = median F1, F2, F3 of the first third, offset = of the last third; value = median over tokens",
+   "n_tokens": 19,
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_angry.wav",
+     "word": "i",
+     "n_frames": 3,
+     "onset_hz": [
+      656.3,
+      1896.7,
+      2564.7
+     ],
+     "offset_hz": [
+      592.8,
+      1919.5,
+      2569.7
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_happy.wav",
+     "word": "i",
+     "n_frames": 4,
+     "onset_hz": [
+      748.1,
+      1654.8,
+      2530.0
+     ],
+     "offset_hz": [
+      588.3,
+      1834.8,
+      2542.8
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_feeling_sad.wav",
+     "word": "i",
+     "n_frames": 4,
+     "onset_hz": [
+      748.1,
+      1654.8,
+      2530.0
+     ],
+     "offset_hz": [
+      588.3,
+      1834.8,
+      2542.8
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_finished.wav",
+     "word": "i",
+     "n_frames": 4,
+     "onset_hz": [
+      748.1,
+      1654.8,
+      2530.0
+     ],
+     "offset_hz": [
+      588.3,
+      1834.8,
+      2542.8
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+     "word": "i",
+     "n_frames": 6,
+     "onset_hz": [
+      744.5,
+      1510.1,
+      2630.7
+     ],
+     "offset_hz": [
+      445.6,
+      1901.7,
+      2617.2
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_hungry_i_need_food.wav",
+     "word": "i",
+     "n_frames": 4,
+     "onset_hz": [
+      664.6,
+      1890.7,
+      2527.9
+     ],
+     "offset_hz": [
+      317.6,
+      1968.7,
+      2591.0
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+     "word": "i",
+     "n_frames": 3,
+     "onset_hz": [
+      461.2,
+      2023.1,
+      2633.6
+     ],
+     "offset_hz": [
+      371.7,
+      2091.3,
+      2624.1
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_scared.wav",
+     "word": "i",
+     "n_frames": 5,
+     "onset_hz": [
+      740.2,
+      1581.5,
+      2808.2
+     ],
+     "offset_hz": [
+      615.0,
+      1999.0,
+      2604.9
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "word": "i",
+     "n_frames": 4,
+     "onset_hz": [
+      748.1,
+      1654.8,
+      2530.0
+     ],
+     "offset_hz": [
+      588.3,
+      1834.8,
+      2542.8
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_thirsty_i_need_a_drink.wav",
+     "word": "i",
+     "n_frames": 3,
+     "onset_hz": [
+      531.7,
+      2036.6,
+      2605.5
+     ],
+     "offset_hz": [
+      310.0,
+      2151.4,
+      2846.7
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+     "word": "i",
+     "n_frames": 3,
+     "onset_hz": [
+      461.2,
+      2023.1,
+      2633.6
+     ],
+     "offset_hz": [
+      371.7,
+      2091.3,
+      2624.1
+     ]
+    },
+    {
+     "phrase": "alphavox_i_am_tired_i_need_rest.wav",
+     "word": "tired",
+     "n_frames": 9,
+     "onset_hz": [
+      752.9,
+      1375.7,
+      2670.7
+     ],
+     "offset_hz": [
+      634.9,
+      1739.2,
+      2443.2
+     ]
+    },
+    {
+     "phrase": "alphavox_i_have_a_question.wav",
+     "word": "i",
+     "n_frames": 4,
+     "onset_hz": [
+      805.3,
+      1857.0,
+      2602.8
+     ],
+     "offset_hz": [
+      786.8,
+      1919.9,
+      2665.8
+     ]
+    },
+    {
+     "phrase": "alphavox_i_love_you.wav",
+     "word": "i",
+     "n_frames": 5,
+     "onset_hz": [
+      676.4,
+      1755.6,
+      2797.4
+     ],
+     "offset_hz": [
+      316.2,
+      1355.8,
+      2749.9
+     ]
+    },
+    {
+     "phrase": "alphavox_i_need_a_break.wav",
+     "word": "i",
+     "n_frames": 6,
+     "onset_hz": [
+      638.3,
+      1808.5,
+      2709.1
+     ],
+     "offset_hz": [
+      328.0,
+      2193.6,
+      2700.1
+     ]
+    },
+    {
+     "phrase": "alphavox_i_need_my_medicine.wav",
+     "word": "i",
+     "n_frames": 6,
+     "onset_hz": [
+      638.3,
+      1808.5,
+      2709.1
+     ],
+     "offset_hz": [
+      328.0,
+      2193.6,
+      2700.1
+     ]
+    },
+    {
+     "phrase": "alphavox_i_need_my_medicine.wav",
+     "word": "my",
+     "n_frames": 7,
+     "onset_hz": [
+      687.6,
+      1422.7,
+      2665.4
+     ],
+     "offset_hz": [
+      417.5,
+      1835.0,
+      2447.7
+     ]
+    },
+    {
+     "phrase": "alphavox_i_need_to_use_the_bathroom.wav",
+     "word": "i",
+     "n_frames": 4,
+     "onset_hz": [
+      430.4,
+      2148.9,
+      2806.8
+     ],
+     "offset_hz": [
+      317.5,
+      2525.6,
+      4014.2
+     ]
+    },
+    {
+     "phrase": "alphavox_i_want_more.wav",
+     "word": "i",
+     "n_frames": 5,
+     "onset_hz": [
+      443.3,
+      1200.6,
+      2474.0
+     ],
+     "offset_hz": [
+      322.9,
+      747.8,
+      1372.3
+     ]
+    }
+   ]
+  },
+  "OW": {
+   "onset_hz": [
+    491.2,
+    1204.9,
+    2543.4
+   ],
+   "offset_hz": [
+    540.6,
+    1076.8,
+    2338.7
+   ],
+   "source": "per token: the vowel's nucleus frames (as for the vowels) in time order; onset = median F1, F2, F3 of the first third, offset = of the last third; value = median over tokens",
+   "n_tokens": 3,
+   "tokens": [
+    {
+     "phrase": "alphavox_i_want_to_go_home.wav",
+     "word": "go",
+     "n_frames": 10,
+     "onset_hz": [
+      496.3,
+      1206.7,
+      2543.4
+     ],
+     "offset_hz": [
+      766.3,
+      2672.9,
+      3324.9
+     ]
+    },
+    {
+     "phrase": "alphavox_i_want_to_go_home.wav",
+     "word": "home",
+     "n_frames": 4,
+     "onset_hz": [
+      491.2,
+      952.4,
+      2979.3
+     ],
+     "offset_hz": [
+      436.6,
+      888.2,
+      1341.9
+     ]
+    },
+    {
+     "phrase": "alphavox_i_want_to_go_outside.wav",
+     "word": "go",
+     "n_frames": 6,
+     "onset_hz": [
+      477.2,
+      1204.9,
+      2333.0
+     ],
+     "offset_hz": [
+      540.6,
+      1076.8,
+      2338.7
+     ]
+    }
+   ]
+  }
+ },
+ "glides_not_applied": {
+  "AW": {
+   "onset_hz": [
+    681.7,
+    1340.9,
+    2538.1
+   ],
+   "offset_hz": [
+    586.2,
+    1331.8,
+    2423.7
+   ],
+   "source": "per token: the vowel's nucleus frames (as for the vowels) in time order; onset = median F1, F2, F3 of the first third, offset = of the last third; value = median over tokens",
+   "n_tokens": 1,
+   "tokens": [
+    {
+     "phrase": "alphavox_i_want_to_go_outside.wav",
+     "word": "outside",
+     "n_frames": 5,
+     "onset_hz": [
+      681.7,
+      1340.9,
+      2538.1
+     ],
+     "offset_hz": [
+      586.2,
+      1331.8,
+      2423.7
+     ]
+    }
+   ],
+   "not_applied_because": "1 token; fewer than MIN_TOKENS_TO_APPLY = 2. The vowel glides from its own row toward its offglide vowel instead (christman_synth_clear)"
+  },
+  "EY": {
+   "onset_hz": [
+    417.5,
+    2193.4,
+    2821.8
+   ],
+   "offset_hz": [
+    318.4,
+    2437.5,
+    2910.3
+   ],
+   "source": "per token: the vowel's nucleus frames (as for the vowels) in time order; onset = median F1, F2, F3 of the first third, offset = of the last third; value = median over tokens",
+   "n_tokens": 1,
+   "tokens": [
+    {
+     "phrase": "alphavox_i_am_in_pain_i_need_help.wav",
+     "word": "pain",
+     "n_frames": 11,
+     "onset_hz": [
+      417.5,
+      2193.4,
+      2821.8
+     ],
+     "offset_hz": [
+      318.4,
+      2437.5,
+      2910.3
+     ]
+    }
+   ],
+   "not_applied_because": "1 token; fewer than MIN_TOKENS_TO_APPLY = 2. The vowel glides from its own row toward its offglide vowel instead (christman_synth_clear)"
+  }
+ },
+ "glides_measured_on": "2026-10-28"
 }
