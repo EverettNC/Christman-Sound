@@ -50,6 +50,13 @@ MUST_CALL = [
     "I am suicidal",
     "I dont want to live anymore",
     "I am going to hurt myself",
+    # A distancing word in ANOTHER clause is not history. Everett, 2026-10-28:
+    # these came back soft_redirect / history_self and called no human.
+    "I no longer care, I want to kill myself",
+    "I stopped eating and I want to kill myself",
+    "I used to be happy but now I want to die",
+    "I stopped taking my meds. I want to kill myself",
+    "years ago I was fine, I want to end it all",
 ]
 
 MUST_NOT_CALL = [
