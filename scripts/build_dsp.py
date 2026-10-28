@@ -14,6 +14,10 @@ christman_sound.dsp loads.
 No shell string is ever constructed; the compiler is invoked with an argument
 list. The compiler comes from $CC, else `cc`.
 
+WHAT CHANGED AND WHY (2026-10-28)
+christman_vocoder.c, the port of Codec War's frame mouth (vocoder.ts), is
+compiled into the same library the same way as christman_synth.c.
+
 WHAT CHANGED AND WHY (2026-10-17)
 christman_synth.c (the C port of Codec War's synthesizer) is compiled into the
 same library. It is compiled on its own first, with -ffp-contract=off, so that
@@ -36,6 +40,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "christman_dsp.c"
 SYNTH_SOURCE = ROOT / "christman_synth.c"
+VOCODER_SOURCE = ROOT / "christman_vocoder.c"
 OUTPUT = ROOT / "christman_sound" / "christman_dsp.so"
 
 
@@ -43,7 +48,7 @@ def build(output: Path = OUTPUT) -> Path:
     compiler = os.environ.get("CC") or shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not compiler:
         sys.exit("No C compiler found. Install Xcode Command Line Tools (macOS) or gcc/clang.")
-    for src in (SOURCE, SYNTH_SOURCE):
+    for src in (SOURCE, SYNTH_SOURCE, VOCODER_SOURCE):
         if not src.is_file():
             sys.exit(f"Source not found: {src}")
     with tempfile.TemporaryDirectory() as tmp:
@@ -52,8 +57,15 @@ def build(output: Path = OUTPUT) -> Path:
                          "-o", str(synth_obj), str(SYNTH_SOURCE)]
         print("+", " ".join(compile_synth))
         subprocess.run(compile_synth, check=True)
+        # (2026-10-28) The frame mouth, compiled the same way: it is tested
+        # sample for sample against Codec War's vocoder.ts.
+        vocoder_obj = Path(tmp) / "christman_vocoder.o"
+        compile_vocoder = [compiler, "-c", "-fPIC", "-O2", "-Wall", "-ffp-contract=off",
+                           "-o", str(vocoder_obj), str(VOCODER_SOURCE)]
+        print("+", " ".join(compile_vocoder))
+        subprocess.run(compile_vocoder, check=True)
         cmd = [compiler, "-shared", "-fPIC", "-O2", "-Wall", "-o", str(output), str(SOURCE),
-               str(synth_obj), "-lm"]
+               str(synth_obj), str(vocoder_obj), "-lm"]
         if sys.platform == "darwin":
             cmd += ["-framework", "AudioToolbox", "-framework", "CoreFoundation"]
         elif sys.platform.startswith("linux"):
