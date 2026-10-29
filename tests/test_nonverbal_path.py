@@ -114,14 +114,19 @@ def test_spoken_crisis_and_the_grunt_both_reach_the_human():
 
 
 def test_distress_below_the_speaking_threshold_still_pages():
-    """The threshold decides whether words are put in a mouth, not whether a
-    pressed help symbol is shown to a person."""
+    """The threshold never decides whether help comes (Everett, ruling B),
+    and a pressed symbol is not under it at all (ruling C)."""
     engine = NonverbalEngine(data_dir=None, confidence_threshold=0.95)
     pager = Pager()
     turn = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(
         nonverbal={"symbol": "help"})
-    assert turn.person_message is None          # 0.9 < 0.95: not spoken
-    assert len(pager.calls) == 1                # still reached a human
+    assert turn.person_message == "I need help."   # pressed: spoken like a word
+    assert len(pager.calls) == 1                   # and a human is reached
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(
+        nonverbal={"gesture": "point_up"})         # a camera's reading, 0.8 < 0.95
+    assert turn.person_message is None             # not spoken for the client
+    assert len(pager.calls) == 1                   # still reached a human
 
 
 def test_unknown_nonverbal_input_name_is_an_error():

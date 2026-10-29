@@ -191,11 +191,12 @@ def distress_readings(readings: "List[Interpretation]") -> "List[Interpretation]
     """
     The readings that must reach a human.
 
-    A recognized distress key counts even BELOW the speaking threshold. The
-    threshold decides whether the engine may put words in someone's mouth;
-    it does not decide whether a pressed "help" symbol is shown to a person.
-    A missed page costs far more than a check-in. Unrecognized input never
-    counts — nothing is invented.
+    Everett, 2026-10-29: "Nonverbal distress is exactly the same as verbal
+    distress." A recognized distress reading counts at ANY confidence: the
+    confidence bar never decides whether help comes. The bar decides only
+    whether the engine may put words in someone's mouth for a reading it
+    could have got wrong. Unrecognized input never counts — nothing is
+    invented.
     """
     return [
         r for r in readings
@@ -295,6 +296,15 @@ class MapValidationError(ValueError):
 #   sounds at 0.8: repeated_sound, grunt_acknowledge, grunt_frustration.
 #   eye region at 0.8: long_stare. At 0.7: rapid_scan.
 #   vocal_stimming at 0.9, while the stimming gesture is 0.7.
+#
+# THE SYMBOLS' NUMBERS ARE NOT A SPEAKING GATE (Everett, 2026-10-29). "A
+# symbol or key the client pressed counts like a spoken word." The bar
+# (confidence_threshold) is for readings this package could get wrong: a
+# camera's gesture, an eye region, a sound the microphone classified. A
+# pressed symbol is not a guess, so its number never decides whether it
+# speaks (see NonverbalEngine._gate). The number stays on the reading and
+# still weighs in a multimodal vote. And no number, on any channel, decides
+# whether a distress reading reaches a human: that happens at any confidence.
 # -----------------------------------------------------------------------------
 
 DEFAULT_GESTURES: Dict[str, Dict[str, Any]] = {
@@ -586,6 +596,15 @@ class NonverbalEngine:
         threshold attribute and no gate at all.
         """
         if interp.status is not Status.OK:
+            return interp
+        # A PRESSED SYMBOL IS NOT UNDER THE BAR (Everett, 2026-10-29): "a
+        # symbol or key the client pressed counts like a spoken word." The bar
+        # exists for readings this package could get wrong: a camera's
+        # gesture, an eye region, a sound the microphone classified. A symbol
+        # is not a reading; the client chose it. So the typed confidence in
+        # the symbol map never decides whether a pressed symbol speaks. It is
+        # still carried on the reading, and still weighs in a multimodal vote.
+        if interp.modality is Modality.SYMBOL:
             return interp
         if interp.confidence is None or interp.confidence < self.confidence_threshold:
             return Interpretation(
