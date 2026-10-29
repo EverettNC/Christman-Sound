@@ -9,7 +9,7 @@ Christman Sound is the sound package of The Christman AI Project. It holds:
 - **the ear** (`christman_sound.ear`): the package's own speech-to-text, in C;
 - **reading aloud** (`christman_ocr_shared.py`): printed text on a screen, an image or a PDF, read so it can be spoken in the caller's voice.
 
-The package holds no being's identity. A being passes its own voice profile or frame voice when it speaks; with no voice given, the mouth raises `SynthesisUnavailable` with the reason. No outside speech engine is ever substituted.
+The package holds no being's identity. A being passes its own voice profile or frame voice on every speaking call; with no voice given, nothing is spoken and the call raises a typed failure with the reason. No outside speech engine is ever substituted.
 
 ## Overview
 
@@ -127,11 +127,11 @@ Do not wire the card source as a `SoundDetectorBackend`.
 
 ### christman_sound — the voice
 
-- `synth.py` — `synthesize()` and `speak()`: text or phones in, sound out. `voice=` takes a `VoiceProfile` or a frame voice
+- `synth.py` — `synthesize()` and `speak()`: text or phones in, sound out. `voice=` is required: a `VoiceProfile`, a `FrameVoice`, or a path to either; with none, `NoVoice` is raised
 - `stitch.py` — Frame voices: a voice speaking new sentences from its own recordings
 - `lexicon.py` — Words to phones, from a Vosk alignment lexicon
 - `formants.py` — F1, F2, F3 and their bandwidths, measured from a recording
-- `voice_profile.py` — A measured voice profile (`load_voice_profile`), applied to the synthesizer
+- `voice_profile.py` — A measured voice profile (`load_voice_profile(path)`), applied to the synthesizer. Each profile carries its file's SHA-256 (`fingerprint()`)
 - `dsp.py` — The one loader for the C library
 - `logger.py` — Logging
 - `ear/` — The ear: the package's own speech-to-text. Its C library is built once per machine with `python -m christman_sound.ear.build --check`
@@ -153,7 +153,7 @@ All three are compiled into `christman_sound/christman_dsp.so` by `scripts/build
 
 - `scripts/build_dsp.py` — Builds the C library; `--check` runs its smoke test
 - `scripts/build_voice_bank.py` and `scripts/voice_bank_driver.mjs` — Build a frame voice (below)
-- A script in `scripts/` that measures a voice profile from a being's own recordings
+- `scripts/measure_voice.py` — Measures a being's own recordings into a voice profile (`--recordings`, `--out`, `--name`)
 - `scripts/run_crisis_table.py`, `scripts/verify_corti_wire.py`, `scripts/verify_hearing_seat.py` — Checks run by hand
 
 ## Quick Start
@@ -195,7 +195,7 @@ print(result.status, result.text)                           # text is "" on ever
 
 ### Voice Synthesis
 
-The mouth speaks only in the voice its caller gives: `generate_speech_audio(text, voice=<frame voice folder>)` or `$CHRISTMAN_VOICE`. Controls are keywords (cadence, breath, jitter, shimmer, timbre, articulation, intonation, prosody, resonance, affect, rate, f0); each is applied and listed in `last_applied`, or refused with the reason.
+The mouth speaks only in the voice its caller gives: `voice=` on `SpeechSynthesisEngine(...)` or on each `generate_speech_audio(...)` call, as a voice profile file, a frame voice folder, a `VoiceProfile` or a `FrameVoice`. There is no default voice. Controls are keywords (cadence, breath, jitter, shimmer, timbre, articulation, intonation, prosody, resonance, affect, rate, f0); each is applied and listed in `last_applied`, or refused with the reason.
 
 ```python
 from christman_voice_sdk.synthesis.voice_synthesis import SpeechSynthesisEngine
@@ -223,7 +223,7 @@ from christman_sound.synth import synthesize
 from christman_sound.voice_profile import load_voice_profile
 
 voice = load_voice_profile("<the being's voice profile>.json")  # a missing field raises VoiceProfileError
-result = synthesize("I am here.", voice=voice, lexicon_path="<align_lexicon.txt>")
+result = synthesize("I am here.", voice=voice, lexicon_path="<align_lexicon.txt>")   # voice= is required
 result.write_wav("here.wav")
 ```
 
@@ -285,7 +285,6 @@ PaddleOCR fetches its model files the first time it is constructed; that is an o
 
 ```bash
 # The voice
-export CHRISTMAN_VOICE=~/.christman_ai/voices/<voice>        # frame voice folder, when the caller passes none
 export CHRISTMAN_LEXICON_PATH=<vosk model>/graph/phones/align_lexicon.txt
 export CHRISTMAN_VOICE_CACHE=~/.christman_ai/voice_cache     # where spoken WAVs are written
 export CHRISTMAN_DSP_LIB=/path/to/christman_dsp.so           # only to override where the library is found
@@ -305,9 +304,11 @@ export CHRISTMAN_LOG_DIR=~/.christman_ai/logs                # logs
 ```bash
 python3 -m christman_voice_sdk.integration.voice_capture_client --capture <profile-name>   # 8 s from the mic
 python3 -m christman_voice_sdk.integration.voice_capture_client --list
+python3 -m christman_voice_sdk.integration.voice_capture_client --speak "I'm here." \
+    --voice <voice profile file or frame voice folder> --lexicon <align_lexicon.txt>
 ```
 
-A profile stores only what was measured. Silence yields `fundamental_hz: null`, never 150. A being's profile is made from that being's own voice.
+A profile stores only what was measured. Silence yields `fundamental_hz: null`, never 150. A being's profile is made from that being's own voice. `--speak` goes through the package's own mouth in the voice given with `--voice`.
 
 ## Architecture
 
