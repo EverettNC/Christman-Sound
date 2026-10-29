@@ -63,14 +63,8 @@ WHAT CHANGED IN THIS REWRITE
    For a nonverbal user this pipeline IS their voice, so editing their words
    before speaking them is putting words in their mouth — the same failure as a
    phrase generator, from the other direction. Flagged terms are now reported
-   in `flags` and `flagged_terms`; `said` is the person's own words,
+   in `flags` and `flagged_terms`; `sanitized_text` is the person's own text,
    unmodified.
-
-   2026-10-29, Everett: "We never change the truth, ever. We never sanitize
-   anything." The field was named `sanitized_text`, and a hard block set it
-   to "" — the words were withheld from everything after the gate. The field
-   is now `said`, Aegis sets it to the exact words on every result (a
-   callback cannot change it), and a safety hold never withholds them.
 
 4. PROSODY IS AN INPUT, AND IT NEVER DECIDES ALONE.
 
@@ -87,7 +81,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .structural_affect import (
-    LEXICON,
     AffectCertainty,
     AffectReading,
     Attribution,
@@ -165,48 +158,7 @@ class Silicon:
 
     #: Distress intensity that calls for grounding. A threshold, not a
     #: measurement — named so it can be argued with.
-    #: Chosen starting value, held until client data replaces it. Reason:
-    #: just above the middle of the 0..1 scale.
     GROUNDING_INTENSITY = 0.55
-
-    #: Weight of a plain domain word ("remind", "breathe", "listen") found in
-    #: the clauses. A stated choice, not a measurement.
-    #: Chosen starting value, held until client data replaces it. Reason: a
-    #: plain word counts half a voiced request, so it can steer a reply but
-    #: never outvote what the person asked for.
-    PLAIN_WORD_WEIGHT = 0.5
-
-    @classmethod
-    def _surviving_terms(cls, affect: AffectReading) -> Dict[str, float]:
-        """
-        What the domains are scored on.
-
-        Affect terms count at their surviving weight — a term structure
-        cancelled (negated, chosen, impersonal) steers nothing. Plain words
-        are read from the clauses at PLAIN_WORD_WEIGHT unless a negation
-        holds them.
-
-        2026-10-29: this read affect hits only, and the voice, memory and
-        grounding words are not affect words, so those three domains could
-        never score. "remind me to call mom" scored 0.0 everywhere.
-        """
-        terms: Dict[str, float] = {
-            h.term: abs(h.final_weight)
-            for h in affect.hits
-            if h.final_weight != 0.0
-        }
-        affect_terms = {h.term for h in affect.hits}
-        domain_words = {w for ws in cls.DOMAIN_PRIORS.values() for w in ws}
-        for clause in affect.clauses:
-            for i, tok in enumerate(clause.tokens):
-                if tok not in domain_words or tok in terms or tok in affect_terms:
-                    continue
-                if tok in LEXICON:
-                    continue    # an affect word speaks only through its hit
-                if StructuralAffectAnalyzer._negated(clause.tokens, i):
-                    continue
-                terms[tok] = cls.PLAIN_WORD_WEIGHT
-        return terms
 
     def retrieve(
         self,
@@ -257,7 +209,14 @@ class Silicon:
             response_mode = MODE_STANDARD
             source = "none"
 
-        live_terms = self._surviving_terms(affect)
+        # Domain scoring runs on surviving affect terms — terms structure
+        # cancelled (negated, volitional, impersonal) must not steer the domain
+        # either. The old version scored the raw word vector.
+        live_terms = {
+            h.term: abs(h.final_weight)
+            for h in affect.hits
+            if h.final_weight != 0.0
+        }
         domain_scores = {
             domain: _overlap(live_terms, words)
             for domain, words in self.DOMAIN_PRIORS.items()
@@ -273,9 +232,7 @@ class Silicon:
         distressed = (
             affect.is_self_distress
             and affect.intensity is not None
-            # Rounded as reported: "i have no one" measured 0.5499999… and
-            # missed a 0.55 bar by float noise.
-            and round(affect.intensity, 4) >= self.GROUNDING_INTENSITY
+            and affect.intensity >= self.GROUNDING_INTENSITY
         )
 
         return {
@@ -319,14 +276,13 @@ class SafetyResult:
     """
     Outcome of a safety check.
 
-    `said` is the person's OWN words, exactly as said, every letter. Aegis
-    sets it from the input on every result. Nothing is cleaned, softened,
-    replaced or withheld. Flagged terms are reported alongside it.
+    `sanitized_text` is the person's OWN text. It is never edited. Flagged
+    terms are reported alongside it, not substituted into it.
     """
 
     status: str  # "clear" | "soft_redirect" | "hard_block"
     reason: str = ""
-    said: str = ""
+    sanitized_text: str = ""
     flags: List[str] = field(default_factory=list)
     flagged_terms: List[str] = field(default_factory=list)
     hold_marker: str = ""
@@ -401,10 +357,6 @@ class Aegis:
                 result.degraded = True
                 result.degraded_reason = degraded_reason
 
-        # The words are the words. Whatever a callback put here, what reaches
-        # the human and everything after the gate is exactly what was said.
-        result.said = original
-
         if result.status == "hard_block":
             return self._deliver_crisis(result, context)
         return result
@@ -417,7 +369,7 @@ class Aegis:
                 return SafetyResult(
                     status="hard_block",
                     reason="crisis_language",
-                    said=original,
+                    sanitized_text="",           # nothing to speak
                     flags=[f"hard:{phrase}"],
                     flagged_terms=[phrase],
                     hold_marker="[SAFETY HOLD — crisis language detected]",
@@ -434,12 +386,12 @@ class Aegis:
             return SafetyResult(
                 status="soft_redirect",
                 reason="elevated_language",
-                said=original,
+                sanitized_text=original,   # UNCHANGED — see class docstring
                 flags=flags,
                 flagged_terms=terms,
             )
 
-        return SafetyResult(status="clear", said=original)
+        return SafetyResult(status="clear", sanitized_text=original)
 
     def _deliver_crisis(
         self, result: SafetyResult, context: Dict[str, Any]
@@ -467,7 +419,7 @@ class Aegis:
         return SafetyResult(
             status=result.status,
             reason=result.reason,
-            said=result.said,
+            sanitized_text=result.sanitized_text,
             flags=list(result.flags),
             flagged_terms=list(result.flagged_terms),
             hold_marker=result.hold_marker,
@@ -499,8 +451,8 @@ class Decision:
     reconciliation: Optional[Reconciliation]
     coherence: Optional[float]
     delivery: Dict[str, Any]
-    #: The client's words, exactly as said. Never edited, never withheld.
     input_text: str
+    sanitized_text: str
 
     @property
     def carbon(self) -> Dict[str, Any]:
@@ -516,18 +468,8 @@ class Decision:
 
     @property
     def speakable(self) -> bool:
-        """
-        True whenever there are words. A safety hold pages a human; it never
-        withholds what the client said. 2026-10-29: this was False on every
-        safety hold, so a client who typed "I want to kill myself" on an AAC
-        board was silenced at the moment they asked for help.
-        """
-        return bool(self.input_text)
-
-    @property
-    def reply_held(self) -> bool:
-        """The being's OWN reply waits for the human. The client's words do not."""
-        return self.mode == MODE_SAFETY_HOLD
+        """False on a safety hold. The single gate before speaking."""
+        return self.mode != MODE_SAFETY_HOLD and bool(self.sanitized_text)
 
     @property
     def knows(self) -> bool:
@@ -558,9 +500,9 @@ class Decision:
             "coherence_known": self.coherence is not None,
             "delivery": dict(self.delivery),
             "input_text": self.input_text,
+            "sanitized_text": self.sanitized_text,
             "carbon": self.carbon,
             "speakable": self.speakable,
-            "reply_held": self.reply_held,
             "knows": self.knows,
         }
 
@@ -660,6 +602,7 @@ class FusionEngine:
             coherence=coherence,
             delivery=delivery,
             input_text=user_input or "",
+            sanitized_text=safety.sanitized_text,
         )
 
     def _resolve_mode(
@@ -702,21 +645,9 @@ class FusionEngine:
                 or "Affect could not be resolved from sentence structure."
             )
 
-        # Someone else named at risk right now, or the speaker's own history
-        # of harm. No human is paged (Everett's table), but this is not a
-        # standard turn. 2026-10-29, measured before: "she wants to die" and
-        # "he is going to kill her" came back mode=standard, pace=normal.
-        if safety.status == "soft_redirect":
-            return MODE_HOLD_SPACE, ""
-
         mode = constraints.get("response_mode") or MODE_STANDARD
         if constraints.get("needs_grounding") and mode == MODE_STANDARD:
             mode = MODE_GENTLE_LIFT
-        # Measured self-distress under the grounding bar is still distress.
-        # 2026-10-29, measured before: "I'm not okay" and "I don't feel safe"
-        # came back standard, pace normal. Hold space; do not lift.
-        if mode == MODE_STANDARD and affect.is_self_distress:
-            mode = MODE_HOLD_SPACE
         return mode, ""
 
     @staticmethod
@@ -764,26 +695,14 @@ class FusionEngine:
                 **provenance,
             }
 
-        # The pace follows the MODE, not only the live response_mode.
-        # 2026-10-29, measured before: a safety hold, and a gentle lift that
-        # came from measured distress, were both delivered at pace "normal",
-        # because pace was read from the live response_mode (default
-        # standard).
-        careful = mode in {MODE_HOLD_SPACE, MODE_GENTLE_LIFT, MODE_SAFETY_HOLD}
-        flagged = safety is not None and safety.status == "soft_redirect"
         return {
-            "pace": "slower" if careful else constraints.get("pace", "normal"),
-            "warmth": (
-                "steady" if mode in {MODE_HOLD_SPACE, MODE_SAFETY_HOLD}
-                else "high" if mode == MODE_GENTLE_LIFT
-                else constraints.get("warmth", "balanced")
-            ),
-            "allow_silence": True if careful else constraints.get("allow_silence", True),
+            "pace": constraints.get("pace", "normal"),
+            "warmth": constraints.get("warmth", "balanced"),
+            "allow_silence": constraints.get("allow_silence", True),
             "needs_grounding": constraints.get("needs_grounding", False),
-            "no_rush": careful,
-            "confirm_before_acting": mode == MODE_SAFETY_HOLD,
+            "no_rush": mode in {MODE_HOLD_SPACE, MODE_GENTLE_LIFT, MODE_SAFETY_HOLD},
+            "confirm_before_acting": False,
             "assert_nothing": False,
-            "safety_flag": safety.reason if flagged else "",
             **provenance,
         }
 

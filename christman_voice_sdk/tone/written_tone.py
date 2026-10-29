@@ -4,8 +4,8 @@ No license — express or implied — is granted without prior written permissio
 
 Christman Voice SDK — Written-Tone Classifier.
 
-Distinguishes *aggressive* from *incisive* writing. It reads. It never
-changes a word.
+Distinguishes *aggressive* from *incisive* writing, and offers a rewrite that
+strips the attack without softening the message.
 
 Why this matters: AAC clients frequently want their voice to land *firmly*,
 not politely-by-default. This exists so the surface can ask "is this
@@ -17,19 +17,27 @@ NON-CLAIMS (Cardinal Rule #13: no fabricated engines):
     NOT be used to evaluate anyone's character, mental state, or intent.
   * Scores are explainable feature counts on a 0..1 scale. They are not
     calibrated probabilities.
+  * `make_incisive` is a syntactic rewriter. It does NOT understand context.
 
 WHAT CHANGED FROM THE PREVIOUS VERSION
 --------------------------------------
 This file was already the honest one in its set — REMEDIATION line 68 names it
 the template. Three things changed.
 
-1. THE REWRITER AND THE REDACTOR ARE GONE (Everett, 2026-10-29).
+1. THE REWRITE IS NO LONGER RETURNABLE ON ITS OWN.
 
-   "We never change the truth, ever. We never sanitize anything." This file
-   had `make_incisive`, `propose_rewrite` and `RewriteProposal`: they cut
-   words out of a client's sentence and could put "[redacted]" in place of
-   profanity. Removed, not switched off. A client's words are kept and
-   passed on exactly as said. This file only reads them.
+   `make_incisive(text) -> str` returned only the edited version. The docstring
+   said callers MUST show the user first, but nothing enforced it, and a
+   caller who ignored it silently shipped edited words.
+
+   For an AAC user this pipeline IS their voice. Editing their sentence before
+   it is spoken is putting words in their mouth — the same defect as a phrase
+   generator, from the other direction.
+
+   `propose_rewrite()` now returns a `RewriteProposal` carrying the original,
+   the proposal, and every edit made. `.accepted` is False until someone calls
+   `.accept()`. `make_incisive` is kept for compatibility and now emits a
+   DeprecationWarning.
 
 2. SUBSTRING MATCHING CAUGHT INNOCENT WORDS.
 
@@ -37,19 +45,26 @@ the template. Three things changed.
    matched "dumbbell", "loser" matched "closer", "garbage" was fine but
    "hate you" would not match "hate your idea". Single words are now matched on
    word boundaries; multi-word phrases still match as phrases.
+
+3. PROFANITY REDACTION IS OPT-IN.
+
+   The rewriter replaced every profanity with "[redacted]" unconditionally.
+   Profanity is intensity, not a character attack — this file already said so
+   in a comment while redacting it anyway. `redact_profanity` defaults False.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Iterable, List, Optional, Tuple
 
 
 class ToneCategory(Enum):
     INCISIVE = "incisive"        # firm, direct, on-target — keep as-is
-    AGGRESSIVE = "aggressive"    # ad-hominem, inflammatory — flagged; the words are kept
+    AGGRESSIVE = "aggressive"    # ad-hominem, inflammatory — offer rewrite
     NEUTRAL = "neutral"          # neither sharp nor hot
     PASSIVE = "passive"          # hedged / softened — flag if user wanted firm
 
@@ -117,6 +132,74 @@ class ToneBreakdown:
             "profanity_hits": list(self.profanity_hits),
             "scores_are_feature_counts": True,
             "is_calibrated_probability": False,
+        }
+
+
+@dataclass
+class RewriteProposal:
+    """
+    A proposed rewrite that has NOT been applied.
+
+    `.text` is the ORIGINAL until someone calls `.accept()`. That is the whole
+    point: the default result of proposing a rewrite is that nothing changed.
+    """
+
+    original: str
+    proposed: str
+    edits: List[str] = field(default_factory=list)
+    accepted: bool = False
+
+    #: (start, end, token) spans of the flagged terms in the ORIGINAL. A UI
+    #: should highlight these and let the person edit their own sentence.
+    flagged_spans: List[Tuple[int, int, str]] = field(default_factory=list)
+
+    #: True when tokens were deleted from mid-sentence. Deletion leaves
+    #: grammatical wreckage — "YOU ARE AN IDIOT" becomes "YOU ARE AN" — and
+    #: this rewriter has no syntax model to repair it. When this is True the
+    #: proposal is a starting point for the person to edit, NOT a sendable
+    #: sentence.
+    may_be_ungrammatical: bool = False
+
+    @property
+    def text(self) -> str:
+        """What should actually be spoken or sent."""
+        return self.proposed if self.accepted else self.original
+
+    @property
+    def changed(self) -> bool:
+        return self.proposed != self.original
+
+    def accept(self) -> "RewriteProposal":
+        """Record that the user chose the rewrite."""
+        self.accepted = True
+        return self
+
+    def reject(self) -> "RewriteProposal":
+        self.accepted = False
+        return self
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "original": self.original,
+            "proposed": self.proposed,
+            "edits": list(self.edits),
+            "changed": self.changed,
+            "accepted": self.accepted,
+            "text": self.text,
+            "flagged_spans": [
+                {"start": s, "end": e, "token": t} for s, e, t in self.flagged_spans
+            ],
+            "may_be_ungrammatical": self.may_be_ungrammatical,
+            "note": (
+                "The user's own words ship unless accept() is called. This "
+                "pipeline is an AAC user's voice; it does not edit them by "
+                "default."
+            ),
+            "rewriter_limits": (
+                "Token deletion has no syntax model. When may_be_ungrammatical "
+                "is true the proposal will read broken — prefer highlighting "
+                "flagged_spans and letting the person edit their own sentence."
+            ),
         }
 
 
@@ -192,6 +275,102 @@ def classify_written_tone(text: str) -> ToneCategory:
     return analyze_tone_breakdown(text).category
 
 
+def propose_rewrite(text: str, redact_profanity: bool = False) -> RewriteProposal:
+    """
+    Propose an incisive rewrite. Applies nothing.
+
+    Strips ad-hominem tokens, shouting punctuation, and ALL-CAPS shouting.
+    Adds no hedges and does not change the underlying claim.
+
+    Args:
+        redact_profanity: replace profanity with [redacted]. OFF by default —
+            profanity is intensity, not a character attack, and this pipeline
+            is the user's voice.
+
+    Returns:
+        RewriteProposal whose `.text` is the ORIGINAL until `.accept()`.
+    """
+    original = text or ""
+    if not original:
+        return RewriteProposal(original="", proposed="")
+
+    out = original
+    edits: List[str] = []
+    spans: List[Tuple[int, int, str]] = []
+    deleted_any = False
+
+    # Record where the flagged terms sit in the ORIGINAL before anything is
+    # removed, so a UI can highlight instead of delete.
+    for token in _AGGRESSIVE_TOKENS + (_PROFANITY if redact_profanity else ()):
+        pattern = (
+            re.compile(re.escape(token), re.IGNORECASE) if " " in token
+            else re.compile(rf"\b{re.escape(token)}\b", re.IGNORECASE)
+        )
+        for m in pattern.finditer(original):
+            spans.append((m.start(), m.end(), token))
+    spans.sort()
+
+    for token in _AGGRESSIVE_TOKENS:
+        pattern = (
+            re.compile(re.escape(token), re.IGNORECASE) if " " in token
+            else re.compile(rf"\b{re.escape(token)}\b", re.IGNORECASE)
+        )
+        if pattern.search(out):
+            out = pattern.sub("", out)
+            edits.append(f"removed ad-hominem: {token!r}")
+            deleted_any = True
+
+    if redact_profanity:
+        for token in _PROFANITY:
+            pattern = re.compile(rf"\b{re.escape(token)}\w*\b", re.IGNORECASE)
+            if pattern.search(out):
+                out = pattern.sub("[redacted]", out)
+                edits.append(f"redacted profanity: {token!r}")
+
+    if _INTENSIFIER_PUNCT_RE.search(out):
+        out = _INTENSIFIER_PUNCT_RE.sub(lambda m: m.group(0)[0], out)
+        edits.append("collapsed repeated ! or ?")
+
+    if _ALLCAPS_WORD_RE.search(out):
+        out = _ALLCAPS_WORD_RE.sub(lambda m: m.group(0).lower(), out)
+        edits.append("lowercased ALL-CAPS shouting")
+
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+    out = re.sub(r"^[\s,;:.\-]+", "", out).strip()
+
+    if deleted_any:
+        edits.append(
+            "WARNING: tokens were deleted mid-sentence; the proposal may be "
+            "ungrammatical and should be edited, not sent as-is"
+        )
+
+    return RewriteProposal(
+        original=original, proposed=out, edits=edits,
+        flagged_spans=spans, may_be_ungrammatical=deleted_any,
+    )
+
+
+def make_incisive(text: str, redact_profanity: bool = False) -> str:
+    """
+    DEPRECATED. Returns the rewritten string directly.
+
+    Use `propose_rewrite()`, whose result defaults to the user's own words
+    until accepted. This function returns edited text with no record that it
+    was edited, which is how a rewrite reaches a listener unreviewed.
+    """
+    warnings.warn(
+        "make_incisive() returns edited text with no consent step. Use "
+        "propose_rewrite(), which keeps the user's words unless accept() is "
+        "called.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return propose_rewrite(text, redact_profanity=redact_profanity).proposed
+
+
 __all__ = [
-    "ToneCategory", "ToneBreakdown", "analyze_tone_breakdown", "classify_written_tone",
+    "ToneCategory", "ToneBreakdown", "RewriteProposal",
+    "analyze_tone_breakdown", "classify_written_tone", "propose_rewrite",
+    "make_incisive",
 ]

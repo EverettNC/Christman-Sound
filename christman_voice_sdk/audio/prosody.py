@@ -223,63 +223,6 @@ class SpeakerBaseline:
         )
 
 
-def _median_iqr(values: List[float]) -> "tuple[Optional[float], Optional[float]]":
-    if len(values) < SpeakerBaseline.MIN_SAMPLES:
-        return None, None
-    ordered = sorted(values)
-    q = statistics.quantiles(ordered, n=4, method="inclusive")
-    return statistics.median(ordered), q[2] - q[0]
-
-
-def build_speaker_baseline(events: List[VocalEvent], speaker_id: str) -> SpeakerBaseline:
-    """
-    Measure one speaker's baseline from their own closed events.
-
-    The shape existed; nothing filled it, so every utterance arrived cold.
-    This fills it, and only from measurements:
-
-      - `speaker_id` is required. A baseline that belongs to nobody is
-        somebody else's.
-      - At least MIN_SAMPLES (30) events with signal, or ValueError naming
-        the count. It never returns a partial baseline as if it were whole.
-      - Each feature is the median of THAT feature's measured values, and
-        needs 30 of them on its own. An F0 that locked 12 times out of 40
-        leaves f0_median None, and `is_populated` stays False — the analyzer
-        keeps reading against the recent window and says so. A missing lock
-        is never filled in.
-      - `rms_rest` is the median PEAK RMS of the speaker's events. Corti
-        cards carry no rest level; the name is kept so `ProsodyAnalyzer`
-        compares like with like (event peak against typical peak).
-    """
-    if not speaker_id or not str(speaker_id).strip():
-        raise ValueError("speaker_id is required — a baseline must belong to someone")
-    with_signal = [e for e in events if e.has_signal()]
-    if len(with_signal) < SpeakerBaseline.MIN_SAMPLES:
-        raise ValueError(
-            f"{len(with_signal)} event(s) with signal; a baseline needs "
-            f"{SpeakerBaseline.MIN_SAMPLES}. Not built."
-        )
-
-    def vals(name: str) -> List[float]:
-        return [float(getattr(e, name)) for e in with_signal
-                if getattr(e, name) is not None]
-
-    f0_median, f0_iqr = _median_iqr(vals("median_f0"))
-    rms_rest, rms_iqr = _median_iqr(vals("peak_rms"))
-    f1_seat, _ = _median_iqr(vals("f1"))
-    f2_seat, _ = _median_iqr(vals("f2"))
-    zcr_median, _ = _median_iqr(vals("mean_zcr"))
-    attack_median, _ = _median_iqr(vals("attack"))
-    return SpeakerBaseline(
-        speaker_id=str(speaker_id).strip(),
-        f0_median=f0_median, f0_iqr=f0_iqr,
-        rms_rest=rms_rest, rms_iqr=rms_iqr,
-        f1_seat=f1_seat, f2_seat=f2_seat,
-        zcr_median=zcr_median, attack_median=attack_median,
-        sample_count=len(with_signal),
-    )
-
-
 @dataclass(frozen=True)
 class FeatureDeviation:
     """
@@ -749,7 +692,6 @@ __all__ = [
     "VocalEvent",
     "EventKind",
     "SpeakerBaseline",
-    "build_speaker_baseline",
     "ProsodyAnalyzer",
     "ProsodyReading",
     "ProsodyCertainty",

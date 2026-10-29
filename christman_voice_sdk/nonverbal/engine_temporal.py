@@ -57,36 +57,6 @@ WHAT CHANGED AND WHY
    Nothing had confirmed success. That is the same defect as the confidence
    decay in `nonverbal_engine.py`, pointed the other way: it learns that
    everything worked.
-
-7. NO CONFIDENCE FLOOR. 2026-10-29. There was no threshold anywhere in
-   this file: any argmax spoke, whatever its confidence. Over four gesture
-   labels, an argmax can be as low as 0.25 and still said "I need help."
-   for the person. A reading below `confidence_threshold`
-   (0.6, the same bar as nonverbal_engine) is now `below_threshold` and
-   carries no message.
-
-8. IT PUT FEELINGS IN THE PERSON'S MOUTH. 2026-10-29. A face-emotion model
-   reading "Neutral" spoke "I'm fine."; "Fear" spoke "I'm scared."; a head
-   jerk (a tic) spoke "I'm overwhelmed."; rapid blinking spoke "I'm uneasy."
-   A camera's guess about a face, an eye, or a tic is not the person's
-   sentence. Everett: "A word means nothing without what comes before it
-   and what comes after it." Only deliberate signals (Hand Up, Wave Left,
-   Wave Right) speak. Everything else is reported as an observation: the
-   label and intent stay, `message` is None, `reason` says why.
-   A language-map entry speaks only when it says `"speaks": true`.
-
-9. THE SYSTEM'S WORDS WERE GLUED TO THE PERSON'S. 2026-10-29.
-   `enhanced_response` was "I see your gesture. I need help." — one string,
-   so a voice reading it aloud spoke the system's sentence as the person's.
-   It also imported a `conversation_engine` module that exists nowhere in
-   this package. Now `message` is the person's mapped words (or None) and
-   `system_note` is the system's own, kept apart. The outside import is gone.
-
-10. RELATIVE PATHS. 2026-10-29. "lstm_models" and "config/language_map.json"
-   were read from whatever directory the caller happened to run in. No
-   default path now: with no model directory every modality is
-   `unavailable` and says so; with no language-map path the built-in map is
-   used and nothing is read from disk.
 """
 
 from __future__ import annotations
@@ -107,31 +77,19 @@ logger.addHandler(logging.NullHandler())
 #: pickle.load executes arbitrary code. A digest must also match.
 ALLOW_PICKLE_ENV = "CORTI_ALLOW_PICKLE_MODELS"
 
-#: `speaks` is True only for a deliberate signal — a gesture made to be read.
-#: A tic, an eye movement and a face are observed, never spoken for.
-#: `pages` is True when the signal goes to the crisis gate and a human.
-#: Everett, 2026-10-29: Hand Up ("Request attention") must page a human.
-DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, Any]] = {
-    "Hand Up": {"intent": "Request attention", "message": "I need help.", "speaks": True,
-                "pages": True},
-    "Wave Left": {"intent": "Previous mode", "message": "Go back.", "speaks": True},
-    "Wave Right": {"intent": "Next mode", "message": "Move forward.", "speaks": True},
-    "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed.", "speaks": False},
-    "Looking Up": {"intent": "Thinking", "message": "I'm thinking.", "speaks": False},
-    "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy.", "speaks": False},
-    "Neutral": {"intent": "Calm", "message": "I'm fine.", "speaks": False},
-    "Happy": {"intent": "Joy", "message": "I'm happy.", "speaks": False},
-    "Sad": {"intent": "Unhappy", "message": "I'm sad.", "speaks": False},
-    "Angry": {"intent": "Upset", "message": "I'm angry.", "speaks": False},
-    "Fear": {"intent": "Worried", "message": "I'm scared.", "speaks": False},
-    "Surprise": {"intent": "Shocked", "message": "I'm surprised.", "speaks": False},
-}
-
-#: The system's own words about what it saw. Never joined to the person's.
-SYSTEM_NOTES: Dict[str, str] = {
-    "gesture": "I see your gesture.",
-    "eye": "I notice your eye movement.",
-    "emotion": "I notice your face.",
+DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, str]] = {
+    "Hand Up": {"intent": "Request attention", "message": "I need help."},
+    "Wave Left": {"intent": "Previous mode", "message": "Go back."},
+    "Wave Right": {"intent": "Next mode", "message": "Move forward."},
+    "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed."},
+    "Looking Up": {"intent": "Thinking", "message": "I'm thinking."},
+    "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy."},
+    "Neutral": {"intent": "Calm", "message": "I'm fine."},
+    "Happy": {"intent": "Joy", "message": "I'm happy."},
+    "Sad": {"intent": "Unhappy", "message": "I'm sad."},
+    "Angry": {"intent": "Upset", "message": "I'm angry."},
+    "Fear": {"intent": "Worried", "message": "I'm scared."},
+    "Surprise": {"intent": "Shocked", "message": "I'm surprised."},
 }
 
 DEFAULT_LABELS: Dict[str, List[str]] = {
@@ -164,14 +122,12 @@ class ClassificationResult:
     """
 
     modality: str
-    status: str                      # ok | below_threshold | unavailable | not_ready
+    status: str                      # ok | unavailable | not_ready
     expression: Optional[str] = None
     intent: Optional[str] = None
     confidence: Optional[float] = None
     message: Optional[str] = None
     reason: Optional[str] = None
-    #: This reading goes to the crisis gate and a human (Hand Up).
-    pages: bool = False
 
     @property
     def usable(self) -> bool:
@@ -184,7 +140,6 @@ class ClassificationResult:
             "confidence": self.confidence,
             "confidence_known": self.confidence is not None,
             "message": self.message, "reason": self.reason,
-            "pages": self.pages,
         }
 
 
@@ -198,34 +153,22 @@ class TemporalNonverbalEngine:
 
     def __init__(
         self,
-        lstm_model_dir: Optional[str] = None,
-        language_map_path: Optional[str] = None,
+        lstm_model_dir: str = "lstm_models",
+        language_map_path: str = "config/language_map.json",
         sequence_length: int = 10,
+        conversation_persona: str = "default",
         model_digests: Optional[Dict[str, str]] = None,
-        # 0.6: a chosen starting value, not a measurement. Held until client
-        # data replaces it. Reason: the same bar as nonverbal_engine, so one
-        # number decides "say it" across both engines; it sits above the 0.5
-        # coin-flip line on a two-way choice.
-        confidence_threshold: float = 0.6,
     ) -> None:
         """
         Args:
-            lstm_model_dir: where the trained models live. No default — with
-                none, every modality reports `unavailable` and says why.
-            language_map_path: a JSON language map. None uses the built-in
-                map and reads nothing.
             model_digests: modality -> expected SHA-256 of its model file.
                 Required alongside the env opt-in before any pickle is loaded.
-            confidence_threshold: a reading below this is `below_threshold`
-                and speaks nothing.
         """
-        if not 0.0 <= confidence_threshold <= 1.0:
-            raise ValueError(f"confidence_threshold {confidence_threshold} outside [0,1]")
         self.lstm_model_dir = lstm_model_dir
         self.language_map_path = language_map_path
         self.sequence_length = int(sequence_length)
+        self.conversation_persona = conversation_persona
         self.model_digests = dict(model_digests or {})
-        self.confidence_threshold = float(confidence_threshold)
 
         self.gesture_buffer: List[Any] = []
         self.eye_buffer: List[Any] = []
@@ -241,10 +184,7 @@ class TemporalNonverbalEngine:
         self._load_models()
 
         available = [k for k, v in self.models.items() if v is not None]
-        if not available and self.lstm_model_dir is None:
-            logger.info("TemporalNonverbalEngine: no model directory given; "
-                        "every sequence reports unavailable.")
-        elif not available:
+        if not available:
             logger.error(
                 "TemporalNonverbalEngine has NO models. Every classification "
                 "will report unavailable. It will not guess a gesture."
@@ -258,15 +198,13 @@ class TemporalNonverbalEngine:
 
     # -- Language map ---------------------------------------------------------
 
-    def _load_language_map(self) -> Dict[str, Dict[str, Any]]:
+    def _load_language_map(self) -> Dict[str, Dict[str, str]]:
         """
         Load the language map. NEVER writes.
 
         The predecessor wrote a default map to disk from inside the
         constructor, at a relative path — importing the engine created files.
         """
-        if self.language_map_path is None:
-            return {k: dict(v) for k, v in DEFAULT_LANGUAGE_MAP.items()}
         try:
             with open(self.language_map_path, "r", encoding="utf-8") as fh:
                 loaded = json.load(fh)
@@ -284,13 +222,11 @@ class TemporalNonverbalEngine:
                 "Language map at %s is unusable (%s); using the built-in default.",
                 self.language_map_path, exc,
             )
-        return {k: dict(v) for k, v in DEFAULT_LANGUAGE_MAP.items()}
+        return dict(DEFAULT_LANGUAGE_MAP)
 
     def save_language_map(self, path: Optional[str] = None) -> str:
         """Write the language map. Explicit — never called from __init__."""
         target = path or self.language_map_path
-        if not target:
-            raise ValueError("no path: pass one, or construct with language_map_path")
         directory = os.path.dirname(os.path.abspath(target))
         if directory:
             os.makedirs(directory, exist_ok=True)
@@ -317,12 +253,6 @@ class TemporalNonverbalEngine:
 
     def _load_models(self) -> None:
         """Load each modality's model, or record why it could not be loaded."""
-        if self.lstm_model_dir is None:
-            msg = ("no model directory given — trained gesture, eye and "
-                   "emotion models are required")
-            for modality in self.models:
-                self.load_errors[modality] = msg
-            return
         if not os.path.isdir(self.lstm_model_dir):
             msg = f"model directory not found: {self.lstm_model_dir}"
             logger.warning(msg)
@@ -512,32 +442,13 @@ class TemporalNonverbalEngine:
                 reason=f"no language-map entry for {expression!r}",
             )
 
-        if confidence < self.confidence_threshold:
-            return ClassificationResult(
-                modality=modality, status="below_threshold",
-                expression=expression, intent=entry.get("intent"),
-                confidence=confidence, message=None,
-                reason=(f"confidence {confidence:.3f} is below the "
-                        f"{self.confidence_threshold} threshold — please confirm"),
-                # Below the speaking bar is not below the paging bar.
-                pages=entry.get("pages") is True,
-            )
-
         # .get, not [] — a hand-edited map missing a key took the engine down.
-        # An entry speaks only when it says so. A face, an eye and a tic are
-        # observed; they are not the person's words.
-        speaks = entry.get("speaks") is True
         return ClassificationResult(
             modality=modality, status="ok",
             expression=expression,
             intent=entry.get("intent"),
-            message=entry.get("message") if speaks else None,
+            message=entry.get("message"),
             confidence=confidence,
-            reason=None if speaks else (
-                f"{expression!r} is observed, not said — the system does not "
-                "speak a feeling for the person"
-            ),
-            pages=entry.get("pages") is True,
         )
 
     def classify_gesture_sequence(self) -> Dict[str, Any]:
@@ -573,8 +484,7 @@ class TemporalNonverbalEngine:
                 "primary_type": None,
                 "primary_result": dict(UNAVAILABLE_RESULT),
                 "all_results": {name: r.to_dict() for name, r in ready},
-                "message": None,
-                "system_note": None,
+                "enhanced_response": None,
                 "status": "no_usable_reading",
                 "note": (
                     "No modality produced a reading. This is NOT a neutral or "
@@ -582,11 +492,7 @@ class TemporalNonverbalEngine:
                 ),
             }
 
-        # A speaking reading outranks an observed one: the person's chosen
-        # signal is what is said, if there is one.
-        speaking = [(n, r) for n, r in usable if r.message]
-        primary_type, primary = max(speaking or usable,
-                                    key=lambda kv: kv[1].confidence or 0.0)
+        primary_type, primary = max(usable, key=lambda kv: kv[1].confidence or 0.0)
 
         # The predecessor logged successful=True for every interaction, with
         # nothing having confirmed success. Outcome is unknown here.
@@ -609,12 +515,48 @@ class TemporalNonverbalEngine:
             "primary_type": primary_type,
             "primary_result": primary.to_dict(),
             "all_results": {name: r.to_dict() for name, r in ready},
-            # The person's words, from the map — or None. Never prefixed.
-            "message": primary.message,
-            # The system's own words about what it saw. Separate on purpose.
-            "system_note": SYSTEM_NOTES.get(primary_type),
+            "enhanced_response": self._enhance_response(primary, primary_type),
             "status": "ok",
         }
+
+    def _enhance_response(
+        self, result: ClassificationResult, type_name: str
+    ) -> Optional[str]:
+        """Phrase the reading. Returns None when there is nothing to phrase."""
+        if not result.usable or not result.message:
+            return None
+        try:
+            from conversation_engine import get_conversation_engine
+
+            enhanced = get_conversation_engine().generate_response(
+                context={
+                    "modality": type_name,
+                    "expression": result.expression,
+                    "intent": result.intent,
+                    "confidence": result.confidence,
+                    "base_message": result.message,
+                },
+                persona=self.conversation_persona,
+            )
+            if enhanced:
+                return enhanced
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.error("Conversation engine failed: %s", exc)
+
+        prefix = {"gesture": "I see your gesture. ",
+                  "eye": "I notice your eye movement. ",
+                  "emotion": "I sense your emotion. "}.get(type_name, "")
+        return f"{prefix}{result.message}"
+
+    def set_conversation_persona(self, persona: str) -> bool:
+        valid = {"default", "academic", "clinical", "supportive", "child-friendly"}
+        if persona not in valid:
+            logger.warning("Invalid persona %r; valid: %s", persona, sorted(valid))
+            return False
+        self.conversation_persona = persona
+        return True
 
     def get_status(self) -> Dict[str, Any]:
         return {
@@ -644,7 +586,7 @@ def get_temporal_engine(**kwargs: Any) -> TemporalNonverbalEngine:
 __all__ = [
     "TemporalNonverbalEngine", "ClassificationResult", "ModelLoadError",
     "get_temporal_engine", "DEFAULT_LANGUAGE_MAP", "DEFAULT_LABELS",
-    "ALLOW_PICKLE_ENV", "SYSTEM_NOTES",
+    "ALLOW_PICKLE_ENV",
 ]
 
 # ==============================================================================

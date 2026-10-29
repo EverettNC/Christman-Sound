@@ -158,48 +158,15 @@ SECTION: Dict[Modality, str] = {
 VALID_TIERS = ("mild", "moderate", "strong", "urgent")
 
 #: Interactions with a CONFIRMED outcome required before confidence moves.
-#: 10: a chosen starting value, held until client data replaces it. Reason:
-#: one bad day of 3 or 4 misreads must not retrain a signal.
 MIN_CONFIRMED_SAMPLES = 10
 
 #: How far confidence may move in one update. Stated, not emergent.
-#: 0.05: a chosen starting value, held until client data replaces it. Reason:
-#: a 0.9 symbol needs 6 confirmed-wrong updates to fall below the 0.6 floor,
-#: so one update can never silence a signal.
 CONFIDENCE_STEP = 0.05
 
 #: Floor and ceiling on a learned confidence. A prior may not learn its way to
 #: certainty, and it may not decay to unusable either.
-#: 0.20 and 0.95: chosen starting values, held until client data replaces
-#: them. Reason: 0.20 keeps a decayed signal on record to relearn instead of
-#: deleting it; 0.95 leaves room for "maybe I misread" on every signal.
 CONFIDENCE_FLOOR = 0.20
 CONFIDENCE_CEILING = 0.95
-
-#: Intents that mean a person needs a human. Everett, 2026-10-29: "A
-#: nonverbal client's distress (the grunt; the help, pain and medicine
-#: symbols) must reach the crisis gate and a human." The grunt key, the
-#: "distress" sound and the point_up gesture map to "help"; the symbols map
-#: to need_help, pain and need_medicine. Data, not a heuristic — add an
-#: intent here and it pages.
-DISTRESS_INTENTS = frozenset({"help", "need_help", "pain", "need_medicine"})
-
-
-def distress_readings(readings: "List[Interpretation]") -> "List[Interpretation]":
-    """
-    The readings that must reach a human.
-
-    A recognized distress key counts even BELOW the speaking threshold. The
-    threshold decides whether the engine may put words in someone's mouth;
-    it does not decide whether a pressed "help" symbol is shown to a person.
-    A missed page costs far more than a check-in. Unrecognized input never
-    counts — nothing is invented.
-    """
-    return [
-        r for r in readings
-        if r.status in (Status.OK, Status.BELOW_THRESHOLD)
-        and r.intent in DISTRESS_INTENTS
-    ]
 
 
 class Status(str, Enum):
@@ -267,23 +234,6 @@ class MapValidationError(ValueError):
 # -----------------------------------------------------------------------------
 # Default maps. Confidence values are PRIORS — how much this system trusts the
 # mapping itself, not a measurement of any particular input.
-#
-# EVERY NUMBER BELOW IS A CHOSEN STARTING VALUE, NOT A MEASUREMENT. Each is
-# held until client data replaces it. They were in these tables before
-# 2026-10-29 with no reason written; the reasons are written now (Everett,
-# 2026-10-29: "every fixed number gets its reason beside it"):
-#
-#   0.9  a deliberate signal with one meaning: a pressed symbol ("pain",
-#        "help"), a nod, a shake, a thumbs up/down, the distress sound keys.
-#        Highest, so a call for help clears the 0.6 floor with room to spare.
-#   0.8  a deliberate signal with more than one everyday meaning: a wave
-#        (hello or goodbye), pointing up, an open palm, a held centre gaze,
-#        a loud sound (excited or upset).
-#   0.7  a signal that is often made without meaning to: stimming, rapid
-#        blinking, corner glances, a click, a short vowel.
-#   0.6  a sound that often carries no message at all: a hum, a soft sound.
-#        Set AT the floor: it still speaks (the test is "below 0.6"), and it
-#        loses any vote against a stronger reading.
 # -----------------------------------------------------------------------------
 
 DEFAULT_GESTURES: Dict[str, Dict[str, Any]] = {
@@ -343,9 +293,6 @@ DEFAULT_SOUNDS: Dict[str, Dict[str, Any]] = {
 
 #: Emotional indicators per gesture. KEPT AS WRITTEN — see the header note.
 #: `stimming` reads as self-regulation above anxiety and overwhelm on purpose.
-#: The values are a rank order, not measurements: 0.9 is the first reading of
-#: that signal, 0.8 the second, 0.7/0.6/0.5 the less likely ones. Chosen
-#: starting values, held until client data replaces them.
 EMOTIONAL_INDICATORS: Dict[str, Dict[str, float]] = {
     "nod":         {"agreement": 0.9, "acceptance": 0.8, "interest": 0.6},
     "shake":       {"disagreement": 0.9, "rejection": 0.8, "frustration": 0.5},
@@ -441,11 +388,7 @@ class NonverbalEngine:
 
     def __init__(
         self,
-        data_dir: Optional[str] = "data/learning",
-        # 0.6: a chosen starting value, not a measurement. Held until client
-        # data replaces it. Reason: above the 0.5 coin-flip line, and below
-        # every deliberate signal in the maps (0.7-0.9), so the floor stops
-        # guesses without silencing a pressed symbol.
+        data_dir: str = "data/learning",
         confidence_threshold: float = 0.6,
         strict_maps: bool = False,
     ) -> None:
@@ -453,8 +396,7 @@ class NonverbalEngine:
         Args:
             data_dir: where learned maps and stats live. NOT created here —
                 only inside an explicit save. Importing this module and
-                constructing the engine touch no disk. None means no disk at
-                all: built-in maps, nothing read, `save` refuses.
+                constructing the engine touch no disk.
             confidence_threshold: readings below this are returned as
                 BELOW_THRESHOLD and are not speakable.
             strict_maps: raise on a malformed map entry instead of dropping it.
@@ -500,8 +442,6 @@ class NonverbalEngine:
 
     def _load(self, name: str) -> Optional[Dict[str, Any]]:
         """Load a map. Never writes. Returns None when there is nothing usable."""
-        if self.data_dir is None:
-            return None
         path = self._path(f"{name}_model")
         if not os.path.exists(path):
             return None
@@ -522,11 +462,9 @@ class NonverbalEngine:
             return None
 
     def _load_stats(self) -> Dict[str, Any]:
+        path = self._path("usage_stats")
         blank = {s: {} for s in SECTION.values()}
         blank["last_updated"] = None
-        if self.data_dir is None:
-            return blank
-        path = self._path("usage_stats")
         if not os.path.exists(path):
             return blank
         try:
@@ -547,8 +485,6 @@ class NonverbalEngine:
 
         Returns the paths written.
         """
-        if self.data_dir is None:
-            raise ValueError("this engine was built with data_dir=None; it has no disk")
         written: List[str] = []
         with self._lock:
             for modality, table in self.maps.items():
@@ -684,8 +620,6 @@ class NonverbalEngine:
                 "status": "no_usable_reading",
                 "primary": None,
                 "all_results": [p.to_dict() for p in parts],
-                # Below the speaking bar is not below the paging bar.
-                "distress": [p.to_dict() for p in distress_readings(parts)],
                 "speakable": False,
                 "note": (
                     "No modality produced a reading at or above the confidence "
@@ -697,12 +631,6 @@ class NonverbalEngine:
 
         # Eye input is weighted below the others; that weighting is a stated
         # choice, not a measurement.
-        # 0.8 for eye: a chosen starting value, held until client data
-        # replaces it. Reason: a glance is more often unintended than a
-        # pressed symbol, a gesture or a sound, so an eye reading must not tie
-        # one of those at equal confidence. 0.8 x 0.9 = 0.72 still clears the
-        # 0.6 floor, so a deliberate eye choice on its own is never silenced.
-        # 1.0 for the others: no reason yet to rank them against each other.
         WEIGHT = {Modality.GESTURE: 1.0, Modality.SYMBOL: 1.0,
                   Modality.SOUND: 1.0, Modality.EYE: 0.8}
 
@@ -714,23 +642,11 @@ class NonverbalEngine:
             # Tier is guaranteed valid by validate_map — no KeyError path.
             tier_votes[p.emotion_tier or "mild"] += w
 
-        # Distress is not outvoted. 2026-10-29, measured before: gesture
-        # "nod" + sound "grunt_distress" spoke "Yes, I agree." and nothing
-        # else. A person who needs help and also nodded needs help.
-        distress_votes = {k: v for k, v in intent_votes.items() if k in DISTRESS_INTENTS}
-        votes = distress_votes or intent_votes
-        best_intent = max(votes, key=lambda k: votes[k])
+        best_intent = max(intent_votes, key=lambda k: intent_votes[k])
         best_tier = max(tier_votes, key=lambda k: tier_votes[k])
+        primary = max(usable, key=lambda p: p.confidence or 0.0)
 
-        # 2026-10-29: the message came from the single strongest reading
-        # overall, and was dropped whenever that reading had lost the vote.
-        # Measured before: gesture "wave" + eye "center" + sound "click" —
-        # "select" won the vote, "wave" was strongest, message None,
-        # speakable False. The person was understood and silenced. The
-        # message now comes from the strongest reading OF the winning intent.
         agreeing = [p for p in usable if p.intent == best_intent]
-        winner = max(agreeing, key=lambda p: p.confidence or 0.0)
-        strongest = max(usable, key=lambda p: p.confidence or 0.0)
         combined_confidence = sum(p.confidence or 0.0 for p in agreeing) / len(agreeing)
 
         key = "+".join(sorted(p.input_data or "" for p in usable))
@@ -738,17 +654,15 @@ class NonverbalEngine:
 
         return {
             "status": "ok",
-            "primary": winner.to_dict(),
-            "strongest_overall": strongest.to_dict(),
+            "primary": primary.to_dict(),
             "intent": best_intent,
             "emotion_tier": best_tier,
             "confidence": combined_confidence,
             "confidence_is_prior": True,
-            "message": winner.message,
+            "message": primary.message if primary.intent == best_intent else None,
             "modalities": [p.modality.value for p in usable],
             "all_results": [p.to_dict() for p in parts],
-            "distress": [p.to_dict() for p in distress_readings(parts)],
-            "speakable": bool(winner.message),
+            "speakable": bool(primary.message and primary.intent == best_intent),
             "threshold": self.confidence_threshold,
         }
 
@@ -862,9 +776,6 @@ class NonverbalEngine:
 
     def start_learning(self, interval_seconds: float = 300.0) -> bool:
         """Persist learned priors periodically. Off by default."""
-        if self.data_dir is None:
-            logger.error("start_learning refused: data_dir=None, nothing to persist to")
-            return False
         if self._learning.is_set():
             return False
         self._learning.set()
@@ -958,7 +869,6 @@ __all__ = [
     "DEFAULT_GESTURES", "DEFAULT_SYMBOLS", "DEFAULT_EYE_REGIONS",
     "DEFAULT_SOUNDS", "EMOTIONAL_INDICATORS", "VALID_TIERS",
     "MIN_CONFIRMED_SAMPLES", "CONFIDENCE_STEP",
-    "DISTRESS_INTENTS", "distress_readings",
 ]
 
 # ==============================================================================

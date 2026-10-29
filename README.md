@@ -63,7 +63,7 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `harm_frame.py` — Who did what to whom. Grief is not crisis
 - `fusion_engine.py` — Carbon and silicon signals fused: decide, or unknown
 - `face_reading.py` — What Sound hands the face: structure and arousal, no emotion names
-- `face_vector.py` — The 8-dim face vector Sound hands the Soul Mirror, with its measured mask and the clauses it came from
+- `face_vector.py` — The 8-dim face vector Sound hands the face
 - `body_signals.py` — The body-signal input contract
 - `speech_recognition_engine.py` — Local speech recognition (Vosk). Audio never leaves the machine
 - `enhanced_speech_recognition.py` — Coordinates speech and nonverbal sound recognition; recognizes nothing itself
@@ -72,7 +72,6 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `recognition_result.py` — The recognition result contract every recognizer returns
 - `audio_processor.py` — Raw audio intake: noise reduction, segmentation, quality analysis
 - `audio_encoder.py` — Audio encoder: mel spectrogram to audio embedding
-- `mouth.py` — The being's own mouth: its voice in, one mouth embedding per video frame out. Local checkpoint only
 - `config.py` — SDK configuration. Its folders live under `$CHRISTMAN_AI_HOME/voice_sdk` (default `~/.christman_ai/voice_sdk`) and are made only when needed
 
 #### Engines (`engines/`)
