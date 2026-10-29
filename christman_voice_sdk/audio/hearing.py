@@ -571,6 +571,25 @@ def asked_aloud(text: str) -> Optional[str]:
     return None
 
 
+#: An ask to say the words aloud, with a "please" before or after it.
+_ALOUD_REQUEST = re.compile(
+    r"(?:\bplease\s+)?(?:" + "|".join(ALOUD_PATTERNS) + r")(?:\s+please\b)?",
+    re.IGNORECASE)
+
+
+def without_aloud(text: str) -> str:
+    """
+    The words to READ, with the client's ask to say them aloud taken out and
+    a clause break in its place. Everett, 2026-10-29: an ask to say something
+    aloud never weakens the reading; it only sets voice_aloud. Found on main
+    at 1c819e4: "he is going to kill mom, say it out loud" read "it" as the
+    target and came back clear, and "help me say it out loud" read as "help
+    me do something". The client's own words are never changed: this copy is
+    only read, and every result keeps `said` as the client said it.
+    """
+    return _ALOUD_REQUEST.sub(" . ", normalize_apostrophes(text or ""))
+
+
 def _silent_alarm(words: SafetyResult, original: str, context: Dict[str, Any]) -> SafetyResult:
     """
     Mark a danger page as the silent alarm (rulings I and K, 2026-10-29).
@@ -606,7 +625,7 @@ def _silent_alarm(words: SafetyResult, original: str, context: Dict[str, Any]) -
         # A danger sentence anywhere in the turn makes the whole page silent,
         # whichever reading paged first (ruling O: the clause is read with
         # all that comes before and after it).
-        or bool(danger_sentences(original))
+        or bool(danger_sentences(without_aloud(original)))
     )
     if not danger:
         return words
@@ -706,9 +725,12 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
 
 def _harm_frame_safety(text: str, context: Dict[str, Any]) -> SafetyResult:
     original = text or ""
-    words = _words_gate(original, context.get("between_beings") is True,
+    # The reading is made without the ask to say it aloud; the ask only sets
+    # voice_aloud (in _silent_alarm and _with_nonverbal, from `original`).
+    words = _words_gate(without_aloud(original), context.get("between_beings") is True,
                         str(context.get("answering_follow_up") or ""),
                         str(context.get("previous_turn") or ""))
+    words = replace(words, said=original)
     words = _silent_alarm(words, original, context)
     result = _with_nonverbal(words, original, context)
     if (context.get("between_beings") is True and result.status == "hard_block"
