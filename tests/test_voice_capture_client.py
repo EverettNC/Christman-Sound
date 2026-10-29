@@ -165,6 +165,7 @@ def test_speak_needs_the_callers_voice(dsp):
         vc.speak("hello")  # type: ignore[call-arg]
 
 
+@pytest.mark.plays_aloud
 def test_speak_goes_through_the_package_mouth_in_the_callers_voice(dsp, tmp_path, monkeypatch):
     """It plays, or raises PlaybackFailed with the written path: never another voice, never a quiet return."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))

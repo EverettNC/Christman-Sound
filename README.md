@@ -386,6 +386,18 @@ This system never fakes capabilities. When no voice can be made, every speaking 
 
 Proprietary — Christman Family of Autonomous Beings
 
+## Tests
+
+```bash
+python3 -m pytest tests -q
+```
+
+A test that cannot run here reports **NOT RUN** with the reason; it never passes silently. Nothing in the suite plays out loud unless asked: a test that plays through the speakers carries `@pytest.mark.plays_aloud` and runs only with `CHRISTMAN_SOUND_PLAY_ALOUD=1` set. Any other test that reaches the speakers fails before a sample is played (`tests/conftest.py`). Render to a file (`play_audio=False`) instead.
+
+```bash
+CHRISTMAN_SOUND_PLAY_ALOUD=1 python3 -m pytest tests -q -m plays_aloud   # only when you mean to hear it
+```
+
 ## Support
 
 For integration issues or audio problems, run the tests (`python3 -m pytest tests -q`) and `python3 scripts/build_dsp.py --check`. `synthesis_readiness()` in `voice_synthesis` says whether the voice is ready and why not.
