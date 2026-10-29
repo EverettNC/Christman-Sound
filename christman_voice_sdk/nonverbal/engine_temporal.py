@@ -69,11 +69,17 @@ WHAT CHANGED AND WHY
    reading "Neutral" spoke "I'm fine."; "Fear" spoke "I'm scared."; a head
    jerk (a tic) spoke "I'm overwhelmed."; rapid blinking spoke "I'm uneasy."
    A camera's guess about a face, an eye, or a tic is not the person's
-   sentence. Everett: "A word means nothing without what comes before it
-   and what comes after it." Only deliberate signals (Hand Up, Wave Left,
-   Wave Right) speak. Everything else is reported as an observation: the
-   label and intent stay, `message` is None, `reason` says why.
-   A language-map entry speaks only when it says `"speaks": true`.
+   sentence. In the built-in map, the generic feelings (face, eye, tic) are
+   reported as observations: the label and intent stay, `message` is None,
+   `reason` says why. Hand Up and the waves speak.
+   The handoff then made every map entry speak only when it said
+   `"speaks": true`. Everett, 2026-10-29 (ruling L), took that out: "Every
+   situation is conditional, to be either kept silent or vocal." Silent or
+   vocal is decided by the conditions (`_speaks`): danger is silent; a
+   meaning in the client's own map is learned for that client and spoken;
+   a built-in generic feeling is silent; every other meaning is spoken. An
+   older map with no such field works exactly as before for every meaning
+   that is not danger.
 
 9. THE SYSTEM'S WORDS WERE GLUED TO THE PERSON'S. 2026-10-29.
    `enhanced_response` was "I see your gesture. I need help." — one string,
@@ -107,25 +113,32 @@ logger.addHandler(logging.NullHandler())
 #: pickle.load executes arbitrary code. A digest must also match.
 ALLOW_PICKLE_ENV = "CORTI_ALLOW_PICKLE_MODELS"
 
-#: `speaks` is True only for a deliberate signal — a gesture made to be read.
-#: A tic, an eye movement and a face are observed, never spoken for.
-#: `pages` is True when the signal goes to the crisis gate and a human.
-#: Everett, 2026-10-29: Hand Up ("Request attention") must page a human.
+#: The built-in map. An entry carries its meaning, not a fixed speak/silent
+#: flag (Everett, 2026-10-29, ruling L). Whether it is spoken is decided by
+#: the conditions in `_speaks`. `pages` marks a signal that goes to a human
+#: (Hand Up, ruling 5).
 DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, Any]] = {
-    "Hand Up": {"intent": "Request attention", "message": "I need help.", "speaks": True,
-                "pages": True},
-    "Wave Left": {"intent": "Previous mode", "message": "Go back.", "speaks": True},
-    "Wave Right": {"intent": "Next mode", "message": "Move forward.", "speaks": True},
-    "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed.", "speaks": False},
-    "Looking Up": {"intent": "Thinking", "message": "I'm thinking.", "speaks": False},
-    "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy.", "speaks": False},
-    "Neutral": {"intent": "Calm", "message": "I'm fine.", "speaks": False},
-    "Happy": {"intent": "Joy", "message": "I'm happy.", "speaks": False},
-    "Sad": {"intent": "Unhappy", "message": "I'm sad.", "speaks": False},
-    "Angry": {"intent": "Upset", "message": "I'm angry.", "speaks": False},
-    "Fear": {"intent": "Worried", "message": "I'm scared.", "speaks": False},
-    "Surprise": {"intent": "Shocked", "message": "I'm surprised.", "speaks": False},
+    "Hand Up": {"intent": "Request attention", "message": "I need help.", "pages": True},
+    "Wave Left": {"intent": "Previous mode", "message": "Go back."},
+    "Wave Right": {"intent": "Next mode", "message": "Move forward."},
+    "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed."},
+    "Looking Up": {"intent": "Thinking", "message": "I'm thinking."},
+    "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy."},
+    "Neutral": {"intent": "Calm", "message": "I'm fine."},
+    "Happy": {"intent": "Joy", "message": "I'm happy."},
+    "Sad": {"intent": "Unhappy", "message": "I'm sad."},
+    "Angry": {"intent": "Upset", "message": "I'm angry."},
+    "Fear": {"intent": "Worried", "message": "I'm scared."},
+    "Surprise": {"intent": "Shocked", "message": "I'm surprised."},
 }
+
+#: Built-in readings of a generic feeling: a face, an eye movement, a tic.
+#: Not spoken (ruling J). A meaning in the client's own language map is a
+#: meaning learned for that client, and is spoken unless it is danger.
+GENERIC_FEELING_INTENTS = frozenset({
+    "Stress (tick)", "Thinking", "Discomfort", "Calm", "Joy", "Unhappy",
+    "Upset", "Worried", "Shocked",
+})
 
 #: Intents that page a human whatever the language map says. Everett,
 #: 2026-10-29: Hand Up ("Request attention") pages a human. Before this, the
@@ -136,9 +149,16 @@ DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, Any]] = {
 PAGING_INTENTS = frozenset({"Request attention"})
 
 
+def _danger(entry: Dict[str, Any]) -> bool:
+    """A danger meaning: never spoken, always paged (ruling I, the silent alarm)."""
+    from .nonverbal_engine import is_danger
+    return is_danger(entry.get("intent"), entry.get("message"))
+
+
 def _pages(entry: Dict[str, Any]) -> bool:
     """This map entry goes to the crisis gate and a human."""
-    return entry.get("pages") is True or entry.get("intent") in PAGING_INTENTS
+    return (entry.get("pages") is True or entry.get("intent") in PAGING_INTENTS
+            or _danger(entry))
 
 
 #: The system's own words about what it saw. Never joined to the person's.
@@ -186,6 +206,8 @@ class ClassificationResult:
     reason: Optional[str] = None
     #: This reading goes to the crisis gate and a human (Hand Up).
     pages: bool = False
+    #: A danger meaning: paged, never spoken, never announced (ruling I).
+    silent_alarm: bool = False
 
     @property
     def usable(self) -> bool:
@@ -199,6 +221,7 @@ class ClassificationResult:
             "confidence_known": self.confidence is not None,
             "message": self.message, "reason": self.reason,
             "pages": self.pages,
+            "silent_alarm": self.silent_alarm,
         }
 
 
@@ -282,6 +305,7 @@ class TemporalNonverbalEngine:
         The predecessor wrote a default map to disk from inside the
         constructor, at a relative path — importing the engine created files.
         """
+        self.language_map_source = "built_in"
         if self.language_map_path is None:
             return {k: dict(v) for k, v in DEFAULT_LANGUAGE_MAP.items()}
         try:
@@ -290,6 +314,8 @@ class TemporalNonverbalEngine:
             if not isinstance(loaded, dict):
                 raise ValueError(f"expected an object, got {type(loaded).__name__}")
             logger.info("Language map loaded from %s", self.language_map_path)
+            # The client's own map: its meanings are learned for that client.
+            self.language_map_source = "client"
             return loaded
         except FileNotFoundError:
             logger.warning(
@@ -538,12 +564,14 @@ class TemporalNonverbalEngine:
                         f"{self.confidence_threshold} threshold — please confirm"),
                 # Below the speaking bar is not below the paging bar.
                 pages=_pages(entry),
+                silent_alarm=_danger(entry),
             )
 
         # .get, not [] — a hand-edited map missing a key took the engine down.
-        # An entry speaks only when it says so. A face, an eye and a tic are
-        # observed; they are not the person's words.
-        speaks = entry.get("speaks") is True
+        # Silent or vocal by the conditions, not by a flag (rulings I, J, L):
+        # see _speaks. A danger meaning never speaks, learned or not.
+        danger = _danger(entry)
+        speaks = self._speaks(entry, danger)
         return ClassificationResult(
             modality=modality, status="ok",
             expression=expression,
@@ -551,11 +579,27 @@ class TemporalNonverbalEngine:
             message=entry.get("message") if speaks else None,
             confidence=confidence,
             reason=None if speaks else (
+                f"{expression!r} is danger: it goes to a human silently and is "
+                "never spoken (silent alarm)" if danger else
                 f"{expression!r} is observed, not said — the system does not "
                 "speak a feeling for the person"
             ),
             pages=_pages(entry),
+            silent_alarm=danger,
         )
+
+    def _speaks(self, entry: Dict[str, Any], danger: bool) -> bool:
+        """
+        Silent or vocal, by the conditions (Everett, 2026-10-29, rulings I, J,
+        L). Danger: silent. A meaning from the client's own map: spoken. A
+        built-in generic feeling (face, eye, tic): silent. Any other built-in
+        meaning (Hand Up's request, the waves): spoken.
+        """
+        if danger:
+            return False
+        if getattr(self, "language_map_source", "built_in") == "client":
+            return True
+        return entry.get("intent") not in GENERIC_FEELING_INTENTS
 
     def classify_gesture_sequence(self) -> Dict[str, Any]:
         return self._classify("gesture", self.gesture_buffer).to_dict()
@@ -592,6 +636,7 @@ class TemporalNonverbalEngine:
                 "all_results": {name: r.to_dict() for name, r in ready},
                 "message": None,
                 "system_note": None,
+                "silent_alarm": any(r.silent_alarm for _, r in ready),
                 "status": "no_usable_reading",
                 "note": (
                     "No modality produced a reading. This is NOT a neutral or "
@@ -627,9 +672,13 @@ class TemporalNonverbalEngine:
             "primary_result": primary.to_dict(),
             "all_results": {name: r.to_dict() for name, r in ready},
             # The person's words, from the map — or None. Never prefixed.
-            "message": primary.message,
+            # Nothing at all is said when any reading is danger (ruling I).
+            "message": None if any(r.silent_alarm for _, r in ready) else primary.message,
+            "silent_alarm": any(r.silent_alarm for _, r in ready),
             # The system's own words about what it saw. Separate on purpose.
-            "system_note": SYSTEM_NOTES.get(primary_type),
+            # Not even "I see your gesture." when it is danger: nothing announced.
+            "system_note": (None if any(r.silent_alarm for _, r in ready)
+                            else SYSTEM_NOTES.get(primary_type)),
             "status": "ok",
         }
 
@@ -661,7 +710,7 @@ def get_temporal_engine(**kwargs: Any) -> TemporalNonverbalEngine:
 __all__ = [
     "TemporalNonverbalEngine", "ClassificationResult", "ModelLoadError",
     "get_temporal_engine", "DEFAULT_LANGUAGE_MAP", "DEFAULT_LABELS",
-    "ALLOW_PICKLE_ENV", "SYSTEM_NOTES", "PAGING_INTENTS",
+    "ALLOW_PICKLE_ENV", "SYSTEM_NOTES", "PAGING_INTENTS", "GENERIC_FEELING_INTENTS",
 ]
 
 # ==============================================================================

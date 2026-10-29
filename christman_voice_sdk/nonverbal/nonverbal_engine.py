@@ -121,6 +121,7 @@ compute them. Family Sound does not carry `kind`.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import tempfile
@@ -184,7 +185,59 @@ CONFIDENCE_CEILING = 0.95
 #: intent here and it pages. (The quotation above is as the handoff wrote it;
 #: it was not in the rulings relayed to this session, so it is listed for
 #: Everett to confirm.)
-DISTRESS_INTENTS = frozenset({"help", "need_help", "pain", "need_medicine"})
+#: DANGER. Everett, 2026-10-29 (ruling I, the silent alarm): a danger
+#: signal (help, scared, being attacked, "I'm scared for my safety"), from any
+#: channel, is NEVER spoken aloud and NEVER announced. It goes straight to a
+#: human, silently. His reason: saying it out loud can get the client hurt
+#: worse and the device taken. These intents are danger; so is any learned
+#: entry whose words speak of fear, danger or attack (DANGER_WORDS).
+DANGER_INTENTS = frozenset({
+    "help", "need_help", "danger", "scared", "afraid", "fear", "unsafe",
+    "attacked", "attack", "threat", "emergency",
+})
+
+#: NEEDS that also reach a human, and ARE spoken as normal (ruling I): pain,
+#: medicine. (Thirst, hunger, the bathroom and request attention are spoken
+#: and do not page here; Hand Up's request attention pages through
+#: engine_temporal's PAGING_INTENTS, ruling 5.)
+NEED_PAGING_INTENTS = frozenset({"pain", "need_medicine"})
+
+DISTRESS_INTENTS = DANGER_INTENTS | NEED_PAGING_INTENTS
+
+#: Words in a map entry's message that make it a danger meaning, whatever its
+#: intent is called. Matched as words.
+DANGER_WORDS = re.compile(
+    r"\b(?:scared|afraid|frightened|terrified|danger|dangerous|unsafe|attack|"
+    r"attacked|attacking|safety)\b", re.I)
+
+
+def is_danger(intent: Optional[str], message: Optional[str] = None) -> bool:
+    """A danger meaning: it pages a human and is never spoken (ruling I)."""
+    return (intent or "") in DANGER_INTENTS or bool(DANGER_WORDS.search(message or ""))
+
+
+#: SILENT OR VOCAL (Everett, 2026-10-29, rulings I, J and L). A map entry
+#: carries its meaning, not a fixed speak/silent flag: "every situation is
+#: conditional, to be either kept silent or vocal." The conditions:
+#:   - danger is silent (ruling I; for a nonverbal channel, always);
+#:   - a pressed symbol is the client's own word and is spoken (ruling C);
+#:   - a meaning in the client's OWN map, read from data_dir, is a meaning
+#:     learned for that client and is spoken (ruling J);
+#:   - a built-in camera, eye, face, tic or sound reading of a generic
+#:     feeling is not spoken (ruling J): the intents below;
+#:   - every other built-in meaning, the needs and the deliberate signals
+#:     (yes, no, hello, stop, choose, confirm, back, next, acknowledge, pay
+#:     attention), is spoken as before.
+#: An older map with no such fields works exactly as before, for every
+#: meaning that is not danger.
+GENERIC_FEELING_INTENTS = frozenset({
+    "self_regulate", "overwhelmed", "thinking", "unsure", "excited",
+    "frustrated", "focus", "searching",
+})
+GENERIC_SILENT_REASON = ("a generic reading, not a meaning learned for this client; "
+                         "observed, not spoken")
+SILENT_ALARM_REASON = ("danger: goes to a human silently; never spoken, never "
+                       "announced (silent alarm)")
 
 
 def distress_readings(readings: "List[Interpretation]") -> "List[Interpretation]":
@@ -201,7 +254,7 @@ def distress_readings(readings: "List[Interpretation]") -> "List[Interpretation]
     return [
         r for r in readings
         if r.status in (Status.OK, Status.BELOW_THRESHOLD)
-        and r.intent in DISTRESS_INTENTS
+        and (r.intent in DISTRESS_INTENTS or r.silent_alarm)
     ]
 
 
@@ -238,6 +291,8 @@ class Interpretation:
     threshold: Optional[float] = None
     confirmed_samples: int = 0
     interaction_id: Optional[str] = None
+    #: A danger meaning: it pages a human and is never spoken (ruling I).
+    silent_alarm: bool = False
 
     @property
     def speakable(self) -> bool:
@@ -260,6 +315,7 @@ class Interpretation:
             "confirmed_samples": self.confirmed_samples,
             "interaction_id": self.interaction_id,
             "speakable": self.speakable,
+            "silent_alarm": self.silent_alarm,
         }
 
 
@@ -492,12 +548,19 @@ class NonverbalEngine:
         # them, with nothing between the two.
         self._lock = threading.RLock()
 
-        self.maps: Dict[Modality, Dict[str, Dict[str, Any]]] = {
-            Modality.GESTURE: validate_map("gestures", self._load("gestures") or DEFAULT_GESTURES, self.strict_maps),
-            Modality.SYMBOL:  validate_map("symbols", self._load("symbols") or DEFAULT_SYMBOLS, self.strict_maps),
-            Modality.EYE:     validate_map("eye_regions", self._load("eye_regions") or DEFAULT_EYE_REGIONS, self.strict_maps),
-            Modality.SOUND:   validate_map("sound_patterns", self._load("sound_patterns") or DEFAULT_SOUNDS, self.strict_maps),
-        }
+        #: Where each map came from: "client" (the client's own map, read
+        #: from data_dir: meanings learned for that client) or "built_in".
+        self.map_source: Dict[Modality, str] = {}
+        self.maps: Dict[Modality, Dict[str, Dict[str, Any]]] = {}
+        for modality, name, default in (
+            (Modality.GESTURE, "gestures", DEFAULT_GESTURES),
+            (Modality.SYMBOL, "symbols", DEFAULT_SYMBOLS),
+            (Modality.EYE, "eye_regions", DEFAULT_EYE_REGIONS),
+            (Modality.SOUND, "sound_patterns", DEFAULT_SOUNDS),
+        ):
+            loaded = self._load(name)
+            self.map_source[modality] = "client" if loaded else "built_in"
+            self.maps[modality] = validate_map(name, loaded or default, self.strict_maps)
 
         self.usage_stats: Dict[str, Any] = self._load_stats()
         self.history: Deque[Interpretation] = deque(maxlen=100)
@@ -623,6 +686,7 @@ class NonverbalEngine:
                 threshold=self.confidence_threshold,
                 confirmed_samples=interp.confirmed_samples,
                 interaction_id=interp.interaction_id,
+                silent_alarm=interp.silent_alarm,
             )
         return interp
 
@@ -648,6 +712,16 @@ class NonverbalEngine:
                 threshold=self.confidence_threshold,
             )
 
+        # What may be said (rulings I and J). The meaning itself is kept on
+        # the reading either way: a silent danger reading still pages.
+        message: Optional[str] = entry["message"]
+        silent_reason: Optional[str] = None
+        if is_danger(entry["intent"], entry["message"]):
+            message, silent_reason = None, SILENT_ALARM_REASON
+        elif (modality is not Modality.SYMBOL
+              and self.map_source.get(modality) == "built_in"
+              and entry["intent"] in GENERIC_FEELING_INTENTS):
+            message, silent_reason = None, GENERIC_SILENT_REASON
         interp = Interpretation(
             modality=modality,
             status=Status.OK,
@@ -656,10 +730,12 @@ class NonverbalEngine:
             expression=entry["expression"],
             emotion_tier=entry["emotion_tier"],
             confidence=entry["confidence"],     # the prior, unjittered
-            message=entry["message"],
+            message=message,
+            reason=silent_reason,
             threshold=self.confidence_threshold,
             confirmed_samples=confirmed,
             interaction_id=self._next_id(),
+            silent_alarm=silent_reason == SILENT_ALARM_REASON,
         )
         interp = self._gate(interp)
         self._record(interp)
@@ -713,6 +789,7 @@ class NonverbalEngine:
             return {
                 "status": "no_usable_reading",
                 "primary": None,
+                "silent_alarm": any(p.silent_alarm for p in parts),
                 "all_results": [p.to_dict() for p in parts],
                 # Below the speaking bar is not below the paging bar.
                 "distress": [p.to_dict() for p in distress_readings(parts)],
@@ -758,6 +835,7 @@ class NonverbalEngine:
         # "select" won the vote, "wave" was strongest, message None,
         # speakable False. The person was understood and silenced. The
         # message now comes from the strongest reading OF the winning intent.
+        silent = any(p.silent_alarm for p in parts)
         agreeing = [p for p in usable if p.intent == best_intent]
         winner = max(agreeing, key=lambda p: p.confidence or 0.0)
         strongest = max(usable, key=lambda p: p.confidence or 0.0)
@@ -774,11 +852,15 @@ class NonverbalEngine:
             "emotion_tier": best_tier,
             "confidence": combined_confidence,
             "confidence_is_prior": True,
-            "message": winner.message,
+            "message": None if silent else winner.message,
             "modalities": [p.modality.value for p in usable],
             "all_results": [p.to_dict() for p in parts],
             "distress": [p.to_dict() for p in distress_readings(parts)],
-            "speakable": bool(winner.message),
+            "speakable": bool(winner.message) and not silent,
+            # A danger reading anywhere in the input: the whole input is
+            # silent (ruling I). The danger still reaches a human through
+            # "distress".
+            "silent_alarm": silent,
             "threshold": self.confidence_threshold,
         }
 
@@ -988,7 +1070,8 @@ __all__ = [
     "DEFAULT_GESTURES", "DEFAULT_SYMBOLS", "DEFAULT_EYE_REGIONS",
     "DEFAULT_SOUNDS", "EMOTIONAL_INDICATORS", "VALID_TIERS",
     "MIN_CONFIRMED_SAMPLES", "CONFIDENCE_STEP",
-    "DISTRESS_INTENTS", "distress_readings",
+    "DISTRESS_INTENTS", "distress_readings", "DANGER_INTENTS", "NEED_PAGING_INTENTS",
+    "is_danger", "DANGER_WORDS", "GENERIC_FEELING_INTENTS",
 ]
 
 # ==============================================================================
