@@ -460,6 +460,7 @@ class SpeechSynthesisEngine:
         output_path: Optional[str] = None,
         voice=None,
         being_reply: bool = False,
+        silent_alarm: bool = False,
         **controls,
     ) -> Optional[str]:
         """
@@ -473,9 +474,13 @@ class SpeechSynthesisEngine:
         raises ForbiddenReply with nothing spoken. False (the default) is
         the client's own words, which are spoken exactly as given and never
         go through the guard.
+
+        silent_alarm: True while a danger signal has gone to a human silently
+        (ruling I). With being_reply, a reply that announces help is then
+        refused too.
         """
         if being_reply:
-            check_being_reply(text)
+            check_being_reply(text, silent_alarm=silent_alarm)
         if not text or not text.strip():
             logger.warning("No text provided for speech generation.")
             return None
