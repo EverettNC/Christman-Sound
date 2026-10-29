@@ -72,11 +72,16 @@ def test_curly_apostrophe_negates_like_straight():
     straight = A.analyze("I don't feel happy")
     curly = A.analyze("I don’t feel happy")
     assert straight.valence == curly.valence == 0.0, (straight.to_dict(), curly.to_dict())
-    # "not safe" is felt danger, not cancelled (Everett, 2026-10-29). It
-    # read 0.0 here before; both apostrophes now read it the same way.
+    # The client's own "I don't feel safe" is HELD for Everett (2026-10-29)
+    # and reads as main read it: cancelled, with either apostrophe.
     straight = A.analyze("I don't feel safe")
     curly = A.analyze("I don’t feel safe")
-    assert straight.valence == curly.valence == -0.7, (straight.to_dict(), curly.to_dict())
+    assert straight.valence == curly.valence == 0.0, (straight.to_dict(), curly.to_dict())
+    # Someone else's, with either apostrophe, is read the same way.
+    straight = A.analyze("she doesn't feel safe")
+    curly = A.analyze("she doesn’t feel safe")
+    assert straight.valence == curly.valence, (straight.to_dict(), curly.to_dict())
+    assert [h.term for h in straight.hits] == [h.term for h in curly.hits] == ["not safe"]
 
 
 def test_empty_and_no_signal():

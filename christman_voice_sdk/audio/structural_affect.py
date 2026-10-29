@@ -130,12 +130,12 @@ REQUEST_WORDS = frozenset({"help", "need", "please", "urgent", "emergency"})
 #: the sum of their parts, so compositional scoring gets them backwards.
 #: Everett's own examples are the first three.
 #: The weights are chosen starting values, not measurements, held until
-#: client data replaces them. Reasons, for the entries added in this review:
+#: client data replaces them. Reasons, for the entries added 2026-10-29:
 #: "not safe" -0.7 and "not okay" -0.6 sit below "scared"/"afraid" (-0.8),
-#: "not okay" near "upset" (-0.65); "no one loves me" -0.85, "no one cares"
-#: -0.8 and "have no one" -0.75 sit with "scared" (-0.8), as isolation is
-#: as heavy as fear; the positive ones sit with "happy" (0.85). The older
-#: entries were here before with no reason written.
+#: "not okay" near "upset" (-0.65); "couldn't be happier" 0.9 and "couldn't
+#: be better" 0.85 sit with "happy" (0.85) and "never better" (0.85). The
+#: older entries were here before with no reason written; their reasons are
+#: Everett's to give.
 IDIOMS: Dict[str, float] = {
     "can't complain": 0.5,        # means: I'm fine
     "cant complain": 0.5,
@@ -158,31 +158,37 @@ IDIOMS: Dict[str, float] = {
     "hanging in there": -0.2,
     "getting by": -0.15,
     "at a loss": -0.5,
-    # 2026-10-29, Everett: "Read the clause: who did what to whom." Measured
-    # before this: "Nobody cares, I'm alone" 0.0 and "No one loves me" 0.0 —
-    # "nobody" read as a negator and cancelled the caring word. Nobody caring
-    # is the speaker's isolation, not an absence of feeling.
-    "no one loves me": -0.85,
-    "no one cares": -0.8,
-    "have no one": -0.75,
+    # HELD FOR EVERETT (2026-10-29): the handoff added "no one loves me"
+    # (-0.85), "no one cares" (-0.8) and "have no one" (-0.75) here, so the
+    # client's own "no one loves me" read as distress. That is a change to
+    # how the client's own words route, so they are taken out and the
+    # question is written for Everett; main (e35fe46) read them through
+    # "no"/"nobody" as negators.
     # Inability over a good state reads as the lack of it (ABILITY_NEGATORS),
     # so the idiom that means the opposite is listed.
     "couldn't be happier": 0.9,
     "couldnt be happier": 0.9,
     "couldn't be better": 0.85,
     "couldnt be better": 0.85,
-    # Plain negation cancels ("not happy" is not "sad"). These two do not:
-    # "I don't feel safe" and "I'm not okay" are reports of danger and
-    # distress, not the absence of a good state. Measured 2026-10-29 before:
-    # both read 0.0, no distress. The subject stays outside the match, so
-    # "she doesn't feel safe" is still hers.
+    # Someone ELSE not okay / not safe. Everett, 2026-10-29: "My mom is not
+    # okay: a carbon saying another person is not okay" is flagged and routed
+    # like someone else at risk. These two count ONLY when the subject in
+    # front of them is another person (see SELF_HELD_IDIOMS): the client's
+    # own "I'm not okay" / "I don't feel safe" is held for Everett ("text
+    # alone cannot tell 'I'm okay' from 'I'm okay'; only the voice carries
+    # the difference") and reads as main (e35fe46) read it: "okay"/"safe"
+    # under a negation, cancelled.
     "not safe": -0.7,
     "not okay": -0.6,
 }
 
+#: Idioms that count only when another person is their subject. With the
+#: speaker, or no one named, as the subject, the words are left to ordinary
+#: scoring, exactly as main read them. See `_subject_before`.
+SELF_HELD_IDIOMS = frozenset({"not okay", "not safe"})
+
 #: Idiom match patterns that need more than word boundaries. "had enough TO
 #: EAT" is a meal, not distress (measured 2026-10-11: self_distress=True).
-_NOBODY = r"(?:nobody|no one|noone|no body)"
 _FEEL_NEG = (r"don't|dont|do\s+not|doesn't|doesnt|does\s+not|didn't|didnt|"
              r"did\s+not|never|not|can't|cant|cannot")
 #: A person and a form of "be", kept OUTSIDE the match by lookbehind so the
@@ -193,18 +199,6 @@ _PERSON_BE = (r"(?:(?<=\bi am )|(?<=\bi'm )|(?<=\bim )|(?<=\bhe is )|(?<=\bhe's 
               r"|(?<=\btheyre )|(?<=\byou are )|(?<=\byou're )|(?<=\byoure ))")
 IDIOM_PATTERNS: Dict[str, str] = {
     "had enough": r"\bhad enough\b(?!\s+(?:to|food|money|time|sleep|rest)\b)",
-    # The object decides whose isolation it is: "nobody cares about HIM" is
-    # not the speaker's, so it is left to ordinary scoring.
-    "no one loves me": (
-        rf"\b{_NOBODY}\s+(?:even\s+|really\s+|ever\s+)?"
-        r"(?:loves|likes|wants|needs|believes|cares\s+about)\s+(?:me|us)\b"
-    ),
-    "no one cares": (
-        rf"\b{_NOBODY}\s+(?:even\s+|really\s+|ever\s+)?"
-        r"(?:cares|listens|understands|notices|helps)\b"
-        r"(?!\s+(?:about\s+)?(?:him|her|them|it|that|this|his|their)\b)"
-    ),
-    "have no one": rf"\b(?:have|got)\s+{_NOBODY}\b",
     # Felt unsafety: "don't feel safe", "never feel safe", "not feeling
     # safe". Or a person, not a thing, is not safe: "I'm not safe", "she is
     # not safe". "that's not safe" (a warning about a thing) is left alone.
@@ -581,6 +575,38 @@ def is_person(tok: str) -> bool:
         tok.endswith("s") and tok[:-1] in PERSON_NOUNS
     )
 
+
+#: Words passed over, walking back from a held idiom to its subject:
+#: "she REALLY doesn't feel safe", "my mom IS not okay".
+_SUBJECT_WALK_PAST = frozenset({
+    "really", "just", "still", "actually", "honestly", "truly", "even",
+    "also", "always", "ever", "sometimes", "so", "very",
+    "do", "does", "did", "is", "am", "are", "be", "been", "being",
+})
+
+#: Pronouns that name someone other than the speaker as a subject. "we"
+#: includes the speaker, so it is not here.
+_OTHER_PRONOUNS = frozenset({"he", "she", "they", "you"})
+
+
+def _other_person_subject(before: str) -> bool:
+    """
+    Is the subject right in front of a held idiom ("not okay", "not safe")
+    another person?
+
+    Walks back over adverbs and auxiliaries to the first other word. True
+    only for a pronoun or a person word naming someone other than the
+    speaker ("she", "my mom", "my moms"). The speaker ("i", "we"), a thing
+    ("that"), or nothing at all leaves the words to ordinary scoring, as
+    main read them: held for Everett (2026-10-29).
+    """
+    for tok in reversed(tokenize(before)):
+        if tok in _SUBJECT_WALK_PAST:
+            continue
+        return tok in _OTHER_PRONOUNS or (tok not in FIRST_PERSON and is_person(tok))
+    return False
+
+
 #: Curly and typographic apostrophes, as phones and AAC boards emit them.
 #: Everett, 2026-10-11: "I don’t want to be here anymore" (U+2019) must read
 #: the same as the straight-quote form. Before this, `[a-z']` split "don’t"
@@ -919,15 +945,26 @@ class StructuralAffectAnalyzer:
         # Longest first, so "can't stop laughing" wins over "can't stop".
         for n, phrase in enumerate(sorted(IDIOMS, key=len, reverse=True)):
             pattern = IDIOM_PATTERNS.get(phrase) or rf"\b{re.escape(phrase)}\b"
-            first = re.search(pattern, masked)
-            if not first:
-                continue
             token = self._idiom_token(n)
+            held = phrase in SELF_HELD_IDIOMS
+            taken: List[str] = []
+
+            def _take(m: "re.Match[str]") -> str:
+                # A held idiom counts only with another person as its
+                # subject; otherwise the words stay as they were said, for
+                # ordinary scoring.
+                if held and not _other_person_subject(m.string[:m.start()]):
+                    return m.group(0)
+                taken.append(m.group(0))
+                return f" {token} "
+
+            masked = re.sub(pattern, _take, masked)
+            if not taken:
+                continue
             idiom_map[token] = (phrase, IDIOMS[phrase])
-            surface[token] = " ".join(first.group(0).split())
+            surface[token] = " ".join(taken[0].split())
             found.append((IDIOMS[phrase], phrase))
             names.append(phrase)
-            masked = re.sub(pattern, f" {token} ", masked)
         return found, names, masked, idiom_map, surface
 
     # -- Pass 2 ---------------------------------------------------------------

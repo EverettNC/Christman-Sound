@@ -96,11 +96,9 @@ def test_plain_distress_is_still_gentle_lift():
 
 
 
-# -- 2026-10-29: who did what to whom reaches delivery ------------------------
+# -- 2026-10-29: who did what to whom reaches the gate --------------------------
 # Measured before: "she wants to die" and "he is going to kill her" came back
-# mode=standard, pace=normal. A safety hold was delivered at pace normal.
-# "I'm not okay" and "I don't feel safe" came back standard. "remind me to
-# call mom" scored 0.0 in every domain.
+# mode=standard. "remind me to call mom" scored 0.0 in every domain.
 
 # Everett, 2026-10-29: "Someone else at risk pages a human, the same as the
 # client's own distress. Unless it is two beings talking to each other."
@@ -114,7 +112,6 @@ def test_someone_else_at_risk_pages_a_human_and_keeps_every_word():
     for text in said:
         d = eng.fuse(text)
         assert d.mode == MODE_SAFETY_HOLD, (text, d.to_dict())
-        assert d.delivery["pace"] == "slower"
         assert d.safety.delivered_to_human is True
         assert d.input_text == text and d.safety.said == text
         assert d.speakable is True       # the hold never silences the client
@@ -127,28 +124,31 @@ def test_between_beings_someone_else_at_risk_is_flagged_not_paged():
     eng = _engine(crisis_callback=lambda r, c: paged.append(r) or True)
     d = eng.fuse("she wants to die", live_state={"between_beings": True})
     assert d.safety.status == "soft_redirect"
-    assert d.delivery["safety_flag"] == "harm_frame_third_party_at_risk"
-    assert d.mode == "hold-space"
+    assert d.safety.reason == "harm_frame_third_party_at_risk"
     assert paged == []
 
 
-def test_safety_hold_is_slow_and_confirms():
+# HELD for Everett (2026-10-29). The handoff made a safety hold "slower" and
+# "confirm before acting", turned a soft_redirect into hold-space, turned the
+# client's own distress under the grounding bar into hold-space, and rounded
+# the grounding bar. Each changes how the client's own distress is routed, so
+# each is back to main (e35fe46), and these pin main's behavior until Everett
+# rules.
+
+def test_held_safety_hold_delivery_is_mains():
     d = _engine().fuse("I want to kill myself")
     assert d.mode == MODE_SAFETY_HOLD
-    assert d.delivery["pace"] == "slower"
-    assert d.delivery["confirm_before_acting"] is True
+    assert d.delivery["pace"] == "normal"
+    assert d.delivery["no_rush"] is True
+    assert d.delivery["confirm_before_acting"] is False
+    assert "safety_flag" not in d.delivery
 
 
-def test_measured_distress_under_the_grounding_bar_holds_space():
-    for text in ("I'm not okay", "I don't feel safe"):
+def test_held_own_not_okay_is_a_standard_turn_as_in_main():
+    for text in ("I'm not okay", "I don't feel safe", "i have no one"):
         d = _engine().fuse(text)
-        assert d.mode == "hold-space", (text, d.to_dict())
-        assert d.delivery["pace"] == "slower"
-
-
-def test_grounding_bar_is_read_as_reported_not_float_noise():
-    d = _engine().fuse("i have no one")
-    assert d.mode == "gentle-lift", d.to_dict()
+        assert d.mode == MODE_STANDARD, (text, d.to_dict())
+        assert d.delivery["pace"] == "normal"
 
 
 def test_plain_words_steer_their_domain():

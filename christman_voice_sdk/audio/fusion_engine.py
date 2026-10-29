@@ -60,7 +60,7 @@ WHAT CHANGED IN THIS REWRITE
 
        "I'm about to [redirect] this motherfucker."
 
-   For a nonverbal user this pipeline IS their voice, so editing their words
+   For a nonverbal client this pipeline IS their voice, so editing their words
    before speaking them is putting words in their mouth — the same failure as a
    phrase generator, from the other direction. Flagged terms are now reported
    in `flags` and `flagged_terms`; `said` is the person's own words,
@@ -273,9 +273,11 @@ class Silicon:
         distressed = (
             affect.is_self_distress
             and affect.intensity is not None
-            # Rounded as reported: "i have no one" measured 0.5499999… and
-            # missed a 0.55 bar by float noise.
-            and round(affect.intensity, 4) >= self.GROUNDING_INTENSITY
+            # HELD FOR EVERETT (2026-10-29): the handoff rounded the intensity
+            # to 4 places before this comparison, so a reading of 0.54999…
+            # would meet the bar. That moves where the client's own distress
+            # is routed, so the comparison is main's (e35fe46), unrounded.
+            and affect.intensity >= self.GROUNDING_INTENSITY
         )
 
         return {
@@ -702,21 +704,20 @@ class FusionEngine:
                 or "Affect could not be resolved from sentence structure."
             )
 
-        # Someone else named at risk right now, or the speaker's own history
-        # of harm. No human is paged (Everett's table), but this is not a
-        # standard turn. 2026-10-29, measured before: "she wants to die" and
-        # "he is going to kill her" came back mode=standard, pace=normal.
-        if safety.status == "soft_redirect":
-            return MODE_HOLD_SPACE, ""
-
+        # HELD FOR EVERETT (2026-10-29). Two lines were added here in the
+        # Replit handoff and are taken back out, so the mode is what main
+        # (e35fe46) decided:
+        #   - a soft_redirect (the client's own history of harm, or someone
+        #     else at risk while two beings talk) turned the turn to
+        #     hold-space;
+        #   - the client's own distress under the grounding bar turned the
+        #     turn to hold-space.
+        # Both change how the client's own distress is routed. Everett ruled
+        # that text alone cannot tell "I'm okay" from "I'm okay"; only the
+        # voice carries the difference. The questions are written for him.
         mode = constraints.get("response_mode") or MODE_STANDARD
         if constraints.get("needs_grounding") and mode == MODE_STANDARD:
             mode = MODE_GENTLE_LIFT
-        # Measured self-distress under the grounding bar is still distress.
-        # 2026-10-29, measured before: "I'm not okay" and "I don't feel safe"
-        # came back standard, pace normal. Hold space; do not lift.
-        if mode == MODE_STANDARD and affect.is_self_distress:
-            mode = MODE_HOLD_SPACE
         return mode, ""
 
     @staticmethod
@@ -764,26 +765,20 @@ class FusionEngine:
                 **provenance,
             }
 
-        # The pace follows the MODE, not only the live response_mode.
-        # 2026-10-29, measured before: a safety hold, and a gentle lift that
-        # came from measured distress, were both delivered at pace "normal",
-        # because pace was read from the live response_mode (default
-        # standard).
-        careful = mode in {MODE_HOLD_SPACE, MODE_GENTLE_LIFT, MODE_SAFETY_HOLD}
-        flagged = safety is not None and safety.status == "soft_redirect"
+        # HELD FOR EVERETT (2026-10-29). The Replit handoff made pace, warmth,
+        # silence and confirm-before-acting follow the mode (a safety hold
+        # and a gentle lift "slower", a safety hold "confirm"), and added a
+        # `safety_flag` field. That changes how the client's own distress is
+        # delivered, so this is main's (e35fe46) delivery, unchanged, and the
+        # question is written for Everett.
         return {
-            "pace": "slower" if careful else constraints.get("pace", "normal"),
-            "warmth": (
-                "steady" if mode in {MODE_HOLD_SPACE, MODE_SAFETY_HOLD}
-                else "high" if mode == MODE_GENTLE_LIFT
-                else constraints.get("warmth", "balanced")
-            ),
-            "allow_silence": True if careful else constraints.get("allow_silence", True),
+            "pace": constraints.get("pace", "normal"),
+            "warmth": constraints.get("warmth", "balanced"),
+            "allow_silence": constraints.get("allow_silence", True),
             "needs_grounding": constraints.get("needs_grounding", False),
-            "no_rush": careful,
-            "confirm_before_acting": mode == MODE_SAFETY_HOLD,
+            "no_rush": mode in {MODE_HOLD_SPACE, MODE_GENTLE_LIFT, MODE_SAFETY_HOLD},
+            "confirm_before_acting": False,
             "assert_nothing": False,
-            "safety_flag": safety.reason if flagged else "",
             **provenance,
         }
 
