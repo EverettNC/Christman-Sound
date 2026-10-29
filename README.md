@@ -5,7 +5,9 @@ Christman Sound is the sound package of The Christman AI Project. It holds:
 - **the C engine**: measurement (RMS, zero-crossing rate, YIN pitch, LPC), playback, the synthesizer and the frame vocoder;
 - **the voice synthesis path**: `christman_synth`, the vocoder, stitch and frame voices, driven from Python by `christman_sound`;
 - **ToneScore and voice measurement**: pitch, jitter, shimmer, HNR and the features ToneScore reads from raw audio;
-- **the hearing modules**: a measured utterance card in, affect and harm frame out, and local speech recognition.
+- **the hearing modules**: a measured utterance card in, affect and harm frame out, and local speech recognition;
+- **the ear** (`christman_sound.ear`): the package's own speech-to-text, in C;
+- **reading aloud** (`christman_ocr_shared.py`): printed text on a screen, an image or a PDF, read so it can be spoken in the caller's voice.
 
 The package holds no being's identity. A being passes its own voice profile or frame voice when it speaks; with no voice given, the mouth raises `SynthesisUnavailable` with the reason. No outside speech engine is ever substituted.
 
@@ -132,6 +134,7 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `voice_profile.py` — A measured voice profile (`load_voice_profile`), applied to the synthesizer
 - `dsp.py` — The one loader for the C library
 - `logger.py` — Logging
+- `ear/` — The ear: the package's own speech-to-text. Its C library is built once per machine with `python -m christman_sound.ear.build --check`
 - `core.py` — Kept for the record. Nothing imports it, and it is not touched (Everett, 2026-10-11)
 
 ### C engine (repository root)
@@ -141,6 +144,10 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `christman_vocoder.c` — The frame vocoder, ported from Codec War's `vocoder.ts`
 
 All three are compiled into `christman_sound/christman_dsp.so` by `scripts/build_dsp.py`. pip does not build them (see Installation).
+
+### Reading aloud (repository root)
+
+- `christman_ocr_shared.py` — OCR (PaddleOCR) for a screen, an image or a PDF. What it reads is spoken by `christman_sound.synth.speak` in the voice the caller passes (`voice=` is required); when it cannot be voiced it raises `SynthesisUnavailable` with the reason
 
 ### Scripts
 
@@ -176,7 +183,7 @@ print(turn.decision.mode, turn.decision.safety.status)      # gentle-lift clear
 
 ### Speech Recognition
 
-Recognition is local (Vosk). Install the `asr` extra and point it at a Vosk model folder with `VOSK_MODEL_PATH`.
+Recognition is local. `christman_sound.ear` is the package's own speech-to-text; the SDK's `speech_recognition_engine.py` still runs on Vosk until it moves onto the ear, so install the `asr` extra and point it at a Vosk model folder with `VOSK_MODEL_PATH`.
 
 ```python
 from christman_voice_sdk.audio.speech_recognition_engine import get_speech_recognition_engine
@@ -258,6 +265,20 @@ result = ToneScoreEngine().analyze_tone("utterance.wav")
 print(result.to_dict())
 ```
 
+### Reading printed text aloud
+
+```python
+import asyncio
+from christman_ocr_shared import ChristmanOCR               # needs paddleocr (+ pymupdf for PDFs)
+
+ocr = ChristmanOCR(voice="~/.christman_ai/voices/<voice>",  # the caller's own voice: required
+                   lexicon_path="<align_lexicon.txt>")
+result = asyncio.run(ocr.read_document("/path/to/document.pdf"))
+print(result["pages"], result["confidence"], result["text"])
+```
+
+PaddleOCR fetches its model files the first time it is constructed; that is an open item against the offline rule (`tests/test_offline.py`).
+
 ## Configuration
 
 ### Environment Variables
@@ -323,6 +344,7 @@ Client output (the being's own voice, from the profile the being passed)
 # local clone — edits land immediately
 pip install -e .
 python3 scripts/build_dsp.py --check        # builds the C library; pip does not
+python -m christman_sound.ear.build --check # builds the ear's C library, once per machine
 
 # extras
 pip install -e '.[crypto]'                  # voicepack encryption

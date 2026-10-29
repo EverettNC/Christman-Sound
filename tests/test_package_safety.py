@@ -231,6 +231,7 @@ LANE6_FILES = [
     ROOT / "christman_voice_sdk" / "timbre" / "voicepack.py",
     ROOT / "christman_voice_sdk" / "audio" / "config.py",
     ROOT / "christman_sound" / "__init__.py",
+    ROOT / "christman_ocr_shared.py",
 ]
 
 

@@ -11,6 +11,7 @@ build-backend = "setuptools.build_meta"
 #
 #     pip install -e .
 #     python3 scripts/build_dsp.py --check
+#     python -m christman_sound.ear.build --check   # the ear's C library, once per machine
 #
 # Nothing here declares a C extension, so pip install builds nothing in C.
 
@@ -40,10 +41,11 @@ authors = [
 # - cryptography is optional (voicepack encryption), so it is the "crypto"
 #   extra, not a base dependency.
 # WHAT CHANGED AND WHY (2026-10-29)
-# - The root modules christman_ocr_shared.py (an OCR engine that is not
-#   sound) and crypto_bridge.py were removed from this repository, with their
-#   references here. websockets stays: voice_capture_client.py imports it
-#   inside the function that sends text to a relay.
+# - crypto_bridge.py was removed from this repository, with its references
+#   here. christman_ocr_shared.py stays, being-neutral: it speaks through
+#   christman_sound and no longer imports websockets. websockets stays:
+#   voice_capture_client.py imports it inside the function that sends text to
+#   a relay.
 dependencies = [
     "numpy<2",
     "scipy",
@@ -85,6 +87,9 @@ christman_voice_sdk = ["py.typed"]
 # scripts/build_dsp.py ran before the wheel was built; editable installs find
 # it in christman_sound/ where build_dsp.py writes it.
 christman_sound = ["*.so", "*.json"]  # *.json: measured voice profiles shipped beside the code
+# The ear (christman_sound.ear): its C sources, and its library once
+# `python -m christman_sound.ear.build` has built it.
+"christman_sound.ear" = ["csrc/*/*.c", "csrc/*/*.h", "libear.dylib", "libear.so"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
