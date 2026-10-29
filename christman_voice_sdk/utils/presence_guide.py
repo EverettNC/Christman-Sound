@@ -27,8 +27,9 @@ WHAT CHANGED AND WHY
        'I lost my mother'  -> grieving
 
    Only the last one is grief. The word is now disambiguated by what follows
-   it — "lost my <person>" is grief, "feel lost" is confusion, "lost my keys"
-   is neither — and the remaining ambiguity returns `None` rather than a guess.
+   it — "feel lost" is confusion — and the remaining ambiguity returns `None`
+   rather than a guess. (Ruling AA, 2026-10-29: "lost my <person>" was read
+   from a fixed list of people; the list is gone and the being asks who.)
 
 2. DETECTION WAS ORDER-DEPENDENT EVERYWHERE, NOT JUST "lost".
 
@@ -75,6 +76,7 @@ logger.addHandler(logging.NullHandler())
 # correction ruled today, are the starting point; a client's learned words
 # extend or override them through ReadingWords.for_client.
 from ..audio.structural_affect import SHARED_READING_WORDS, ReadingWords
+from ..audio.hearing import ASK_WHO
 
 _WORD = re.compile(r"[a-z']+")
 CLAUSE_BOUNDARY = "\x00"
@@ -143,6 +145,11 @@ class StateAssessment:
     matched: Dict[str, List[str]] = field(default_factory=dict)
     negated: List[str] = field(default_factory=list)
     ambiguous: List[str] = field(default_factory=list)
+    #: What the being should ask, as a mark (hearing.ASK_*), or "". "lost my
+    #: mother" concludes nothing about who was lost; the being asks who.
+    follow_up: str = ""
+    #: The words the question is about ("my mother").
+    follow_up_about: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -152,6 +159,8 @@ class StateAssessment:
             "matched": dict(self.matched),
             "negated": list(self.negated),
             "ambiguous": list(self.ambiguous),
+            "follow_up": self.follow_up,
+            "follow_up_about": self.follow_up_about,
             "note": (
                 "No detected state does NOT mean the person is fine. It means "
                 "no presence marker was found in this text."
@@ -188,12 +197,12 @@ def _negated_at(tokens: Sequence[str], index: int,
 class PresenceGuide:
     """Shapes response guidance when a client is in a presence-needed state."""
 
-    #: People a loss can be OF. "lost my mother" is grief; "lost my keys" is not.
-    _PERSON_NOUNS = frozenset({
-        "mother", "mom", "father", "dad", "sister", "brother", "son",
-        "daughter", "wife", "husband", "partner", "friend", "grandmother",
-        "grandma", "grandfather", "grandpa", "baby", "child", "dog", "cat",
-    })
+    #: Ruling AA (Everett, 2026-10-29): no fixed list of people. There used
+    #: to be one here (mother, dad, friend, dog ...) that decided "lost my
+    #: mother" was grief and "lost my keys" was not. Whether what was lost is
+    #: a person cannot be told from a list; the being asks (ASK_WHO), the
+    #: same way the clause reader's THIRD_PERSON list was removed.
+    _POSSESSIVES = frozenset({"my", "our", "his", "her", "their", "your"})
 
     GRIEVING_MARKERS = (
         "died", "dying", "death", "funeral", "grief", "grieving",
@@ -270,7 +279,8 @@ class PresenceGuide:
                 matched[state.value] = live
                 scores[state.value] = self._WEIGHTS[state] * len(live)
 
-        lost_state, lost_evidence, ambiguous = self._resolve_lost(tokens)
+        lost_state, lost_evidence, ambiguous, lost_who = self._resolve_lost(tokens)
+        ask = {"follow_up": ASK_WHO, "follow_up_about": lost_who} if lost_who else {}
         if lost_state is not None:
             matched.setdefault(lost_state.value, []).extend(lost_evidence)
             scores[lost_state.value] = (
@@ -279,13 +289,13 @@ class PresenceGuide:
 
         if not scores:
             return StateAssessment(
-                state=None, matched=matched, negated=negated, ambiguous=ambiguous
+                state=None, matched=matched, negated=negated, ambiguous=ambiguous, **ask
             )
 
         best = max(scores, key=lambda k: scores[k])
         return StateAssessment(
             state=HumanState(best), scores=scores, matched=matched,
-            negated=negated, ambiguous=ambiguous,
+            negated=negated, ambiguous=ambiguous, **ask,
         )
 
     def assess_human_state(
@@ -296,32 +306,38 @@ class PresenceGuide:
 
     def _resolve_lost(
         self, tokens: Sequence[str]
-    ) -> Tuple[Optional[HumanState], List[str], List[str]]:
+    ) -> Tuple[Optional[HumanState], List[str], List[str], str]:
         """
         Decide what "lost" means here.
 
-        "lost my mother"  -> grief
         "feel lost"       -> confusion
-        "lost my keys"    -> neither
+        "lost my mother"  -> not told from the words: ambiguous, ask who
+        "lost my keys"    -> not told from the words: ambiguous, ask who
         "lost" alone      -> ambiguous, no state
+
+        Grief still reads from its own words ("passed away", "funeral").
+        The last value is what the being asks about ("my mother"), or "".
         """
         ambiguous: List[str] = []
+        who = ""
         for i, tok in enumerate(tokens):
             if tok != "lost" or _negated_at(tokens, i, self.words):
                 continue
             after = tokens[i + 1:i + 3]
             before = tokens[max(0, i - 2):i]
 
-            if any(w in self._PERSON_NOUNS for w in after):
-                return HumanState.GRIEVING, ["lost my <person>"], ambiguous
             if any(w in {"feel", "feeling", "am", "so", "really"} for w in before):
-                return HumanState.CONFUSED, ["feel lost"], ambiguous
-            if after:
-                # "lost my keys", "lost the file" — a mislaid object.
+                return HumanState.CONFUSED, ["feel lost"], ambiguous, who
+            if (len(after) == 2 and after[0] in self._POSSESSIVES
+                    and after[1] != CLAUSE_BOUNDARY):
+                ambiguous.append(f"lost {after[0]} {after[1]}")
+                who = who or f"{after[0]} {after[1]}"
+                continue
+            if after and after[0] != CLAUSE_BOUNDARY:
                 ambiguous.append(f"lost {after[0]}")
                 continue
             ambiguous.append("lost")
-        return None, [], ambiguous
+        return None, [], ambiguous, who
 
     @staticmethod
     def _match(

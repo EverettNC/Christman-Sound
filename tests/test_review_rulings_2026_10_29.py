@@ -252,3 +252,18 @@ def test_10_no_hold_carries_words():
     turn, _ = _hear(None, nonverbal={"symbol": "help"}, public_setting=True)
     assert turn.decision.safety.hold_marker in F.HOLD_MARKS | {""}
     assert all(m == m.lower() and " " not in m for m in F.HOLD_MARKS)
+
+
+# -- 9. ruling AA: presence_guide has no fixed person list ---------------------------
+
+def test_9_presence_guide_has_no_person_list_and_asks_who():
+    import christman_voice_sdk.utils.presence_guide as pg
+    src = (ROOT / "christman_voice_sdk" / "utils" / "presence_guide.py").read_text()
+    assert "_PERSON_NOUNS" not in src and not hasattr(pg.PresenceGuide, "_PERSON_NOUNS")
+    for text, about in [("I lost my mother", "my mother"), ("I lost my keys", "my keys")]:
+        a = pg.PresenceGuide().assess(text)
+        assert a.state is None                       # nothing concluded from a list
+        assert a.follow_up == H.ASK_WHO and a.follow_up_about == about
+        assert a.to_dict()["follow_up"] == H.ASK_WHO
+    assert pg.PresenceGuide().assess("I feel lost").state is pg.HumanState.CONFUSED
+    assert pg.PresenceGuide().assess("she passed away").state is pg.HumanState.GRIEVING
