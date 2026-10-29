@@ -967,14 +967,17 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
     fear = fear_without_context(original, hits)
     if fear and not between_beings:
         # Ruling O: not enough to tell. Nothing is concluded and nothing is
-        # spoken for the client; the being asks. A "no" to it pages.
+        # spoken for the client; the being asks. Rulings W and Z (Everett,
+        # 2026-10-29): it asks what the fear is about ("What are you scared
+        # about?"), not whether the client is safe. Danger in the turn has
+        # already paged above (ruling O); this is fear with no danger in it.
         return SafetyResult(
             status="soft_redirect",
             reason="fear_without_context",
             said=original,
-            flags=[f"fear:{t}" for t in fear] + other_flags + ["follow_up:ask_if_safe"],
+            flags=[f"fear:{t}" for t in fear] + other_flags + ["follow_up:ask_what_about"],
             flagged_terms=fear,
-            follow_up=ASK_IF_SAFE,
+            follow_up=ASK_WHAT_ABOUT,
             follow_up_about=fear[0],
         )
 

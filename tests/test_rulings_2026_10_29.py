@@ -1297,7 +1297,7 @@ def test_O_not_enough_to_tell_concludes_nothing_and_asks():
     assert pager.calls == []
     assert d.mode == MODE_UNKNOWN and d.knows is False            # nothing concluded
     assert d.safety.reason == "fear_without_context"
-    assert d.safety.follow_up == "ask_if_safe"                    # the being asks
+    assert d.safety.follow_up == "ask_what_about"                 # the being asks (W, Z)
     assert d.safety.follow_up_about == "scared"
     assert turn.person_message is None                            # nothing spoken for the client
     assert d.input_text == text and d.safety.said == text         # the words, untouched
@@ -1333,17 +1333,22 @@ def test_O_the_next_turn_continues_the_thought():
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
     first = hearing.hear(text="I want to go home I'm scared")
-    assert first.decision.safety.follow_up == "ask_if_safe" and pager.calls == []
+    assert first.decision.safety.follow_up == "ask_what_about" and pager.calls == []
     second = hearing.hear(text="this guy keeps following me")
     assert len(pager.calls) == 1 and second.decision.safety.silent_alarm is True
 
 
-def test_O_a_no_to_the_question_pages():
+def test_O_the_question_is_what_about_so_a_bare_no_does_not_page():
+    # Rulings W and Z (Everett, 2026-10-29) changed the ask after a fear with
+    # no context from "Are you safe?" to "What are you scared about?". A bare
+    # "no" does not answer that, so it no longer pages; danger in the answer
+    # still does (test_O_the_next_turn_continues_the_thought).
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
-    hearing.hear(text="I'm scared")
+    first = hearing.hear(text="I'm scared")
+    assert first.decision.safety.follow_up == "ask_what_about"
     hearing.hear(text="no")
-    assert len(pager.calls) == 1
+    assert pager.calls == []
 
 
 # -- P. whose feeling it is ----------------------------------------------------------

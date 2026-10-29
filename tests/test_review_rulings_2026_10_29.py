@@ -189,3 +189,22 @@ def test_4_a_built_in_camera_danger_signal_has_no_words_to_voice():
     # public there is nothing of the client's to say for pointing up.
     turn, pager = _hear(None, nonverbal={"gesture": "point_up"}, public_setting=True)
     assert len(pager.calls) == 1 and turn.person_message is None
+
+
+# -- 6. rulings W and Z: fear with no context asks what it is about ------------------
+
+@pytest.mark.parametrize("text", ["I'm scared", "I want to go home I'm scared", "I am afraid"])
+def test_6_fear_with_no_context_asks_what_about(text):
+    turn, pager = _hear(text)
+    s = turn.decision.safety
+    assert pager.calls == []
+    assert s.reason == "fear_without_context"
+    assert s.follow_up == H.ASK_WHAT_ABOUT and s.follow_up != H.ASK_IF_SAFE
+    assert turn.person_message is None
+
+
+def test_6_danger_in_the_context_still_pages_silently():
+    text = "I'm scared this guy keeps following me and he's going to attack me"
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.silent_alarm is True

@@ -100,7 +100,7 @@ def test_a_fear_with_no_context_concludes_nothing():
     # Ruling O (Everett, 2026-10-29): "You got to have full context."
     d = _engine().fuse("I am so scared and alone")
     assert d.mode == MODE_UNKNOWN and d.knows is False
-    assert d.safety.follow_up == "ask_if_safe"     # the being asks; it words it
+    assert d.safety.follow_up == "ask_what_about"  # the being asks (W, Z); it words it
 
 
 
