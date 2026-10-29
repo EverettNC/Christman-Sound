@@ -26,6 +26,8 @@ so nothing it names can run.
 from __future__ import annotations
 
 import ast
+import asyncio
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -44,7 +46,7 @@ LAUNCHERS = {"run", "call", "check_call", "check_output", "Popen", "system", "po
 
 
 def _scanned_files():
-    files = []
+    files = [ROOT / "christman_ocr_shared.py"]
     for pkg in ("christman_voice_sdk", "christman_sound", "scripts"):
         files.extend(sorted((ROOT / pkg).rglob("*.py")))
     core = ROOT / "christman_sound" / "core.py"  # never touched, never wired (ruling above)
@@ -110,3 +112,43 @@ def test_local_speak_fallback_raises_the_typed_failure():
         vcc.local_speak_fallback("hello")
     assert excinfo.value.available is False
     assert excinfo.value.reason == SOVEREIGN_NOT_WIRED
+
+
+# ------------------------------------------- the OCR read-aloud, in the caller's voice
+
+def test_ocr_read_aloud_needs_the_callers_voice():
+    import christman_ocr_shared as ocr
+
+    with pytest.raises(ValueError):
+        ocr.ReadAloud(None)
+    voice = inspect.signature(ocr.ChristmanOCR.__init__).parameters["voice"]
+    assert voice.default is inspect.Parameter.empty, "ChristmanOCR must not choose a voice"
+    assert voice.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_ocr_read_aloud_raises_the_typed_failure_when_it_cannot_voice(tmp_path):
+    """A real attempt through christman_sound with a voice file that is not there."""
+    import christman_ocr_shared as ocr
+    from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable
+
+    reader = ocr.ReadAloud(tmp_path / "no_such_voice.json")
+    with pytest.raises(SynthesisUnavailable) as excinfo:
+        asyncio.run(reader.speak("hello"))
+    assert excinfo.value.available is False
+    assert "read-aloud was not voiced" in excinfo.value.reason
+    assert excinfo.value.__cause__ is not None, "the real cause is chained, not swallowed"
+    assert asyncio.run(reader.speak("   ")) is False, "empty text is not a read-aloud request"
+
+
+def test_ocr_speaks_through_the_package_and_nothing_else():
+    """No socket library, no relay: the only voice is christman_sound's."""
+    source = (ROOT / "christman_ocr_shared.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            imported.add(node.module.split(".")[0])
+    assert not imported & {"websockets", "socket", "requests", "httpx", "aiohttp"}, imported
+    assert "christman_sound.synth" in source

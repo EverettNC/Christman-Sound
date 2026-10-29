@@ -13,10 +13,11 @@ the real files:
 - numba and llvmlite are either not declared, or pinned below the first
   versions with no Intel Mac wheel.
 - Every third-party module imported at module top (not inside a try) in the
-  package is a declared base dependency.
+  package and christman_ocr_shared.py is a declared base dependency.
 - pyproject.toml is the one dependency list; setup.py calls setup() bare.
 - py.typed exists where package-data says it does.
-- cryptography is the "crypto" extra.
+- cryptography is the "crypto" extra, and christman_ocr_shared.py imports
+  with the base dependencies.
 
 christman_sound/core.py is outside the scan: Everett's standing ruling is that
 it is never touched and never wired.
@@ -25,7 +26,9 @@ it is never touched and never wired.
 from __future__ import annotations
 
 import ast
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -70,7 +73,7 @@ def _base() -> dict[str, list[str]]:
 
 
 def _scanned_files() -> list[Path]:
-    files = []
+    files = [ROOT / "christman_ocr_shared.py"]
     for pkg in ("christman_voice_sdk", "christman_sound"):
         files.extend(sorted((ROOT / pkg).rglob("*.py")))
     core = ROOT / "christman_sound" / "core.py"  # never touched, never wired
@@ -131,9 +134,13 @@ def test_every_unguarded_third_party_import_is_declared():
 
 
 def test_the_scan_sees_the_imports_that_were_missing():
-    """The scan itself works: it finds the four imports that broke installs."""
+    """The scan itself works: it finds the imports that broke installs.
+
+    websockets was the fourth; since 2026-10-29 no module imports it at module
+    top (christman_ocr_shared no longer does, and voice_capture_client imports
+    it inside a function), so the scan rightly no longer sees it."""
     seen = {m for f in _scanned_files() for m, _ in _unguarded_imports(f)}
-    assert {"yaml", "scipy", "websockets", "numpy"} <= seen
+    assert {"yaml", "scipy", "numpy"} <= seen
 
 
 def test_setup_py_is_a_bare_shim():
@@ -158,3 +165,17 @@ def test_cryptography_is_the_crypto_extra_and_optional_in_voicepack():
     assert "cryptography" not in _base(), "cryptography is optional; it belongs in the extra"
     voicepack = ROOT / "christman_voice_sdk" / "timbre" / "voicepack.py"
     assert "cryptography" not in {m for m, _ in _unguarded_imports(voicepack)}
+
+
+def _import_in_child(module: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env.update(extra_env or {})
+    return subprocess.run(
+        [sys.executable, "-c", f"import sys; sys.path.insert(0, {str(ROOT)!r}); import {module}"],
+        capture_output=True, text=True, env=env, timeout=120, cwd=str(ROOT),
+    )
+
+
+def test_christman_ocr_shared_imports_with_the_base_dependencies(tmp_path):
+    proc = _import_in_child("christman_ocr_shared", {"CHRISTMAN_AI_HOME": str(tmp_path)})
+    assert proc.returncode == 0, proc.stderr[-2000:]
