@@ -380,7 +380,7 @@ def test_B_nonverbal_distress_pages_at_any_confidence(kwargs):
     assert len(pager.calls) == 1
 
 
-@pytest.mark.parametrize("symbol,says", [("help", "I need help."), ("pain", "I'm in pain."),
+@pytest.mark.parametrize("symbol,says", [("pain", "I'm in pain."),
                                          ("food", "I'm hungry."), ("tired", "I'm tired.")])
 def test_C_a_pressed_symbol_speaks_whatever_the_bar(symbol, says):
     engine = NonverbalEngine(data_dir=None, confidence_threshold=1.0)
@@ -559,7 +559,9 @@ def test_9_every_word_passes_through_unchanged(text):
     assert d.input_text == text
     assert d.safety.said == text
     assert d.to_dict()["input_text"] == text
-    assert d.speakable is True                         # a hold never silences the client
+    # A hold never silences the client, except the silent alarm (rulings I
+    # and K), which holds back the VOICE only, never the words.
+    assert d.speakable is (not d.safety.silent_alarm)
     for result, _context in pager.calls:
         assert result.said == text                     # the human gets every letter
     clauses = d.affect.clauses
@@ -620,12 +622,12 @@ def test_9_corti_receiver_route_returns_the_mapped_words_unaltered():
     server, _receiver, _thread = cr.start_in_thread(port=0, hearing=Hearing(crisis_callback=Pager()))
     try:
         conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
-        raw = json.dumps({"key": "grunt_distress"}).encode()
+        raw = json.dumps({"key": "grunt_acknowledge"}).encode()
         conn.request("POST", cr.ACOUSTIC_PATH, body=raw,
                      headers={"Content-Type": "application/json", "Content-Length": str(len(raw))})
         body = json.loads(conn.getresponse().read())
         conn.close()
-        assert body["person_message"] == DEFAULT_SOUNDS["grunt_distress"]["message"]
+        assert body["person_message"] == DEFAULT_SOUNDS["grunt_acknowledge"]["message"]
     finally:
         server.shutdown()
         server.server_close()
@@ -799,3 +801,316 @@ def test_D_the_being_asks_and_a_yes_pages(answer, pages):
     assert pager.calls == []
     hearing.hear(text=answer)
     assert bool(pager.calls) is pages
+
+
+# -- I. THE SILENT ALARM: danger goes to a human, never spoken, never announced ------
+
+def _client_map_engine(tmp_path, maps):
+    """A NonverbalEngine with the client's own maps on disk (data_dir)."""
+    data = tmp_path / "learning"
+    data.mkdir()
+    for name, table in maps.items():
+        (data / f"{name}_model.json").write_text(json.dumps(table), encoding="utf-8")
+    return NonverbalEngine(data_dir=str(data))
+
+
+def _entry(intent, message, tier="moderate", conf=0.8):
+    return {"intent": intent, "confidence": conf, "expression": "negative",
+            "emotion_tier": tier, "message": message}
+
+
+def _assert_silent_and_paged(turn, pager):
+    d = turn.decision
+    assert d is not None and d.mode == MODE_SAFETY_HOLD
+    assert d.safety.silent_alarm is True
+    assert d.safety.hold_marker == ""                 # no words for a screen to show
+    assert len(pager.calls) == 1                      # straight to a human
+    assert turn.person_message is None                # nothing spoken for the client
+    if turn.nonverbal:
+        assert turn.nonverbal.get("message") is None and not turn.nonverbal.get("speakable")
+    if turn.acoustic is not None:
+        assert turn.acoustic.message is None and not turn.acoustic.speakable
+    if turn.temporal:
+        assert turn.temporal.get("message") is None
+        assert turn.temporal.get("system_note") is None   # not even "I see your gesture."
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"nonverbal": {"symbol": "help"}},                 # a pressed symbol
+    {"nonverbal": {"gesture": "point_up"}},            # the camera
+    {"nonverbal": {"sound": "distress"}},              # the microphone
+    {"acoustic_key": "grunt_distress"},                # the acoustic key
+])
+def test_I_built_in_danger_is_paged_and_never_spoken(kwargs):
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager).hear(**kwargs)
+    _assert_silent_and_paged(turn, pager)
+
+
+@pytest.mark.parametrize("map_name,kwargs", [
+    ("eye_regions", {"eye_data": {"region": "top_left"}}),     # the eye
+    ("gestures", {"gesture": "rapid_blink"}),                   # a tic
+    ("symbols", {"symbol": "scared"}),                          # a pressed key
+    ("sound_patterns", {"sound": "whimper"}),                   # a sound
+])
+@pytest.mark.parametrize("intent,message", [
+    ("scared", "I'm scared."),
+    ("attacked", "Someone is attacking me."),
+    ("other", "I'm scared for my safety."),     # danger by its words, whatever the intent
+])
+def test_I_learned_danger_on_every_channel_is_paged_and_never_spoken(tmp_path, map_name, kwargs,
+                                                                     intent, message):
+    key = next(iter(kwargs.values()))
+    key = key["region"] if isinstance(key, dict) else key
+    engine = _client_map_engine(tmp_path, {map_name: {key: _entry(intent, message)}})
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(nonverbal=kwargs)
+    _assert_silent_and_paged(turn, pager)
+
+
+@pytest.mark.parametrize("expression,entry", [
+    ("Fear", {"intent": "Worried", "message": "I'm scared."}),          # the face
+    ("Head Jerk", {"intent": "attacked", "message": "He is hitting me."}),  # a tic, learned
+])
+def test_I_temporal_danger_is_paged_and_never_spoken(tmp_path, expression, entry):
+    path = tmp_path / "map.json"
+    path.write_text(json.dumps({**{k: v for k, v in DEFAULT_LANGUAGE_MAP.items()}, expression: entry}),
+                    encoding="utf-8")
+    t = TemporalNonverbalEngine(sequence_length=10, language_map_path=str(path))
+    modality = "emotion" if expression == "Fear" else "gesture"
+    labels = t.labels[modality]
+    idx = labels.index(expression)
+    t.models[modality] = CentroidModel([[_seq(60.0 * (i - idx))] for i in range(len(labels))])
+    feed = t.add_emotion_features if modality == "emotion" else t.add_gesture_features
+    for frame in _seq(0.0)[:-1]:
+        feed(frame)
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager, temporal_engine=t).hear(
+        temporal={f"{modality}_features": np.zeros(4)})
+    assert turn.temporal["primary_result"]["expression"] == expression
+    _assert_silent_and_paged(turn, pager)
+
+
+@pytest.mark.parametrize("kwargs,says,pages", [
+    ({"nonverbal": {"symbol": "pain"}}, "I'm in pain.", True),
+    ({"nonverbal": {"symbol": "medicine"}}, "I need my medicine.", True),
+    ({"nonverbal": {"symbol": "food"}}, "I'm hungry.", False),
+    ({"nonverbal": {"symbol": "drink"}}, "I'm thirsty.", False),
+    ({"nonverbal": {"symbol": "bathroom"}}, "I need the bathroom.", False),
+])
+def test_I_needs_are_spoken_as_normal(kwargs, says, pages):
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager).hear(**kwargs)
+    assert turn.person_message == says
+    assert bool(pager.calls) is pages
+    if pages:
+        assert turn.decision.safety.silent_alarm is False
+
+
+def test_I_hand_up_is_a_need_spoken_and_paged():
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager, temporal_engine=_hand_up_engine()).hear(
+        temporal={"gesture_features": np.zeros(4)})
+    assert turn.person_message == "I need help."
+    assert len(pager.calls) == 1 and turn.decision.safety.silent_alarm is False
+
+
+def test_I_the_device_that_sent_the_key_is_told_nothing():
+    import http.client
+
+    from christman_voice_sdk.audio import corti_receiver as cr
+
+    pager = Pager()
+    server, receiver, _ = cr.start_in_thread(port=0, hearing=Hearing(crisis_callback=pager))
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+        raw = json.dumps({"key": "grunt_distress"}).encode()
+        conn.request("POST", cr.ACOUSTIC_PATH, body=raw,
+                     headers={"Content-Type": "application/json", "Content-Length": str(len(raw))})
+        resp = conn.getresponse()
+        body = json.loads(resp.read())
+        conn.close()
+        assert resp.status == 200 and body == {"received": True}
+        assert len(pager.calls) == 1                         # the human was reached
+        assert receiver.state.ring[0].decision.safety.silent_alarm is True
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize("reply", ["Help is on the way.", "I'm getting help.", "I've called someone.",
+                                   "Someone is coming.", "I am calling the police."])
+def test_I_the_being_does_not_announce_help_under_the_alarm(reply):
+    from christman_voice_sdk.synthesis import speech_response
+    from christman_voice_sdk.synthesis.reply_guard import ForbiddenReply, check_being_reply
+
+    with pytest.raises(ForbiddenReply):
+        check_being_reply(reply, silent_alarm=True)
+    with pytest.raises(ForbiddenReply):
+        speech_response.speak(reply, silent_alarm=True)
+    assert check_being_reply(reply) == reply             # with no alarm, it is not refused
+    assert check_being_reply("Let's look at the pictures.", silent_alarm=True)
+
+
+# -- K. the client's own danger sentence -------------------------------------------------
+
+DANGER_SAID = ["I'm scared for my safety", "im scared for my safety", "I'm in danger",
+               "I am being attacked", "he's attacking me", "help me", "help"]
+
+
+@pytest.mark.parametrize("text", DANGER_SAID)
+def test_K_default_silent_and_paged(text):
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == text
+    assert d.safety.silent_alarm is True and d.safety.voice_aloud is False
+    assert d.speakable is False                        # not voiced
+    assert d.input_text == text and d.safety.said == text   # never changed
+
+
+@pytest.mark.parametrize("text", ["I'm scared for my safety, please say that out loud",
+                                  "I'm scared for my safety say it out loud",
+                                  "I'm in danger. Speak it."])
+def test_K_asked_aloud_is_voiced_and_paged(text):
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.voice_aloud is True and turn.decision.speakable is True
+
+
+def test_K_asked_aloud_on_the_next_turn_releases_the_exact_words():
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager)
+    first = hearing.hear(text="I'm scared for my safety")
+    assert first.decision.speakable is False and len(pager.calls) == 1
+    second = hearing.hear(text="please say that out loud")
+    assert second.voice_held == "I'm scared for my safety"
+    third = hearing.hear(text="please say that out loud")
+    assert third.voice_held is None                   # once
+
+
+@pytest.mark.parametrize("public,voiced", [(True, True), (None, False), ("yes", False), (False, False)])
+def test_K_a_public_setting_from_the_beings_perception(public, voiced):
+    pager = Pager()
+    eng = FusionEngine(safety_callback=harm_frame_safety, crisis_callback=pager)
+    live = {} if public is None else {"public_setting": public}
+    d = eng.fuse("I'm scared for my safety", live_state=live)
+    assert len(pager.calls) == 1                       # it always pages
+    assert d.speakable is voiced
+
+
+@pytest.mark.parametrize("text", ["I'm scared of the needle", "help me pick a font",
+                                  "I was scared for my life back then", "I'm not in danger"])
+def test_K_not_a_danger_sentence(text):
+    turn, pager = _hear(text)
+    assert turn.decision.safety.silent_alarm is False
+    assert turn.decision.speakable is True
+
+
+# -- J and L. learned meanings; no fixed speak/silent flag --------------------------------
+
+@pytest.mark.parametrize("kwargs", [
+    {"nonverbal": {"gesture": "stimming"}}, {"nonverbal": {"gesture": "rapid_blink"}},
+    {"nonverbal": {"sound": "hum"}}, {"nonverbal": {"sound": "soft"}}, {"nonverbal": {"sound": "loud"}},
+    {"nonverbal": {"eye_data": {"region": "long_stare"}}},
+    {"acoustic_key": "vocal_stimming"}, {"acoustic_key": "grunt_frustration"},
+])
+def test_J_a_built_in_generic_feeling_is_not_spoken(kwargs):
+    turn = Hearing(crisis_callback=Pager()).hear(**kwargs)
+    assert turn.person_message is None
+
+
+@pytest.mark.parametrize("map_name,key,arg", [
+    ("eye_regions", "top_left", {"eye_data": {"region": "top_left"}}),
+    ("gestures", "stimming", {"gesture": "stimming"}),
+])
+def test_J_a_meaning_learned_for_this_client_is_spoken(tmp_path, map_name, key, arg):
+    # Everett's examples: looking up to the left corner means thirsty; heavy
+    # stimming in the evening means he needs to eat.
+    message = "I'm thirsty." if map_name == "eye_regions" else "I need to eat."
+    engine = _client_map_engine(tmp_path, {map_name: {key: _entry("learned_need", message)}})
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(nonverbal=arg)
+    assert turn.person_message == message
+    assert pager.calls == []
+
+
+def test_L_a_speaks_flag_in_a_map_decides_nothing(tmp_path):
+    engine = _client_map_engine(tmp_path, {"eye_regions": {
+        "top_left": {**_entry("learned_need", "I'm thirsty."), "speaks": False},
+        "top_right": {**_entry("scared", "I'm scared."), "speaks": True},
+    }})
+    pager = Pager()
+    spoken = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(
+        nonverbal={"eye_data": {"region": "top_left"}})
+    assert spoken.person_message == "I'm thirsty."      # "speaks": false does not silence it
+    silent = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(
+        nonverbal={"eye_data": {"region": "top_right"}})
+    assert silent.person_message is None                 # "speaks": true does not voice danger
+    assert silent.decision.safety.silent_alarm is True
+
+
+def test_L_an_old_style_temporal_map_works_as_before_except_danger(tmp_path):
+    old = {k: {"intent": v["intent"], "message": v["message"]} for k, v in DEFAULT_LANGUAGE_MAP.items()}
+    path = tmp_path / "old_map.json"
+    path.write_text(json.dumps(old), encoding="utf-8")
+    t = TemporalNonverbalEngine(sequence_length=10, language_map_path=str(path))
+    assert t._speaks(old["Neutral"], danger=False) is True      # the client's own map: spoken
+    assert t._speaks(old["Wave Left"], danger=False) is True
+    built_in = TemporalNonverbalEngine(sequence_length=10)
+    assert built_in._speaks(DEFAULT_LANGUAGE_MAP["Neutral"], danger=False) is False
+    assert built_in._speaks(DEFAULT_LANGUAGE_MAP["Hand Up"], danger=False) is True
+    for engine in (t, built_in):
+        assert engine._speaks(old["Fear"], danger=True) is False
+    assert not any("speaks" in e for e in DEFAULT_LANGUAGE_MAP.values())
+
+
+# -- M. the page fires first; nothing in the crisis path waits ----------------------------
+
+from christman_voice_sdk.audio.fusion_engine import FusionEngine  # noqa: E402
+
+PAGING_INPUTS = [
+    {"text": "I want to kill myself"}, {"text": "I'm not okay"},
+    {"text": "I'm scared for my safety"}, {"text": "now he's starting to break my neck"},
+    {"text": "my mom is not okay can you get someone"},
+    {"nonverbal": {"symbol": "help"}}, {"acoustic_key": "grunt_distress"},
+]
+
+
+@pytest.mark.parametrize("kwargs", PAGING_INPUTS)
+def test_M_the_human_is_reached_before_and_without_the_reply(kwargs, monkeypatch):
+    from christman_voice_sdk.synthesis import speech_response
+
+    order = []
+    pager = Pager()
+
+    def page(result, context):
+        order.append("page")
+        return pager(result, context)
+
+    turn = Hearing(crisis_callback=page).hear(**kwargs)
+    # The being's reply comes after, and fails: the page already happened.
+    with pytest.raises(Exception):
+        order.append("reply")
+        speech_response.speak("I am here.")
+    assert order == ["page", "reply"]
+    assert turn.decision.safety.delivered_to_human is True
+    assert "confirm_before_acting" not in turn.decision.delivery
+    assert turn.decision.delivery["page_sent_first"] is True
+
+
+@pytest.mark.parametrize("text", ["I want to kill myself", "I'm not okay", "he is choking me"])
+def test_M_nothing_after_the_gate_can_hold_the_page(text, monkeypatch):
+    from christman_voice_sdk.audio import fusion_engine as fe
+
+    def broken(*a, **k):
+        raise RuntimeError("the reply path failed")
+
+    # Everything that builds the mode, the pace and the delivery comes after
+    # the page. Break it all: the page still went.
+    monkeypatch.setattr(fe.Silicon, "retrieve", broken)
+    monkeypatch.setattr(fe.FusionEngine, "_delivery", staticmethod(broken))
+    pager = Pager()
+    eng = FusionEngine(safety_callback=harm_frame_safety, crisis_callback=pager)
+    with pytest.raises(RuntimeError, match="reply path failed"):
+        eng.fuse(text)
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == text

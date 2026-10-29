@@ -48,9 +48,12 @@ class Pager:
         return True
 
 
+# Everett, 2026-10-29 (ruling I, the silent alarm): danger (the grunt, the
+# help symbol) goes to a human and is never spoken. Needs (pain, medicine)
+# go to a human and ARE spoken.
 @pytest.mark.parametrize("kwargs,says", [
-    ({"acoustic_key": "grunt_distress"}, "I need help right now."),
-    ({"nonverbal": {"symbol": "help"}}, "I need help."),
+    ({"acoustic_key": "grunt_distress"}, None),
+    ({"nonverbal": {"symbol": "help"}}, None),
     ({"nonverbal": {"symbol": "pain"}}, "I'm in pain."),
     ({"nonverbal": {"symbol": "medicine"}}, "I need my medicine."),
 ])
@@ -62,11 +65,11 @@ def test_distress_pages_a_human_and_the_person_still_speaks(kwargs, says):
     assert turn.decision.safety.reason == "nonverbal_distress"
     assert turn.decision.safety.delivered_to_human is True
     assert len(pager.calls) == 1
-    # the human is shown what the person said
-    shown = [d["message"] for d in pager.calls[0][1]["nonverbal_distress"]]
-    assert shown == [says]
-    # the hold is on the being's reply, not on the person
+    # the human is shown what the person signalled
+    shown = [d["intent"] for d in pager.calls[0][1]["nonverbal_distress"]]
+    assert shown and all(shown)
     assert turn.person_message == says
+    assert turn.decision.safety.silent_alarm is (says is None)
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -86,7 +89,8 @@ def test_no_page_without_distress(kwargs):
 
 def test_stimming_is_self_regulation_and_unknown_is_silence():
     h = Hearing(crisis_callback=Pager())
-    assert h.hear(acoustic_key="vocal_stimming").person_message == "I'm regulating."
+    # Ruling J: a built-in generic feeling from the microphone is not spoken.
+    assert h.hear(acoustic_key="vocal_stimming").person_message is None
     assert h.hear(acoustic_key="unknown").person_message is None
 
 
@@ -120,7 +124,8 @@ def test_distress_below_the_speaking_threshold_still_pages():
     pager = Pager()
     turn = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(
         nonverbal={"symbol": "help"})
-    assert turn.person_message == "I need help."   # pressed: spoken like a word
+    assert turn.person_message is None             # help is danger: silent (ruling I)
+    assert turn.decision.safety.silent_alarm is True
     assert len(pager.calls) == 1                   # and a human is reached
     pager = Pager()
     turn = Hearing(crisis_callback=pager, nonverbal_engine=engine).hear(
@@ -143,7 +148,7 @@ def _nv():
 def test_distress_is_not_outvoted():
     r = _nv().process_multimodal_input(gesture="nod", sound="grunt_distress")
     assert r["intent"] == "help"
-    assert r["message"] == "I need help right now."
+    assert r["message"] is None and r["silent_alarm"] is True   # ruling I
 
 
 def test_winning_intent_speaks_from_its_own_strongest_reading():
@@ -188,8 +193,9 @@ def test_receiver_takes_the_clients_acoustic_key(pager, status):
         code, body = _post(port, cr.ACOUSTIC_PATH, {"key": "grunt_distress"})
         assert code == status, body
         if status == 200:
-            assert body["decision"]["mode"] == MODE_SAFETY_HOLD
-            assert body["person_message"] == "I need help right now."
+            # The silent alarm: the device that sent the key is told nothing.
+            assert body == {"received": True}
+            assert receiver.state.ring[0].decision.mode == MODE_SAFETY_HOLD
         else:
             assert body["error"] == "crisis_not_delivered"
         code, _ = _post(port, cr.ACOUSTIC_PATH, {"nokey": 1})

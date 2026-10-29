@@ -144,7 +144,10 @@ def test_held_safety_hold_delivery_is_mains():
     assert d.mode == MODE_SAFETY_HOLD
     assert d.delivery["pace"] == "normal"
     assert d.delivery["no_rush"] is True
-    assert d.delivery["confirm_before_acting"] is False
+    # Ruling M: no "confirm before acting" on a safety hold at all; the page
+    # went first.
+    assert "confirm_before_acting" not in d.delivery
+    assert d.delivery["page_sent_first"] is True
     assert "safety_flag" not in d.delivery
 
 
@@ -159,12 +162,18 @@ def test_own_not_okay_pages_a_human():
         assert len(paged) == 1
 
 
-def test_plain_words_steer_their_domain():
-    for text, domain in (("remind me to call mom", "memory"),
-                         ("can you read this to me", "voice"),
-                         ("breathe with me", "grounding")):
+def test_no_built_in_plain_word_list_steers_the_domain():
+    # Everett, 2026-10-29 (ruling N): everyday words steer only from what is
+    # learned for that client. No built-in list of plain words does.
+    from christman_voice_sdk.audio import fusion_engine as fe
+
+    assert not hasattr(fe.Silicon, "PLAIN_WORD_WEIGHT")
+    assert not hasattr(fe.Silicon, "_surviving_terms")
+    for text in ("remind me to call mom", "can you read this to me", "breathe with me",
+                 "please speak to me", "schedule it", "listen"):
         d = _engine().fuse(text)
-        assert d.silicon["dominant_domain"] == domain, (text, d.silicon)
+        assert d.silicon["dominant_domain"] is None, (text, d.silicon)
+        assert set(d.silicon["domain_scores"].values()) == {0.0}, (text, d.silicon)
 
 
 def test_ordinary_turn_stays_standard():
