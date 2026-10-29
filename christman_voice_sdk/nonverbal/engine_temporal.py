@@ -81,6 +81,16 @@ WHAT CHANGED AND WHY
    older map with no such field works exactly as before for every meaning
    that is not danger.
 
+11. THE BUILT-IN MAP SPOKE FOR THE CLIENT. 2026-10-29 review, Everett's
+   rulings J and I. The built-in map still said "Go back." for Wave Left,
+   "Move forward." for Wave Right, and "I need help." for Hand Up. Ruling J:
+   the camera speaks only meanings learned for that client, so the built-in
+   map carries no wording at all; every built-in reading is reported (label,
+   intent, confidence) and says nothing. Ruling I: help and danger are the
+   silent alarm, so Hand Up ("Request attention") pages a human, silently,
+   and is never spoken, from the built-in map or from the client's own map.
+   A help or danger meaning never reaches `_speaks`.
+
 9. THE SYSTEM'S WORDS WERE GLUED TO THE PERSON'S. 2026-10-29.
    `enhanced_response` was "I see your gesture. I need help." — one string,
    so a voice reading it aloud spoke the system's sentence as the person's.
@@ -114,27 +124,31 @@ logger.addHandler(logging.NullHandler())
 ALLOW_PICKLE_ENV = "CORTI_ALLOW_PICKLE_MODELS"
 
 #: The built-in map. An entry carries its meaning, not a fixed speak/silent
-#: flag (Everett, 2026-10-29, ruling L). Whether it is spoken is decided by
-#: the conditions in `_speaks`. `pages` marks a signal that goes to a human
-#: (Hand Up, ruling 5).
+#: flag (Everett, 2026-10-29, ruling L), and NO WORDING (ruling J: the
+#: camera speaks only meanings learned for that client). Each built-in
+#: reading is reported by its label and intent and says nothing; a spoken
+#: meaning comes only from the client's own language map. `pages` marks a
+#: signal that goes to a human (Hand Up, ruling 5); Hand Up is help, so it is
+#: the silent alarm (ruling I).
 DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, Any]] = {
-    "Hand Up": {"intent": "Request attention", "message": "I need help.", "pages": True},
-    "Wave Left": {"intent": "Previous mode", "message": "Go back."},
-    "Wave Right": {"intent": "Next mode", "message": "Move forward."},
-    "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed."},
-    "Looking Up": {"intent": "Thinking", "message": "I'm thinking."},
-    "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy."},
-    "Neutral": {"intent": "Calm", "message": "I'm fine."},
-    "Happy": {"intent": "Joy", "message": "I'm happy."},
-    "Sad": {"intent": "Unhappy", "message": "I'm sad."},
-    "Angry": {"intent": "Upset", "message": "I'm angry."},
-    "Fear": {"intent": "Worried", "message": "I'm scared."},
-    "Surprise": {"intent": "Shocked", "message": "I'm surprised."},
+    "Hand Up": {"intent": "Request attention", "pages": True},
+    "Wave Left": {"intent": "Previous mode"},
+    "Wave Right": {"intent": "Next mode"},
+    "Head Jerk": {"intent": "Stress (tick)"},
+    "Looking Up": {"intent": "Thinking"},
+    "Rapid Blinking": {"intent": "Discomfort"},
+    "Neutral": {"intent": "Calm"},
+    "Happy": {"intent": "Joy"},
+    "Sad": {"intent": "Unhappy"},
+    "Angry": {"intent": "Upset"},
+    "Fear": {"intent": "Worried"},
+    "Surprise": {"intent": "Shocked"},
 }
 
 #: Built-in readings of a generic feeling: a face, an eye movement, a tic.
-#: Not spoken (ruling J). A meaning in the client's own language map is a
-#: meaning learned for that client, and is spoken unless it is danger.
+#: Not spoken (ruling J); the built-in map carries no wording for any of
+#: them. A meaning in the client's own language map is a meaning learned for
+#: that client, and is spoken unless it is help or danger.
 GENERIC_FEELING_INTENTS = frozenset({
     "Stress (tick)", "Thinking", "Discomfort", "Calm", "Joy", "Unhappy",
     "Upset", "Worried", "Shocked",
@@ -159,6 +173,15 @@ def _pages(entry: Dict[str, Any]) -> bool:
     """This map entry goes to the crisis gate and a human."""
     return (entry.get("pages") is True or entry.get("intent") in PAGING_INTENTS
             or _danger(entry))
+
+
+def _silent_alarm(entry: Dict[str, Any]) -> bool:
+    """
+    Help or danger: paged silently, never spoken, never announced (Everett's
+    ruling I: help and danger are the silent alarm). Hand Up's "Request
+    attention" is help, from the built-in map or the client's own.
+    """
+    return _danger(entry) or entry.get("intent") in PAGING_INTENTS
 
 
 #: The system's own words about what it saw. Never joined to the person's.
@@ -560,18 +583,28 @@ class TemporalNonverbalEngine:
                 modality=modality, status="below_threshold",
                 expression=expression, intent=entry.get("intent"),
                 confidence=confidence, message=None,
+                # Ruling M: nothing is held for confirmation; the being asks.
                 reason=(f"confidence {confidence:.3f} is below the "
-                        f"{self.confidence_threshold} threshold — please confirm"),
+                        f"{self.confidence_threshold} threshold: reported, not spoken"),
                 # Below the speaking bar is not below the paging bar.
                 pages=_pages(entry),
-                silent_alarm=_danger(entry),
+                silent_alarm=_silent_alarm(entry),
             )
 
         # .get, not [] — a hand-edited map missing a key took the engine down.
-        # Silent or vocal by the conditions, not by a flag (rulings I, J, L):
-        # see _speaks. A danger meaning never speaks, learned or not.
-        danger = _danger(entry)
-        speaks = self._speaks(entry, danger)
+        # Help and danger first (ruling I): the silent alarm. They never reach
+        # _speaks, learned or built in.
+        if _silent_alarm(entry):
+            return ClassificationResult(
+                modality=modality, status="ok",
+                expression=expression, intent=entry.get("intent"),
+                message=None, confidence=confidence,
+                reason=(f"{expression!r} is help or danger: it goes to a human "
+                        "silently and is never spoken (silent alarm)"),
+                pages=True, silent_alarm=True,
+            )
+        # Silent or vocal by the conditions, not by a flag (rulings J, L).
+        speaks = self._speaks(entry)
         return ClassificationResult(
             modality=modality, status="ok",
             expression=expression,
@@ -579,27 +612,28 @@ class TemporalNonverbalEngine:
             message=entry.get("message") if speaks else None,
             confidence=confidence,
             reason=None if speaks else (
-                f"{expression!r} is danger: it goes to a human silently and is "
-                "never spoken (silent alarm)" if danger else
-                f"{expression!r} is observed, not said — the system does not "
-                "speak a feeling for the person"
+                f"{expression!r} has no meaning learned for this client: the "
+                "reading is reported, not spoken"
             ),
             pages=_pages(entry),
-            silent_alarm=danger,
+            silent_alarm=False,
         )
 
-    def _speaks(self, entry: Dict[str, Any], danger: bool) -> bool:
+    def _speaks(self, entry: Dict[str, Any], danger: bool = False) -> bool:
         """
         Silent or vocal, by the conditions (Everett, 2026-10-29, rulings I, J,
-        L). Danger: silent. A meaning from the client's own map: spoken. A
-        built-in generic feeling (face, eye, tic): silent. Any other built-in
-        meaning (Hand Up's request, the waves): spoken.
+        L). Help or danger: silent, always (ruling I; `_classify` never asks
+        about them, and this refuses them again in case anything else does).
+        Ruling J: the camera speaks only meanings learned for that client, so
+        a meaning speaks only when it comes from the client's own map and
+        carries words. Every built-in reading is silent.
         """
-        if danger:
+        if danger or _silent_alarm(entry):
             return False
-        if getattr(self, "language_map_source", "built_in") == "client":
-            return True
-        return entry.get("intent") not in GENERIC_FEELING_INTENTS
+        if getattr(self, "language_map_source", "built_in") != "client":
+            return False
+        message = entry.get("message")
+        return isinstance(message, str) and bool(message.strip())
 
     def classify_gesture_sequence(self) -> Dict[str, Any]:
         return self._classify("gesture", self.gesture_buffer).to_dict()

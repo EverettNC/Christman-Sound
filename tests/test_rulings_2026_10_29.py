@@ -486,7 +486,9 @@ def test_5_hand_up_pages_a_human():
     shown = pager.calls[0][1]["nonverbal_distress"]
     assert [d["input"] for d in shown] == ["Hand Up"]
     assert shown[0]["intent"] == "Request attention"
-    assert turn.person_message == "I need help."     # the client still speaks
+    # Ruling I: help is the silent alarm. Nothing is spoken, nothing shown.
+    assert turn.person_message is None
+    assert turn.decision.safety.silent_alarm is True and turn.decision.safety.hold_marker == ""
 
 
 def test_5_hand_up_pages_even_from_a_map_on_disk_without_the_pages_field(tmp_path):
@@ -904,12 +906,49 @@ def test_I_needs_are_spoken_as_normal(kwargs, says, pages):
         assert turn.decision.safety.silent_alarm is False
 
 
-def test_I_hand_up_is_a_need_spoken_and_paged():
+def test_I_hand_up_is_help_paged_silently_and_never_spoken():
+    # Ruling I (2026-10-29 review): the built-in Hand Up "I need help." is
+    # never spoken. Help and danger are the silent alarm.
     pager = Pager()
     turn = Hearing(crisis_callback=pager, temporal_engine=_hand_up_engine()).hear(
         temporal={"gesture_features": np.zeros(4)})
-    assert turn.person_message == "I need help."
-    assert len(pager.calls) == 1 and turn.decision.safety.silent_alarm is False
+    _assert_silent_and_paged(turn, pager)
+
+
+def test_I_hand_up_from_the_clients_own_map_is_still_never_spoken(tmp_path):
+    # Even a client's map that words Hand Up as "I need help." does not speak
+    # it: help never reaches _speaks.
+    path = tmp_path / "language_map.json"
+    path.write_text(json.dumps({"Hand Up": {"intent": "Request attention",
+                                            "message": "I need help."}}), encoding="utf-8")
+    pager = Pager()
+    engine = _hand_up_engine(language_map_path=str(path))
+    assert engine.language_map_source == "client"
+    turn = Hearing(crisis_callback=pager, temporal_engine=engine).hear(
+        temporal={"gesture_features": np.zeros(4)})
+    _assert_silent_and_paged(turn, pager)
+
+
+def test_I_no_help_or_danger_meaning_reaches_speaks(monkeypatch):
+    from christman_voice_sdk.nonverbal import engine_temporal as et
+
+    asked = []
+    real = et.TemporalNonverbalEngine._speaks
+
+    def watch(self, entry, danger=False):
+        asked.append(entry.get("intent"))
+        return real(self, entry, danger)
+
+    monkeypatch.setattr(et.TemporalNonverbalEngine, "_speaks", watch)
+    pager = Pager()
+    Hearing(crisis_callback=pager, temporal_engine=_hand_up_engine()).hear(
+        temporal={"gesture_features": np.zeros(4)})
+    assert "Request attention" not in asked and len(pager.calls) == 1
+    # And asked directly, it refuses help and danger whatever the map says.
+    t = TemporalNonverbalEngine(sequence_length=10)
+    t.language_map_source = "client"
+    assert real(t, {"intent": "Request attention", "message": "I need help."}) is False
+    assert real(t, {"intent": "Worried", "message": "I'm scared."}) is False
 
 
 def test_I_the_device_that_sent_the_key_is_told_nothing():
@@ -1016,6 +1055,22 @@ def test_J_a_built_in_generic_feeling_is_not_spoken(kwargs):
     assert turn.person_message is None
 
 
+@pytest.mark.parametrize("nonverbal", [
+    {"gesture": "wave"}, {"gesture": "nod"}, {"gesture": "thumbs_up"}, {"gesture": "shake"},
+    {"gesture": "open_palm"}, {"eye_data": {"region": "center"}},
+    {"eye_data": {"region": "bottom_right"}}, {"eye_data": {"region": "top_left"}},
+])
+def test_J_the_camera_speaks_only_meanings_learned_for_that_client(nonverbal):
+    # 2026-10-29 review: a built-in wave said "Hello there!", a nod "Yes, I
+    # agree.", a thumbs up "I like this.", a centre gaze "I select this option."
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager).hear(nonverbal=nonverbal)
+    assert turn.person_message is None
+    assert turn.nonverbal["status"] == "ok"                 # the reading is still reported
+    assert turn.nonverbal["primary"]["message"] is None
+    assert pager.calls == []
+
+
 @pytest.mark.parametrize("map_name,key,arg", [
     ("eye_regions", "top_left", {"eye_data": {"region": "top_left"}}),
     ("gestures", "stimming", {"gesture": "stimming"}),
@@ -1046,16 +1101,28 @@ def test_L_a_speaks_flag_in_a_map_decides_nothing(tmp_path):
     assert silent.decision.safety.silent_alarm is True
 
 
-def test_L_an_old_style_temporal_map_works_as_before_except_danger(tmp_path):
-    old = {k: {"intent": v["intent"], "message": v["message"]} for k, v in DEFAULT_LANGUAGE_MAP.items()}
+#: A client's language map in the old style: intent and message, no other field.
+OLD_STYLE_MAP = {
+    "Hand Up": {"intent": "Request attention", "message": "I need help."},
+    "Wave Left": {"intent": "Previous mode", "message": "Go back."},
+    "Neutral": {"intent": "Calm", "message": "I'm fine."},
+    "Fear": {"intent": "Worried", "message": "I'm scared."},
+}
+
+
+def test_L_an_old_style_temporal_map_works_as_before_except_help_and_danger(tmp_path):
+    old = OLD_STYLE_MAP
     path = tmp_path / "old_map.json"
     path.write_text(json.dumps(old), encoding="utf-8")
     t = TemporalNonverbalEngine(sequence_length=10, language_map_path=str(path))
-    assert t._speaks(old["Neutral"], danger=False) is True      # the client's own map: spoken
-    assert t._speaks(old["Wave Left"], danger=False) is True
+    assert t._speaks(old["Neutral"]) is True                    # the client's own map: spoken
+    assert t._speaks(old["Wave Left"]) is True
+    assert t._speaks(old["Hand Up"]) is False                   # help: the silent alarm (ruling I)
     built_in = TemporalNonverbalEngine(sequence_length=10)
-    assert built_in._speaks(DEFAULT_LANGUAGE_MAP["Neutral"], danger=False) is False
-    assert built_in._speaks(DEFAULT_LANGUAGE_MAP["Hand Up"], danger=False) is True
+    # Ruling J: no built-in meaning speaks, and the built-in map has no words.
+    for key in DEFAULT_LANGUAGE_MAP:
+        assert built_in._speaks(DEFAULT_LANGUAGE_MAP[key]) is False
+    assert not any("message" in e for e in DEFAULT_LANGUAGE_MAP.values())
     for engine in (t, built_in):
         assert engine._speaks(old["Fear"], danger=True) is False
     assert not any("speaks" in e for e in DEFAULT_LANGUAGE_MAP.values())

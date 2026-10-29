@@ -156,8 +156,20 @@ def test_winning_intent_speaks_from_its_own_strongest_reading():
     r = _nv().process_multimodal_input(gesture="wave", eye_data={"region": "center"},
                                        sound="click")
     assert r["intent"] == "select"
+    # Ruling J: the built-in eye region carries no wording, so the winning
+    # intent speaks from the one reading of it that has words: the click.
     assert r["speakable"] is True
-    assert r["message"] == "I select this option."
+    assert r["message"] == "I choose this option."
+
+
+@pytest.mark.parametrize("kwargs", [{"gesture": "wave"}, {"gesture": "nod"},
+                                    {"gesture": "thumbs_up"}, {"eye_data": {"region": "center"}}])
+def test_the_cameras_built_in_readings_are_reported_with_no_wording(kwargs):
+    # Ruling J: the camera speaks only meanings learned for that client.
+    r = _nv().process_multimodal_input(**kwargs)
+    assert r["status"] == "ok" and r["intent"]            # the reading is still reported
+    assert r["message"] is None and r["speakable"] is False
+    assert "no meaning learned for this client" in r["primary"]["reason"]
 
 
 def test_no_disk_engine_reads_and_writes_nothing(tmp_path, monkeypatch):
@@ -234,17 +246,48 @@ def test_temporal_with_no_models_says_so():
     assert "model directory" in t.load_errors["gesture"]
 
 
-def test_temporal_deliberate_gesture_speaks_alone_without_a_prefix():
+def test_temporal_learned_gesture_speaks_alone_without_a_prefix(tmp_path):
+    # The client's own map: Wave Right means "I want the next one." for them.
+    path = tmp_path / "language_map.json"
+    path.write_text(json.dumps({"Wave Right": {"intent": "Next mode",
+                                               "message": "I want the next one."}}),
+                    encoding="utf-8")
+    t = TemporalNonverbalEngine(sequence_length=10, language_map_path=str(path))
+    # four gesture labels; "Wave Right" (index 2) is centred at 0, the rest far away
+    t.models["gesture"] = CentroidModel([[_seq(-100.0)], [_seq(-50.0)], [_seq(0.0)], [_seq(50.0)]])
+    for frame in _seq(0.0)[:-1]:
+        t.add_gesture_features(frame)
+    r = t.process_multimodal_sequence(gesture_features=np.zeros(4))
+    assert r["primary_result"]["expression"] == "Wave Right"
+    assert r["message"] == "I want the next one."
+    assert r["system_note"] == "I see your gesture."
+    assert r["system_note"] not in r["message"]
+
+
+@pytest.mark.parametrize("index,expression", [(1, "Wave Left"), (2, "Wave Right")])
+def test_temporal_built_in_gesture_is_reported_with_no_wording(index, expression):
+    # Ruling J: "Go back." and "Move forward." are gone from the built-in map.
     t = TemporalNonverbalEngine(sequence_length=10)
-    # four gesture labels; "Hand Up" is centred at 0, the rest far away
+    t.models["gesture"] = CentroidModel([[_seq(50.0 * (i - index))] for i in range(4)])
+    for frame in _seq(0.0)[:-1]:
+        t.add_gesture_features(frame)
+    r = t.process_multimodal_sequence(gesture_features=np.zeros(4))
+    assert r["primary_result"]["expression"] == expression
+    assert r["primary_result"]["status"] == "ok"
+    assert r["message"] is None
+    assert "no meaning learned for this client" in r["primary_result"]["reason"]
+
+
+def test_temporal_hand_up_is_the_silent_alarm():
+    # Ruling I: help is the silent alarm. Hand Up is never spoken.
+    t = TemporalNonverbalEngine(sequence_length=10)
     t.models["gesture"] = CentroidModel([[_seq(0.0)], [_seq(50.0)], [_seq(100.0)], [_seq(150.0)]])
     for frame in _seq(0.0)[:-1]:
         t.add_gesture_features(frame)
     r = t.process_multimodal_sequence(gesture_features=np.zeros(4))
     assert r["primary_result"]["expression"] == "Hand Up"
-    assert r["message"] == "I need help."
-    assert r["system_note"] == "I see your gesture."
-    assert r["system_note"] not in r["message"]
+    assert r["message"] is None and r["system_note"] is None
+    assert r["silent_alarm"] is True and r["primary_result"]["pages"] is True
 
 
 def test_temporal_face_reading_is_observed_not_spoken():
@@ -256,7 +299,7 @@ def test_temporal_face_reading_is_observed_not_spoken():
     r = t.process_multimodal_sequence(emotion_features=np.zeros(4))
     assert r["primary_result"]["expression"] == "Neutral"
     assert r["message"] is None            # never "I'm fine."
-    assert "observed, not said" in r["primary_result"]["reason"]
+    assert "reported, not spoken" in r["primary_result"]["reason"]
 
 
 def test_temporal_low_confidence_does_not_speak():
@@ -298,8 +341,9 @@ def test_a_hand_up_reading_reaches_a_human():
     trained model that produces the reading is not on this machine."""
     from christman_voice_sdk.audio.hearing import harm_frame_safety
     hand_up = {"modality": "temporal:gesture", "input": "Hand Up",
-               "intent": "Request attention", "message": "I need help.",
-               "confidence": 0.9}
+               "intent": "Request attention", "message": None,
+               "confidence": 0.9, "silent_alarm": True}
     r = harm_frame_safety("", {"nonverbal_distress": [hand_up]})
     assert r.status == "hard_block" and r.reason == "nonverbal_distress"
+    assert r.silent_alarm is True and r.hold_marker == ""     # ruling I
 
