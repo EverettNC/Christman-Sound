@@ -3,7 +3,7 @@ speech_response.py — speak a being's reply.
 
 WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
 -----------------------------------------------------
-Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. This
+Everett's ruling: the rebuild cuts every outside speech engine. This
 file was nothing but a wrapper around pyttsx3, the operating system's speech
 engine. The original is kept whole at
 quarantine/2026-10_outside_voices/christman_voice_sdk/synthesis/speech_response.py.

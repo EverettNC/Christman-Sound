@@ -103,15 +103,15 @@ def test_the_cut_engine_files_are_gone_from_the_package():
         assert not (engines / name).exists(), f"{name} is back in the package"
 
 
-def test_local_speak_fallback_raises_the_typed_failure():
-    # voice_capture_client imports websockets only inside speak_via_derek (2026-10-28).
-    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+def test_capture_client_speaks_only_through_the_package_mouth():
+    # No fallback voice and no relay: without the caller's voice, nothing is voiced and the reason says so.
     from christman_voice_sdk.integration import voice_capture_client as vcc
+    from christman_voice_sdk.synthesis.voice_synthesis import NothingVoiced
 
-    with pytest.raises(SynthesisUnavailable) as excinfo:
-        vcc.local_speak_fallback("hello")
-    assert excinfo.value.available is False
-    assert excinfo.value.reason == SOVEREIGN_NOT_WIRED
+    assert not hasattr(vcc, "local_speak_fallback")
+    with pytest.raises(NothingVoiced) as excinfo:
+        vcc.speak("hello", None)
+    assert excinfo.value.available is False and "no voice given" in excinfo.value.reason
 
 
 # ------------------------------------------- the OCR read-aloud, in the caller's voice

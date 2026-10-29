@@ -18,13 +18,12 @@ The voice is here, in plain Python and C:
   - voice_profile.py  a voice's measured profile
   - logger.py       logging
 
-AlphaVox (backend, checked at EverettNC/AlphaVox 3783a5c, 2026-10-28)
-imports christman_sound.logger, .dsp, .lexicon and .synth, and its voicepack
-script imports .formants. It does not import christman_sound.core.
+The package has no voice of its own: a being passes its own voice (a voice
+profile file it measured with scripts/measure_voice.py, or a frame voice
+folder) to synth.synthesize() and speak().
 
 `christman_sound.core` is kept for the record. Everett's standing ruling: it
 is called by nothing, is never wired into anything, and is not touched.
-(This docstring used to say AlphaVox's routers import it; they do not.)
 
 The modular SDK is `christman_voice_sdk`: hearing, recognition, tone, timbre,
 the speaking engine (synthesis/voice_synthesis.py, which renders through

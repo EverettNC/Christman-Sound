@@ -3,9 +3,10 @@
 # The Christman AI Project — Luma Cognify AI
 # ==============================================================================
 """
-integration/voice_capture_client.py measures at the recording's own rate.
+integration/voice_capture_client.py measures at the recording's own rate, and
+speaks only through the package's own mouth in the caller's voice.
 
-sdk-review A, finding 7: it assumed 44100 Hz for every input, so AlphaVox's
+sdk-review A, finding 7: it assumed 44100 Hz for every input, so a being's
 24 kHz phrases read 1.3 to 1.9 times too high; its pitch lag was one sample
 short; its "formants" were FFT peaks in overlapping bands (F1 equalled F2 on
 5 runs). Now: christman_yin at the rate given, LPC formants from
@@ -124,20 +125,61 @@ def test_a_missing_library_raises(tmp_path, monkeypatch):
         vc.extract_frequency_signature(np.ones(24000, dtype=np.float32), 24000)
 
 
-def test_alphavox_phrases_read_from_the_file_rate(dsp):
-    folder = os.environ.get("ALPHAVOX_PHRASES_DIR")
+def test_recorded_phrases_read_from_the_file_rate(dsp):
+    folder = os.environ.get("CHRISTMAN_VOICE_RECORDINGS")
     if not folder:
-        pytest.skip("not run: needs ALPHAVOX_PHRASES_DIR (AlphaVox data/phrases/alphavox_verified, "
-                    "a fresh clone); runs on Everett's Mac")
-    files = sorted(Path(folder).glob("*.wav"))
-    assert len(files) == 26
+        pytest.skip("not run: needs CHRISTMAN_VOICE_RECORDINGS (a folder of a being's recorded phrases); "
+                    "runs on Everett's Mac")
+    files = sorted(Path(folder).expanduser().glob("*.wav"))
+    assert files, folder
     for i, path in enumerate(files):
         sig = vc.extract_frequency_signature_from_file(str(path))
-        assert sig["sample_rate"] == 24000, path.name
+        y, header_sr = vm.read_wav(path)
+        assert sig["sample_rate"] == header_sr, path.name
         assert 90.0 < sig["fundamental_hz"] < 210.0, (path.name, sig["fundamental_hz"])
         f1, f2, f3 = sig["formant_f1_hz"], sig["formant_f2_hz"], sig["formant_f3_hz"]
         assert f1 is not None and f1 < f2 < f3, (path.name, f1, f2, f3)
-        if i % 5 == 0:
-            y, sr = vm.read_wav(path)
+        if i % 5 == 0 and header_sr == 24000:
             at44 = vc.extract_frequency_signature(resample_poly(y, 147, 80).astype(np.float32), 44100)
             assert abs(at44["fundamental_hz"] - sig["fundamental_hz"]) < 2.0, path.name
+
+
+# ------------------------------------------------------------ speaking
+
+
+def test_no_relay_and_no_outside_engine_is_left():
+    for gone in ("local_speak_fallback", "run_speak", "DEFAULT_PROFILE"):
+        assert not hasattr(vc, gone), gone
+    assert not [n for n in dir(vc) if n.startswith("speak_via") or n.endswith("_WS_URI")]
+    src = Path(vc.__file__).read_text(encoding="utf-8")
+    for outside in ("import websockets", "import pyttsx3", "import subprocess", "ws://"):
+        assert outside not in src, outside
+
+
+def test_speak_needs_the_callers_voice(dsp):
+    from christman_voice_sdk.synthesis.voice_synthesis import NothingVoiced
+
+    with pytest.raises(NothingVoiced, match="no voice given"):
+        vc.speak("hello", None)
+    with pytest.raises(TypeError):
+        vc.speak("hello")  # type: ignore[call-arg]
+
+
+def test_speak_goes_through_the_package_mouth_in_the_callers_voice(dsp, tmp_path, monkeypatch):
+    """It plays, or raises PlaybackFailed with the written path: never another voice, never a quiet return."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from voice_fixture import write_test_voice
+    from christman_voice_sdk.synthesis import voice_synthesis as vs
+
+    lex = tmp_path / "lex.txt"
+    lex.write_text("hello hello h_B @_I l_I oU_E\n", encoding="utf-8")
+    monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path / "cache")
+    voice = write_test_voice(tmp_path / "voice")
+    try:
+        path = vc.speak("hello", str(voice), str(lex))
+    except vs.PlaybackFailed as exc:
+        written = str(exc).split("audio written to ", 1)[1].split(" but NOT played", 1)[0]
+        assert Path(written).is_file() and Path(written).stat().st_size > 44
+        pytest.skip(f"not run: no speaker reachable here ({dsp.play_backend()}); the WAV was made in the "
+                    f"caller's voice and playback is checked on Everett's Mac: {exc}")
+    assert Path(path).is_file()

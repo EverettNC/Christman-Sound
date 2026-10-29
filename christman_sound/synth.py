@@ -7,57 +7,54 @@
 """
 christman_sound.synth — the sovereign voice: text or phones in, float PCM out.
 
-WHAT CHANGED AND WHY (added 2026-10-17)
----------------------------------------
-Step 1 of giving AlphaVox a voice that is ours: no outside speech engine
-(no Coqui/XTTS, SoVITS, espeak, `say`, pyttsx3, gTTS, browser speech) and,
-per Everett, nothing but C and the Python standard library. The synthesis is
-christman_synth.c, the C port of Codec War's synthesizer; words become phones
-through christman_sound.lexicon (Everett's Vosk lexicon); samples are written
-with the stdlib `wave` module and played through christman_play. The library
-is reached only through christman_sound.dsp.get_dsp() — the one loader.
+No outside speech engine (no Coqui/XTTS, SoVITS, espeak, `say`, pyttsx3,
+gTTS, browser speech) and, per Everett, nothing but C and the Python
+standard library. The synthesis is christman_synth.c, the C port of Codec
+War's synthesizer, and christman_vocoder.c for a frame voice; words become
+phones through christman_sound.lexicon (Everett's Vosk lexicon); samples are
+written with the stdlib `wave` module and played through christman_play. The
+library is reached only through christman_sound.dsp.get_dsp() — the one
+loader.
+
+THE CALLER'S VOICE. This package has no voice of its own and no default
+voice. Every call to synthesize() or speak() names the voice to speak in:
 
     from christman_sound.synth import synthesize, speak
-    result = synthesize("hello", f0=148.0, rate=1.0)      # needs a lexicon
+    result = synthesize("hello", voice="/path/to/voice_profile.json")
+    result = synthesize("hello", voice=load_voice_profile(path))   # the same
+    result = synthesize("hello", voice="/path/to/frame_voice_folder")
     result.write_wav("hello.wav")
-    speak(phones=[("SIL", 0.03), ("AA", 0.5), ("SIL", 0.03)])
+
+`voice` is one of:
+  * a VoiceProfile (christman_sound.voice_profile.load_voice_profile), or
+    the path of a voice profile file. Its F0 median and pitch contour give
+    the pitch, its rate the rate, its measured vowel F1-F3 replace Codec
+    War's for those vowels, its measured glides draw the gliding vowels; it
+    is rendered by christman_synth_clear.
+  * a FrameVoice (christman_sound.stitch.load_frame_voice), or the path of a
+    frame voice folder (built from the voice's own recordings by
+    scripts/build_voice_bank.py). The sentence is spoken from stretches of
+    the voice's own frames, shaped by its measured profile and the named
+    controls, and rendered by christman_vocoder (the port of Codec War's
+    vocoder.ts).
+With no voice, NoVoice is raised. Nothing is spoken in a voice the caller
+did not pass.
 
 Text follows Codec War's textToPhones (phonemes.ts:222-244) exactly: a 0.12 s
 SIL to open, each word's phones at their table duration times 1.05 for the
 first and last phone of the word and 0.95 for the ones between, and a 0.08 s
 SIL after every word. The one addition (Everett's ruling, 2026-10-18): each
 phone's duration is also multiplied by the lexicon mapping's own factor, which
-is 1.0 except for the flap (D x 0.5) and the long E (EH x 1.625). Then every duration is divided by `rate` (synth.ts:105).
-Where Codec War spells an unknown word letter by letter, this raises
-WordNotInLexicon. Where it would voice an empty string as 0.2 s of silence,
-this raises NothingToSay.
+is 1.0 except for the flap (D x 0.5) and the long E (EH x 1.625). Then every
+duration is divided by `rate` (synth.ts:105). Where Codec War spells an
+unknown word letter by letter, this raises WordNotInLexicon. Where it would
+voice an empty string as 0.2 s of silence, this raises NothingToSay.
 
-AlphaVox's voice (added 2026-10-28). By itself this module speaks Codec
-War's table voice. Pass `voice=load_alphavox_voice()` (christman_sound.
-voice_profile) and it speaks in AlphaVox's voice as measured from AlphaVox's
-own 26 recordings: AlphaVox's F0 median and pitch contour, AlphaVox's rate,
-and AlphaVox's F1-F3 for each vowel measured from at least two tokens, through
-christman_synth_voiced. The recordings and the pitch are AlphaVox's, never
-Everett's; the synthesizer is Everett's.
-
-Rendered clear (added 2026-10-28, later the same day). Through
-christman_synth_voiced, Everett's Filament ear heard AlphaVox's free text as
-"the" (4 of 53 words on twelve sentences). A measured voice is now rendered
-by christman_synth_clear (christman_synth.c says what changed and why): the
-same pitch, rate and vowel rows, plus the voice's measured glides
-(VoiceProfile.glide_rows). SynthResult.renderer names the renderer.
-Without a voice, nothing changed: Codec War's table voice, synth.ts sample
-for sample.
-
-The frame voice (added 2026-10-28, later still). Everett heard the clear
-renderer as "super robotic and nothing like the files I gave" and ruled the
-voice be matched by its numbers. Pass `voice=load_frame_voice(folder)`
-(christman_sound.stitch; the folder is built from the voice's own
-recordings by scripts/build_voice_bank.py) and the sentence is spoken from
-stretches of the voice's own frames, shaped by its measured profile and the
-named controls, and rendered by christman_vocoder (the port of Codec War's
-vocoder.ts). SynthResult.renderer is "christman_vocoder" and
-SynthResult.applied lists every parameter applied, with its value.
+render_codecwar_table() is the bare C engine with Codec War's textbook
+table, at the pitch and rate the caller names. It is how the port is checked
+against Codec War's synth.ts sample for sample, and how a measurement is set
+against the table it replaces. It is not a voice and synthesize() never
+falls back to it.
 
 THE CONTROLS (the names the Voice Creation Center reads from this signature):
   cadence, breath, jitter, shimmer, timbre, articulation, intonation, prosody
@@ -77,13 +74,14 @@ THE CONTROLS (the names the Voice Creation Center reads from this signature):
               movement is kept around it. None = as measured.
 Every control passed is applied and listed in SynthResult.applied, or the
 call raises StitchRefused with the reason; none is accepted and ignored. The
-controls belong to the frame voice: passed without one, they raise
+controls belong to the frame voice: passed with a voice profile, they raise
 ValueError (christman_synth has no breath, jitter or shimmer input).
 """
 
 from __future__ import annotations
 
 import array
+import hashlib
 import re
 import sys
 import wave
@@ -100,12 +98,12 @@ from .dsp import (
     get_dsp,
 )
 from .lexicon import Lexicon, WordNotInLexicon, load_lexicon, normalize_word
-from .voice_profile import VoiceProfile
+from .voice_profile import VoiceProfile, load_voice_profile
 
 __all__ = [
     "CODECWAR_SAMPLE_RATE",
     "CHRISTMAN_SOUND_SAMPLE_RATE",
-    "CODECWAR_F0",
+    "NoVoice",
     "UnknownPhone",
     "NothingToSay",
     "SynthUnavailable",
@@ -115,13 +113,15 @@ __all__ = [
     "TimedPhone",
     "SynthResult",
     "text_to_phones",
+    "resolve_voice",
     "synthesize",
+    "render_codecwar_table",
     "speak",
     "write_wav",
     "FRAME_CONTROLS",
 ]
 
-#: (2026-10-28) The controls a frame voice takes, besides rate and f0.
+#: The controls a frame voice takes, besides rate and f0.
 FRAME_CONTROLS = ("cadence", "breath", "jitter", "shimmer", "timbre", "articulation", "intonation", "prosody", "resonance", "affect")
 #: Marks after which the text pauses: a comma, a full stop and their kin.
 _PAUSE_MARK = re.compile(r"[,.;:!?\u2014]")
@@ -134,12 +134,10 @@ FRAME_PEAK = 0.97
 CODECWAR_SAMPLE_RATE = 16000
 #: christman_sound's standard rate. Also accepted.
 CHRISTMAN_SOUND_SAMPLE_RATE = 22050
-#: Codec War's default pitch, synth.ts:31.
-CODECWAR_F0 = 148.0
-#: (2026-10-28) The two C renderers SynthResult.renderer names.
+#: The two C renderers SynthResult.renderer names.
 RENDERER_CODECWAR = "christman_synth"
 RENDERER_CLEAR = "christman_synth_clear"
-#: (2026-10-28) The frame voice's renderer (christman_vocoder.c, the port of Codec War's vocoder.ts).
+#: The frame voice's renderer (christman_vocoder.c, the port of Codec War's vocoder.ts).
 RENDERER_VOCODER = "christman_vocoder"
 
 # Codec War's textToPhones constants (phonemes.ts:228, 236, 240).
@@ -156,6 +154,10 @@ class UnknownPhone(ValueError):
 
 class NothingToSay(ValueError):
     """The text held no word to voice. Silence is not returned in its place."""
+
+
+class NoVoice(ValueError):
+    """No voice was passed, or what was passed is not one. Nothing was synthesized."""
 
 
 @dataclass(frozen=True)
@@ -178,13 +180,17 @@ class SynthResult:
     f0: Union[float, Tuple[float, ...]]
     rate: float
     engine: str = field(default="christman_synth")
-    #: The measured voice the samples were made with (e.g. "AlphaVox"), or
-    #: None for Codec War's own table voice.
+    #: The name of the caller's voice the samples were made in, or None for
+    #: render_codecwar_table (the bare table, no voice).
     voice: Optional[str] = None
-    #: (2026-10-28) Which C renderer made the samples: "christman_synth"
-    #: (Codec War's synth.ts, sample for sample) or "christman_synth_clear".
+    #: Which C renderer made the samples: "christman_synth" (Codec War's
+    #: synth.ts, sample for sample), "christman_synth_clear" or
+    #: "christman_vocoder".
     renderer: str = field(default="christman_synth")
-    #: (2026-10-28) Frame voice only: every parameter applied, with its value
+    #: The fingerprint of the voice the samples were made in (the profile
+    #: file's SHA-256; see voice_fingerprint), or None for the bare table.
+    voice_fingerprint: Optional[str] = None
+    #: Frame voice only: every parameter applied, with its value
     #: (name, measured, control, applied, value), and how the sentence was cut
     #: (whole recorded words, joins the recordings do not hold).
     applied: List[dict] = field(default_factory=list)
@@ -239,9 +245,87 @@ def text_to_phones(
     return out
 
 
+def resolve_voice(voice) -> Union[VoiceProfile, "FrameVoice"]:
+    """
+    The caller's voice, loaded: a VoiceProfile or FrameVoice as given; a
+    path to a voice profile file (load_voice_profile) or to a frame voice
+    folder (christman_sound.stitch.load_frame_voice). Raises NoVoice when
+    nothing is passed or it is not a voice; VoiceProfileError or
+    FrameVoiceUnavailable (with the reason) when it cannot be read.
+    """
+    from .stitch import FrameVoice, load_frame_voice
+
+    if voice is None:
+        raise NoVoice(
+            "no voice given: the caller passes its own voice (voice=<voice profile file or frame voice "
+            "folder>, or a loaded VoiceProfile or FrameVoice). This package has no default voice."
+        )
+    if isinstance(voice, (VoiceProfile, FrameVoice)):
+        return voice
+    if isinstance(voice, (str, Path)):
+        p = Path(voice).expanduser()
+        if p.is_dir():
+            return load_frame_voice(p)
+        return load_voice_profile(p)
+    raise NoVoice(f"not a voice: {type(voice).__name__} (pass a VoiceProfile, a FrameVoice or a path to one)")
+
+
+def voice_fingerprint(voice: Union[VoiceProfile, "FrameVoice"]) -> str:
+    """
+    The identity of a loaded voice, for cache keys. A voice profile: the
+    SHA-256 of its file (VoiceProfile.fingerprint). A frame voice: the
+    SHA-256 of its voice.json and bank.json, and the size and modification
+    time of its frames.bin (hashing the frames themselves on every call
+    would cost more than the sentence).
+    """
+    if isinstance(voice, VoiceProfile):
+        return voice.fingerprint()
+    h = hashlib.sha256()
+    folder = Path(voice.path)
+    for name in ("voice.json", "bank.json"):
+        f = folder / name
+        h.update(name.encode("utf-8"))
+        h.update(f.read_bytes() if f.is_file() else b"<missing>")
+    frames = folder / "frames.bin"
+    if frames.is_file():
+        st = frames.stat()
+        h.update(f"frames.bin:{st.st_size}:{st.st_mtime_ns}".encode("utf-8"))
+    return h.hexdigest()
+
+
+def _sequence(text, phones, lexicon, lexicon_path, dsp, table) -> List[Tuple[str, float, Optional[str]]]:
+    seq: List[Tuple[str, float, Optional[str]]]
+    if text is not None:
+        lex = lexicon if lexicon is not None else load_lexicon(lexicon_path)
+        seq = text_to_phones(text, lex, dsp)
+    else:
+        seq = []
+        for item in phones:  # type: ignore[union-attr]
+            pid, dur = item
+            seq.append((pid, float(dur), None))
+        if not seq:
+            raise NothingToSay("empty phone list")
+    unknown = [pid for pid, _, _ in seq if pid not in table]
+    if unknown:
+        raise UnknownPhone(f"not Codec War phones: {sorted(set(unknown))}")
+    return seq
+
+
+def _timeline(seq, rate) -> List[TimedPhone]:
+    # The timeline exactly as the C computes it (dur / rate, running sum).
+    timeline: List[TimedPhone] = []
+    t = 0.0
+    for pid, d, word in seq:
+        scaled = d / rate
+        timeline.append(TimedPhone(pid, t, scaled, word))
+        t += scaled
+    return timeline
+
+
 def synthesize(
     text: Optional[str] = None,
     *,
+    voice: Union[VoiceProfile, "FrameVoice", str, Path],
     phones: Optional[Sequence[Tuple[str, float]]] = None,
     f0: Optional[float] = None,
     f0_contour: Optional[Sequence[float]] = None,
@@ -250,7 +334,6 @@ def synthesize(
     lexicon: Optional[Lexicon] = None,
     lexicon_path: Optional[Union[str, Path]] = None,
     engine: Optional[ChristmanDSP] = None,
-    voice: Optional[Union[VoiceProfile, "FrameVoice"]] = None,
     cadence: Optional[float] = None,
     breath: Optional[float] = None,
     jitter: Optional[float] = None,
@@ -264,26 +347,23 @@ def synthesize(
 ) -> SynthResult:
     """
     Synthesize `text` (looked up in the lexicon) or `phones` (a list of
-    (Codec War id, seconds)). Exactly one of the two.
+    (Codec War id, seconds)) in the caller's `voice`. Exactly one of text
+    and phones.
 
-    f0          single pitch in Hz, used as synth.ts uses it (default 148).
-    f0_contour  optional per-phone pitch, one value per phone in the final
-                sequence (for text, see text_to_phones: it includes the SILs).
-    rate        0.6 to 1.6; every duration is divided by it (default 1.0).
-                Outside that range the engine refuses (Codec War clamps; we
-                do not).
-    sample_rate 16000 (Codec War, the default) or 22050. A frame voice speaks
-                at its bank's rate (22050); another rate is refused.
-    voice       (2026-10-28) a measured VoiceProfile, e.g.
-                voice_profile.load_alphavox_voice(). Its F0 median and pitch
-                contour give the pitch, its rate the rate, and its measured
-                vowel F1-F3 replace Codec War's for those vowels. A voice is
-                the one source of pitch and rate: passing f0, f0_contour or
-                rate with it raises ValueError rather than mix the two.
+    voice       required: the caller's voice (see resolve_voice). None, or
+                anything that is not a voice, raises NoVoice. A voice
+                profile is the one source of pitch and rate: passing f0,
+                f0_contour or rate with it raises ValueError rather than mix
+                the two.
+    f0, rate    with a frame voice, controls (see THE CONTROLS above).
+    sample_rate a voice profile speaks at 16000 (Codec War, the default) or
+                22050. A frame voice speaks at its bank's rate; another rate
+                is refused.
 
-    Raises LexiconUnavailable, WordNotInLexicon, PhoneNotMapped, NothingToSay,
-    UnknownPhone, SynthRefused, SynthUnavailable or DSPUnavailable. Never
-    returns a substitute.
+    Raises NoVoice, VoiceProfileError, FrameVoiceUnavailable,
+    LexiconUnavailable, WordNotInLexicon, PhoneNotMapped, NothingToSay,
+    UnknownPhone, SynthRefused, StitchRefused, SynthUnavailable or
+    DSPUnavailable. Never returns a substitute.
     """
     if (text is None) == (phones is None):
         raise ValueError("pass exactly one of text or phones")
@@ -292,75 +372,91 @@ def synthesize(
                                   ("resonance", resonance), ("affect", affect)) if v is not None}
     from .stitch import FrameVoice  # noqa: F811
 
-    if isinstance(voice, FrameVoice):
-        return _speak_frames(text, phones, voice, controls, f0, f0_contour, rate, sample_rate, lexicon, lexicon_path, engine)
+    v = resolve_voice(voice)
+    if isinstance(v, FrameVoice):
+        result = _speak_frames(text, phones, v, controls, f0, f0_contour, rate, sample_rate, lexicon, lexicon_path, engine)
+        result.voice_fingerprint = voice_fingerprint(v)
+        return result
     if controls:
         raise ValueError(f"{', '.join(controls)}: these controls belong to a frame voice "
                          "(christman_sound.stitch.load_frame_voice); christman_synth has no input for them")
+    if f0 is not None or f0_contour is not None or rate is not None:
+        raise ValueError("a voice profile carries its own pitch and rate; do not also pass f0, f0_contour or rate")
     if sample_rate is None:
         sample_rate = CODECWAR_SAMPLE_RATE
-    if voice is not None and (f0 is not None or f0_contour is not None or rate is not None):
-        raise ValueError("a voice carries its own pitch and rate; do not also pass f0, f0_contour or rate")
     dsp = engine if engine is not None else get_dsp()
     table = dsp.synth_phone_table()
-
-    seq: List[Tuple[str, float, Optional[str]]]
-    if text is not None:
-        lex = lexicon if lexicon is not None else load_lexicon(lexicon_path)
-        seq = text_to_phones(text, lex, dsp)
-    else:
-        seq = []
-        for item in phones:  # type: ignore[union-attr]
-            pid, dur = item
-            seq.append((pid, float(dur), None))
-        if not seq:
-            raise NothingToSay("empty phone list")
-
-    unknown = [pid for pid, _, _ in seq if pid not in table]
-    if unknown:
-        raise UnknownPhone(f"not Codec War phones: {sorted(set(unknown))}")
-
+    seq = _sequence(text, phones, lexicon, lexicon_path, dsp, table)
     ids = [table[pid][0] for pid, _, _ in seq]
     durs = [d for _, d, _ in seq]
-    rows = None
-    glides = None
-    if voice is not None:
-        # The voice's own pitch, contour, rate, vowel resonances and glides.
-        rate = voice.rate
-        f0 = voice.f0_median_hz
-        f0_contour = voice.f0_contour(durs, [pid != "SIL" for pid, _, _ in seq])
-        names = [pid for pid, _, _ in seq]
-        formant_table = dsp.synth_phone_formants()
-        rows = voice.formant_rows(names, formant_table)
-        glides = voice.glide_rows(names, formant_table)
-    if f0 is None:
-        f0 = CODECWAR_F0
-    if rate is None:
-        rate = 1.0
-    if voice is not None:
-        # A measured voice is rendered by christman_synth_clear (2026-10-28):
-        # through christman_synth_voiced the ear heard 4 of 53 words.
-        samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour, rows, clear=True, glides=glides)
-        renderer = RENDERER_CLEAR
-    else:
-        samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour, rows)
-        renderer = RENDERER_CODECWAR
-
-    # The timeline exactly as the C computes it (dur / rate, running sum).
-    timeline: List[TimedPhone] = []
-    t = 0.0
-    for pid, d, word in seq:
-        scaled = d / rate
-        timeline.append(TimedPhone(pid, t, scaled, word))
-        t += scaled
+    # The voice's own pitch, contour, rate, vowel resonances and glides.
+    contour = v.f0_contour(durs, [pid != "SIL" for pid, _, _ in seq])
+    names = [pid for pid, _, _ in seq]
+    formant_table = dsp.synth_phone_formants()
+    rows = v.formant_rows(names, formant_table)
+    glides = v.glide_rows(names, formant_table)
+    # A measured voice is rendered by christman_synth_clear (christman_synth.c
+    # says why: through christman_synth_voiced the ear heard 4 of 53 words).
+    samples = dsp.synth(ids, durs, v.f0_median_hz, v.rate, sample_rate, contour, rows, clear=True, glides=glides)
     return SynthResult(
         samples=samples,
         sample_rate=sample_rate,
-        phones=timeline,
+        phones=_timeline(seq, v.rate),
+        f0=tuple(contour),
+        rate=float(v.rate),
+        voice=v.name,
+        renderer=RENDERER_CLEAR,
+        voice_fingerprint=v.fingerprint(),
+    )
+
+
+def render_codecwar_table(
+    text: Optional[str] = None,
+    *,
+    phones: Optional[Sequence[Tuple[str, float]]] = None,
+    f0: float,
+    rate: float,
+    f0_contour: Optional[Sequence[float]] = None,
+    sample_rate: Optional[int] = None,
+    lexicon: Optional[Lexicon] = None,
+    lexicon_path: Optional[Union[str, Path]] = None,
+    engine: Optional[ChristmanDSP] = None,
+) -> SynthResult:
+    """
+    The bare C engine with Codec War's textbook phone table: christman_synth,
+    synth.ts sample for sample. Not a voice. It is here to check the port
+    against Codec War and to set a measured voice against the table it
+    replaces; synthesize() and speak() never reach it.
+
+    f0          required: the pitch in Hz, as synth.ts uses it.
+    rate        required: 0.6 to 1.6; every duration is divided by it.
+                Outside that range the engine refuses (Codec War clamps; we
+                do not).
+    f0_contour  optional per-phone pitch, one value per phone in the final
+                sequence (for text, see text_to_phones: it includes the SILs).
+    sample_rate 16000 (Codec War, the default) or 22050.
+
+    Raises LexiconUnavailable, WordNotInLexicon, PhoneNotMapped, NothingToSay,
+    UnknownPhone, SynthRefused, SynthUnavailable or DSPUnavailable.
+    """
+    if (text is None) == (phones is None):
+        raise ValueError("pass exactly one of text or phones")
+    if sample_rate is None:
+        sample_rate = CODECWAR_SAMPLE_RATE
+    dsp = engine if engine is not None else get_dsp()
+    table = dsp.synth_phone_table()
+    seq = _sequence(text, phones, lexicon, lexicon_path, dsp, table)
+    ids = [table[pid][0] for pid, _, _ in seq]
+    durs = [d for _, d, _ in seq]
+    samples = dsp.synth(ids, durs, f0, rate, sample_rate, f0_contour, None)
+    return SynthResult(
+        samples=samples,
+        sample_rate=sample_rate,
+        phones=_timeline(seq, rate),
         f0=tuple(f0_contour) if f0_contour is not None else float(f0),
         rate=float(rate),
-        voice=voice.name if voice is not None else None,
-        renderer=renderer,
+        voice=None,
+        renderer=RENDERER_CODECWAR,
     )
 
 
@@ -463,15 +559,17 @@ def write_wav(path: Union[str, Path], samples: Sequence[float], sample_rate: int
 def speak(
     text: Optional[str] = None,
     *,
+    voice: Union[VoiceProfile, "FrameVoice", str, Path],
     engine: Optional[ChristmanDSP] = None,
     **kwargs,
 ) -> SynthResult:
     """
-    Synthesize, then hand the samples to christman_play. Blocks until played.
-    Plays or raises (PlaybackUnavailable with the engine's reason); there is
-    no return that means "maybe it played".
+    Synthesize in the caller's `voice` (required, as for synthesize), then
+    hand the samples to christman_play. Blocks until played. Plays or raises
+    (PlaybackUnavailable with the engine's reason); there is no return that
+    means "maybe it played".
     """
     dsp = engine if engine is not None else get_dsp()
-    result = synthesize(text, engine=dsp, **kwargs)
+    result = synthesize(text, voice=voice, engine=dsp, **kwargs)
     dsp.play(result.samples, result.sample_rate, 1)
     return result

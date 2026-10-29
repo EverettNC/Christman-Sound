@@ -8,14 +8,11 @@
 christman_sound.voice_profile — a being's measured voice, applied to the
 sovereign synthesizer.
 
-WHAT CHANGED AND WHY (added 2026-10-28)
----------------------------------------
 christman_synth speaks with Codec War's phone table: textbook resonances for
-an average adult voice. AlphaVox has its own voice, recorded in its 26
-phrases (EverettNC/AlphaVox, data/phrases/alphavox_verified). Those
-recordings are AlphaVox's voice and nobody else's. This module reads a voice
-profile — a data file of values measured from such recordings, each written
-beside the measurement it came from — and turns it into what the C
+an average adult voice. A being's voice is its own, measured from its own
+recordings. This module reads a voice profile — a data file of values
+measured from such recordings (scripts/measure_voice.py writes one), each
+written beside the measurement it came from — and turns it into what the C
 synthesizer takes:
 
   * one formant row (F1, F2, F3, BW1, BW2) per phone in the sequence. A
@@ -25,19 +22,20 @@ synthesizer takes:
     its measured pitch contour (semitones from the phrase median at points
     across the phrase, joined by straight lines).
   * the speaking rate the profile measured.
-  * (2026-10-28) one glide row per phone for christman_synth_clear: where a
-    gliding vowel (AY, OW, ...) starts and ends, measured where the profile
-    has it ("glides"), else from the vowel's own row toward its offglide.
+  * one glide row per phone for christman_synth_clear: where a gliding vowel
+    (AY, OW, ...) starts and ends, measured where the profile has it
+    ("glides"), else from the vowel's own row toward its offglide.
 
-The profile for AlphaVox is christman_sound/alphavox_voice.json, written by
-scripts/measure_alphavox_voice.py from AlphaVox's recordings with Everett's
-Vosk (alignment) and christman_sound.formants (measurement). Nothing in this
-module invents a value: a profile missing a field it needs is refused with
-VoiceProfileError naming the field, never filled in.
+The package carries no profile of its own and no default voice. The caller
+passes its own profile (load_voice_profile(path), or the path itself, to
+christman_sound.synth.synthesize). Nothing in this module invents a value: a
+profile missing a field it needs is refused with VoiceProfileError naming the
+field, never filled in.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass, field
@@ -47,34 +45,30 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 __all__ = [
     "VoiceProfileError",
     "VoiceProfile",
-    "ALPHAVOX_PROFILE_PATH",
     "load_voice_profile",
-    "load_alphavox_voice",
 ]
-
-#: AlphaVox's voice profile, shipped inside the package.
-ALPHAVOX_PROFILE_PATH = Path(__file__).resolve().parent / "alphavox_voice.json"
 
 #: Codec War's rate range (synth.ts:104). A profile outside it is refused.
 _RATE_RANGE = (0.6, 1.6)
 
-#: (2026-10-28) Where in the vowel a measured glide is drawn, from its onset
-#: to its offset. The onset is the median of the first third of the vowel's
-#: measured frames and the offset of the last third (measure_alphavox_voice.py,
+#: Where in the vowel a measured glide is drawn, from its onset to its
+#: offset. The onset is the median of the first third of the vowel's
+#: measured frames and the offset of the last third (scripts/measure_voice.py,
 #: glide_values), so they sit near 1/6 and 5/6 of the vowel; 0.2 and 0.8,
 #: held flat outside. A chosen starting value.
 MEASURED_GLIDE_SPAN = (0.2, 0.8)
 
-#: (2026-10-28) A gliding vowel the profile did not measure moves from its
+#: A gliding vowel the profile did not measure moves from its
 #: own row toward the vowel it glides into (AY, EY, OY close toward IY; AW,
 #: OW round toward UW). Those rows are the voice's own (measured, else Codec
 #: War's table).
 OFFGLIDE = {"AY": "IY", "EY": "IY", "OY": "IY", "AW": "UW", "OW": "UW"}
 
 #: It holds its own row for the first 35% of the vowel, then moves to the
-#: offglide by the end. A chosen starting value: measured on 2026-10-28,
-#: AlphaVox's free text was heard 42% word for word with this and 38% with
-#: these vowels held still (24 test sentences, the Filament ear).
+#: offglide by the end. A chosen starting value: measured on 2026-10-28, a
+#: being's free text in its measured voice was heard 42% word for word with
+#: this and 38% with these vowels held still (24 test sentences, the
+#: Filament ear).
 OFFGLIDE_SPAN = (0.35, 1.0)
 
 
@@ -110,9 +104,28 @@ class VoiceProfile:
     rate: float
     #: Codec War phone id -> (F1, F2, F3) measured from the recordings.
     vowel_formants: Dict[str, Tuple[float, float, float]]
-    #: (2026-10-28) Gliding vowel -> ((onset F1, F2, F3), (offset F1, F2, F3))
+    #: Gliding vowel -> ((onset F1, F2, F3), (offset F1, F2, F3))
     #: measured from the recordings. Empty when the profile measured none.
     glides: Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = field(default_factory=dict)
+    #: SHA-256 of the profile file's bytes, set by load_voice_profile. None
+    #: for a profile built in code; fingerprint() then hashes its values.
+    sha256: Optional[str] = None
+
+    def fingerprint(self) -> str:
+        """
+        The identity of this voice: the SHA-256 of the file it was read from,
+        or, for a profile built in code, of its values. A cache keyed on it
+        never serves audio made in another voice, or in an earlier
+        measurement of this one.
+        """
+        if self.sha256:
+            return self.sha256
+        values = {
+            "name": self.name, "f0_median_hz": self.f0_median_hz, "contour_points": self.contour_points,
+            "rate": self.rate, "vowel_formants": sorted(self.vowel_formants.items()),
+            "glides": sorted(self.glides.items()),
+        }
+        return hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
 
     # -- pitch -----------------------------------------------------------------
 
@@ -180,7 +193,7 @@ class VoiceProfile:
             rows.append((f1, f2, f3, b1, b2))
         return rows
 
-    # -- glides (2026-10-28) ---------------------------------------------------
+    # -- glides -----------------------------------------------------------------
 
     def glide_rows(
         self,
@@ -212,12 +225,13 @@ class VoiceProfile:
 
 def load_voice_profile(path: Union[str, Path]) -> VoiceProfile:
     """Read a voice profile file. Raises VoiceProfileError naming whatever is missing or wrong."""
-    p = Path(path)
+    p = Path(path).expanduser()
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        raw = p.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
     except OSError as exc:
         raise VoiceProfileError(f"cannot read voice profile {p}: {exc}") from exc
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise VoiceProfileError(f"voice profile {p} is not JSON: {exc}") from exc
 
     name = str(_need(data, "voice", ""))
@@ -251,7 +265,7 @@ def load_voice_profile(path: Union[str, Path]) -> VoiceProfile:
         )
     if not vowels:
         raise VoiceProfileError("voice profile measured no vowels")
-    # Glides (2026-10-28) are optional: a profile that measured none glides
+    # Glides are optional: a profile that measured none glides
     # its gliding vowels toward their offglide (OFFGLIDE). One that carries a
     # glide must carry all of it.
     glides: Dict[str, Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = {}
@@ -273,15 +287,6 @@ def load_voice_profile(path: Union[str, Path]) -> VoiceProfile:
         rate=rate,
         vowel_formants=vowels,
         glides=glides,
+        sha256=hashlib.sha256(raw).hexdigest(),
     )
 
-
-_alphavox: Optional[VoiceProfile] = None
-
-
-def load_alphavox_voice() -> VoiceProfile:
-    """AlphaVox's measured voice (christman_sound/alphavox_voice.json), loaded once."""
-    global _alphavox
-    if _alphavox is None:
-        _alphavox = load_voice_profile(ALPHAVOX_PROFILE_PATH)
-    return _alphavox

@@ -48,10 +48,24 @@ from christman_sound.lexicon import (  # noqa: E402
 from christman_sound.synth import (  # noqa: E402
     NothingToSay,
     UnknownPhone,
-    synthesize,
+    render_codecwar_table,
     speak,
     text_to_phones,
 )
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voice_fixture import load_test_voice  # noqa: E402
+
+#: Codec War's default pitch (synth.ts:31) and rate: the values its own
+#: synth.ts is compared at. The bare table takes them by name; it has no default.
+CW_F0 = 148.0
+CW_RATE = 1.0
+
+
+def bare_table(text=None, **kwargs):
+    """Codec War's bare table, at Codec War's own pitch and rate unless the test names others."""
+    kwargs.setdefault("f0", CW_F0)
+    kwargs.setdefault("rate", CW_RATE)
+    return render_codecwar_table(text, **kwargs)
 
 # Codec War's table durations (phonemes.ts:18-57), written out here so the
 # length test does not read the expected values from the code it is testing.
@@ -188,7 +202,7 @@ PITCH_GRID = [
 
 @pytest.mark.parametrize("vowel,f0,sr", PITCH_GRID)
 def test_sustained_vowel_pitch_matches_request(dsp, vowel, f0, sr):
-    r = synthesize(phones=[("SIL", 0.03), (vowel, 1.0), ("SIL", 0.03)], f0=f0, sample_rate=sr, engine=dsp)
+    r = bare_table(phones=[("SIL", 0.03), (vowel, 1.0), ("SIL", 0.03)], f0=f0, sample_rate=sr, engine=dsp)
     est = _yin_frames(dsp, r.samples, sr, 0.13, 0.93)
     assert len(est) >= 20
     median = statistics.median(est)
@@ -215,7 +229,7 @@ def test_open_vowel_aa_at_low_pitch_finding(dsp, f0, sr):
     multiple of it (f0, f0/2, f0/3) — the waveform repeats at the requested
     pitch. How many frames read unvoiced is printed for Everett.
     """
-    r = synthesize(phones=[("SIL", 0.03), ("AA", 1.0), ("SIL", 0.03)], f0=f0, sample_rate=sr, engine=dsp)
+    r = bare_table(phones=[("SIL", 0.03), ("AA", 1.0), ("SIL", 0.03)], f0=f0, sample_rate=sr, engine=dsp)
     est = _yin_frames(dsp, r.samples, sr, 0.13, 0.93)
     voiced = [e for e in est if e > 0]
     at_f0 = [e for e in voiced if abs(e - f0) / f0 <= 0.03]
@@ -231,7 +245,7 @@ def test_pitch_contour_hook_follows_each_phone(dsp):
     sr = 16000
     phones = [("SIL", 0.03), ("IY", 0.6), ("IY", 0.6), ("SIL", 0.03)]
     contour = [150.0, 130.0, 210.0, 150.0]
-    r = synthesize(phones=phones, f0_contour=contour, sample_rate=sr, engine=dsp)
+    r = bare_table(phones=phones, f0_contour=contour, sample_rate=sr, engine=dsp)
     first = statistics.median(_yin_frames(dsp, r.samples, sr, 0.10, 0.60))
     second = statistics.median(_yin_frames(dsp, r.samples, sr, 0.70, 1.20))
     print(f"contour: requested 130.0 then 210.0 Hz, measured {first:.2f} then {second:.2f} Hz")
@@ -246,7 +260,7 @@ def test_pitch_contour_hook_follows_each_phone(dsp):
 @pytest.mark.parametrize("rate", [0.6, 1.0, 1.25, 1.6])
 def test_output_length_tracks_durations_and_rate(dsp, sr, rate):
     phones = [("SIL", 0.03), ("AA", 0.4), ("S", 0.09), ("IY", 0.25), ("SIL", 0.03)]
-    r = synthesize(phones=phones, rate=rate, sample_rate=sr, engine=dsp)
+    r = bare_table(phones=phones, rate=rate, sample_rate=sr, engine=dsp)
     expected = _expected_length([d for _, d in phones], rate, sr)
     speech = len(r.samples) - math.floor(sr / 12)  # synth.ts:38 adds a 1/12 s tail
     print(f"sr={sr} rate={rate}: {len(r.samples)} samples, expected {expected}; "
@@ -265,7 +279,7 @@ def test_output_length_tracks_durations_and_rate(dsp, sr, rate):
 @pytest.mark.parametrize("rate", [1.0, 1.5])
 def test_short_phrase_from_inline_lexicon(dsp, lexicon_file, rate):
     sr = 16000
-    r = synthesize("Hello, Christman.", rate=rate, lexicon_path=lexicon_file, engine=dsp)
+    r = bare_table("Hello, Christman.", rate=rate, lexicon_path=lexicon_file, engine=dsp)
     hello = ["HH", "AH", "L", "OW"]
     christman = ["K", "R", "IH", "S", "T", "M", "AH", "N"]
     expected = _expected_text_timeline([hello, christman])
@@ -284,7 +298,7 @@ def test_short_phrase_from_inline_lexicon(dsp, lexicon_file, rate):
 
 
 def test_write_wav_round_trips_with_stdlib(dsp, lexicon_file, tmp_path):
-    r = synthesize("hello", lexicon_path=lexicon_file, engine=dsp)
+    r = bare_table("hello", lexicon_path=lexicon_file, engine=dsp)
     path = r.write_wav(tmp_path / "hello.wav")
     with wave.open(str(path), "rb") as w:
         assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, 16000)
@@ -312,8 +326,8 @@ def test_flap_and_long_e_speak_at_their_factor(dsp, lexicon_file, sr, word, cont
     that phone's change in length. floor() at the end of each run may move
     either total by under one sample, so the allowance is 1 sample.
     """
-    r = synthesize(word, lexicon_path=lexicon_file, sample_rate=sr, engine=dsp)
-    ref = synthesize(control, lexicon_path=lexicon_file, sample_rate=sr, engine=dsp)
+    r = bare_table(word, lexicon_path=lexicon_file, sample_rate=sr, engine=dsp)
+    ref = bare_table(control, lexicon_path=lexicon_file, sample_rate=sr, engine=dsp)
     seg = r.phones[1 + position]       # +1 for the opening SIL
     ref_seg = ref.phones[1 + position]
     assert seg.id == ref_seg.id == cw_phone
@@ -332,36 +346,36 @@ def test_flap_and_long_e_speak_at_their_factor(dsp, lexicon_file, sr, word, cont
 
 def test_non_speech_phone_raises_typed_failure(dsp, lexicon_file):
     with pytest.raises(PhoneNotMapped) as exc:
-        synthesize("uh", lexicon_path=lexicon_file, engine=dsp)
+        bare_table("uh", lexicon_path=lexicon_file, engine=dsp)
     assert exc.value.phone == "UHH"
 
 
 def test_phone_outside_inventory_raises_typed_failure(dsp, lexicon_file):
     with pytest.raises(PhoneNotMapped) as exc:
-        synthesize("qq", lexicon_path=lexicon_file, engine=dsp)
+        bare_table("qq", lexicon_path=lexicon_file, engine=dsp)
     assert "not in the known" in str(exc.value)
 
 
 def test_missing_lexicon_raises_typed_failure(dsp, monkeypatch, tmp_path):
     monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
     with pytest.raises(LexiconUnavailable) as exc:
-        synthesize("hello", engine=dsp)
+        bare_table("hello", engine=dsp)
     print(exc.value)
     with pytest.raises(LexiconUnavailable):
-        synthesize("hello", lexicon_path=tmp_path / "no_such_lexicon.txt", engine=dsp)
+        bare_table("hello", lexicon_path=tmp_path / "no_such_lexicon.txt", engine=dsp)
     monkeypatch.setenv("CHRISTMAN_LEXICON_PATH", str(tmp_path / "also_missing.txt"))
     with pytest.raises(LexiconUnavailable):
-        synthesize("hello", engine=dsp)
+        bare_table("hello", engine=dsp)
 
 
 def test_env_var_names_the_lexicon(dsp, monkeypatch, lexicon_file):
     monkeypatch.setenv("CHRISTMAN_LEXICON_PATH", str(lexicon_file))
-    assert len(synthesize("hello", engine=dsp).samples) > 0
+    assert len(bare_table("hello", engine=dsp).samples) > 0
 
 
 def test_word_not_in_lexicon_is_named_not_spelled(dsp, lexicon_file):
     with pytest.raises(WordNotInLexicon) as exc:
-        synthesize("hello zebra quokka", lexicon_path=lexicon_file, engine=dsp)
+        bare_table("hello zebra quokka", lexicon_path=lexicon_file, engine=dsp)
     assert exc.value.words == ["zebra", "quokka"]
 
 
@@ -377,13 +391,13 @@ def test_engine_refusals_carry_their_reason(dsp, lexicon_file):
     for kwargs, code in (({"rate": 2.0}, 5), ({"rate": 0.5}, 5), ({"sample_rate": 44100}, 6),
                          ({"f0": 0.0}, 4), ({"f0": 9000.0}, 4)):
         with pytest.raises(SynthRefused) as exc:
-            synthesize(phones=vowel, engine=dsp, **kwargs)
+            bare_table(phones=vowel, engine=dsp, **kwargs)
         assert exc.value.code == code, (kwargs, exc.value)
     with pytest.raises(SynthRefused) as exc:
-        synthesize(phones=[("AA", 0.0)], engine=dsp)
+        bare_table(phones=[("AA", 0.0)], engine=dsp)
     assert exc.value.code == 3
     with pytest.raises(UnknownPhone):
-        synthesize(phones=[("QQ", 0.1)], engine=dsp)
+        bare_table(phones=[("QQ", 0.1)], engine=dsp)
     with pytest.raises(NothingToSay):
         text_to_phones("  ... ?!  ", load_lexicon(lexicon_file), dsp)
 
@@ -405,8 +419,8 @@ def guard(name, *a, **k):
     return real(name, *a, **k)
 builtins.__import__ = guard
 sys.path.insert(0, {str(ROOT)!r})
-from christman_sound.synth import synthesize
-r = synthesize("hello christman", lexicon_path={str(lex)!r})
+from christman_sound.synth import render_codecwar_table
+r = render_codecwar_table("hello christman", f0=148.0, rate=1.0, lexicon_path={str(lex)!r})
 r.write_wav({str(tmp_path / "x.wav")!r})
 print(len(r.samples), sorted(m for m in sys.modules if m.split(".")[0] in BLOCK))
 """
@@ -419,9 +433,9 @@ print(len(r.samples), sorted(m for m in sys.modules if m.split(".")[0] in BLOCK)
 
 # ------------------------------------------------------------ playback
 
-def test_speak_plays_through_christman_play(dsp):
+def test_speak_plays_through_christman_play(dsp, tmp_path):
     try:
-        r = speak(phones=[("SIL", 0.03), ("AA", 0.3), ("SIL", 0.03)], engine=dsp)
+        r = speak(phones=[("SIL", 0.03), ("AA", 0.3), ("SIL", 0.03)], voice=load_test_voice(tmp_path), engine=dsp)
     except PlaybackUnavailable as exc:
         pytest.skip(f"not run: no speaker reachable here ({dsp.play_backend()}): {exc}")
     assert len(r.samples) > 0
@@ -473,13 +487,13 @@ def test_matches_codec_war_typescript_sample_for_sample(dsp, lexicon_file, tmp_p
     every_phone = [[p, 0.11] for p in CW_DUR]
     cases = [
         ("all 40 phones, f0 148", {"phones": every_phone, "f0": 148},
-         synthesize(phones=[tuple(x) for x in every_phone], f0=148, engine=dsp).samples),
+         bare_table(phones=[tuple(x) for x in every_phone], f0=148, engine=dsp).samples),
         ("sustained AA, f0 200", {"phones": [["SIL", 0.03], ["AA", 0.5], ["SIL", 0.03]], "f0": 200},
-         synthesize(phones=[("SIL", 0.03), ("AA", 0.5), ("SIL", 0.03)], f0=200, engine=dsp).samples),
+         bare_table(phones=[("SIL", 0.03), ("AA", 0.5), ("SIL", 0.03)], f0=200, engine=dsp).samples),
         # Text path: Codec War's own word list vs our Vosk-lexicon path for
         # the same words, rate 1.3 and f0 130 — checks the duration rules too.
         ("text 'hello filament booth', f0 130, rate 1.3", {"text": "hello filament booth", "f0": 130, "rate": 1.3},
-         synthesize("hello filament booth", f0=130, rate=1.3, lexicon_path=lexicon_file, engine=dsp).samples),
+         bare_table("hello filament booth", f0=130, rate=1.3, lexicon_path=lexicon_file, engine=dsp).samples),
     ]
     for label, spec, ours in cases:
         ref = reference(spec)

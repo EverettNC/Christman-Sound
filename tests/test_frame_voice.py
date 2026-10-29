@@ -283,9 +283,15 @@ def test_an_unmeasured_profile_is_refused_by_name():
         cs_stitch.check_measures(m, 96)
 
 
-def test_frame_controls_without_a_frame_voice_are_refused_not_ignored(dsp):
+def test_frame_controls_without_a_frame_voice_are_refused_not_ignored(dsp, tmp_path):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from voice_fixture import load_test_voice
+
     with pytest.raises(ValueError, match="belong to a frame voice"):
-        cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2)], breath=0.7, engine=dsp)
+        cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2)], voice=load_test_voice(tmp_path), breath=0.7,
+                            engine=dsp)
+    with pytest.raises(cs_synth.NoVoice):
+        cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2)], voice=None, breath=0.7, engine=dsp)
 
 
 

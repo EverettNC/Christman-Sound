@@ -22,7 +22,7 @@
 // recordings by christman_sound/vocoder.py:
 //   * f0       the pitch of the frame in Hz, 0 for an unvoiced frame;
 //   * env_db   the full spectral envelope, ne values in dB on a frequency grid
-//              (96 points in AlphaVox's bank), not a few formants;
+//              (96 points in the first bank built), not a few formants;
 //   * ap       the aperiodicity (noise fraction of the power) in nb bands, so
 //              the noise in S, SH, F, H, the stop bursts and the breath in the
 //              voiced sounds comes from the recordings themselves.

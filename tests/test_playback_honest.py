@@ -101,11 +101,11 @@ def lexicon_file(tmp_path) -> Path:
 
 @pytest.fixture()
 def mouth(dsp, lexicon_file, tmp_path) -> vs.SpeechSynthesisEngine:
-    from christman_sound.voice_profile import load_alphavox_voice
+    from voice_fixture import load_test_voice
 
-    # (2026-10-28) The caller passes its own voice: AlphaVox's measured profile here.
+    # The caller passes its own voice: the test voice here.
     return vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), lexicon_path=str(lexicon_file),
-                                    voice=load_alphavox_voice())
+                                    voice=load_test_voice(tmp_path / "voice"))
 
 
 def _wav_frames(path: Path) -> int:
@@ -207,8 +207,9 @@ from christman_sound.dsp import ChristmanDSP
 from christman_voice_sdk.synthesis import voice_synthesis as vs
 lib, lexicon, cache, out, mode = sys.argv[2:7]
 dsp_mod._instance = ChristmanDSP(lib)
-from christman_sound.voice_profile import load_alphavox_voice
-mouth = vs.SpeechSynthesisEngine(cache_dir=cache, lexicon_path=lexicon, voice=load_alphavox_voice())
+sys.path.insert(0, sys.argv[1] + "/tests")
+from voice_fixture import write_test_voice
+mouth = vs.SpeechSynthesisEngine(cache_dir=cache, lexicon_path=lexicon, voice=str(write_test_voice(cache + "_voice")))
 if mode == "speak":      # render, write the WAV, play it: the requested-playback path
     try:
         mouth.generate_speech_audio("hello booth", play_audio=True, output_path=out)

@@ -3,23 +3,26 @@
 # The Christman AI Project — Luma Cognify AI
 # ==============================================================================
 """
-AlphaVox's measured voice in the sovereign synthesizer (2026-10-28).
+A caller's measured voice in the sovereign synthesizer.
 
-christman_sound/alphavox_voice.json is measured from AlphaVox's own 26
-recorded phrases by scripts/measure_alphavox_voice.py. These tests hold:
+The package carries no voice profile and no default voice. These tests speak
+in the test voice (tests/voice_fixture.py: numbers measured from a being's
+own recordings) and hold:
 
   * christman_synth_voiced with Codec War's own rows is christman_synth,
     sample for sample: the new input changes nothing unless it is used;
   * the measured vowels reach the output: the synthesized vowel, measured
-    with christman_sound.formants, sits at AlphaVox's measured F1-F3 and
+    with christman_sound.formants, sits at the voice's measured F1-F3 and
     not at Codec War's;
-  * every value in the profile is the median of the measurements written
-    beside it, recomputed here from the file itself;
+  * no voice, no sound: synthesize and speak refuse without the caller's
+    voice, and the package ships no profile of its own;
+  * the profile's fingerprint is the hash of the file passed;
   * the refusals: bad formant rows (code 9), a voice plus f0/rate, a
     profile missing a value;
-  * the measurement itself, re-run from the recordings with Everett's Vosk,
-    reproduces the committed profile. That run needs the recordings, the
-    Vosk model and a Python with vosk; without them it reports NOT RUN.
+  * the measurement itself (scripts/measure_voice.py), run on a being's
+    recordings with Everett's Vosk, writes every value as the median of the
+    measurements beside it. That run needs the recordings, the Vosk model
+    and a Python with vosk; without them it reports NOT RUN.
 
 Real runs only: the C library is built by scripts/build_dsp.py here.
 """
@@ -43,14 +46,14 @@ sys.path.insert(0, str(ROOT))
 from christman_sound.dsp import ChristmanDSP, SynthRefused  # noqa: E402
 from christman_sound.formants import measure_formants  # noqa: E402
 from christman_sound import synth as cs_synth  # noqa: E402
-from christman_sound.voice_profile import (  # noqa: E402
-    ALPHAVOX_PROFILE_PATH,
-    VoiceProfileError,
-    load_alphavox_voice,
-    load_voice_profile,
-)
+from christman_sound import voice_profile as vp  # noqa: E402
+from christman_sound.voice_profile import VoiceProfileError, load_voice_profile  # noqa: E402
+from voice_fixture import TEST_VOICE_NAME, TEST_VOICE_PROFILE, load_test_voice, write_test_voice  # noqa: E402
 
-PROFILE = json.loads(ALPHAVOX_PROFILE_PATH.read_text(encoding="utf-8"))
+
+@pytest.fixture
+def voice(tmp_path):
+    return load_test_voice(tmp_path)
 
 
 @pytest.fixture(scope="module")
@@ -100,14 +103,14 @@ def test_bad_formant_row_is_refused_with_code_9(dsp):
         dsp.synth(ids, [0.1, 0.1], 149.3, 1.0, 16000, None, [(730, 1090, 2440, 70, 90)])
 
 
-# ------------------------------------------------------- AlphaVox's vowels
+# ------------------------------------------------------- the voice's vowels
 
 
 def _vowel_medians(dsp, voice):
     """Synthesize a held UW and measure it with christman_sound.formants."""
     phones = [("SIL", 0.05), ("UW", 0.5), ("SIL", 0.05)]
     if voice is None:
-        r = cs_synth.synthesize(phones=phones, f0=149.3, engine=dsp)
+        r = cs_synth.render_codecwar_table(phones=phones, f0=TEST_VOICE_PROFILE["f0"]["median_hz"], rate=1.0, engine=dsp)
     else:
         r = cs_synth.synthesize(phones=phones, voice=voice, engine=dsp)
     ph = r.phones[1]
@@ -118,103 +121,87 @@ def _vowel_medians(dsp, voice):
     return tuple(statistics.median(getattr(f, k) for f in fr) for k in ("f1_hz", "f2_hz", "f3_hz"))
 
 
-def test_alphavox_vowel_reaches_the_output_and_codec_wars_does_not(dsp):
+def test_measured_vowel_reaches_the_output_and_codec_wars_does_not(dsp, voice):
     """
-    UW is the vowel AlphaVox's measurement moved most from Codec War's
-    table (F2 870 Hz in the table). The synthesized UW, measured, must sit
-    within 8 % of AlphaVox's measured F2 and F3 and within 15 % of its F1
-    (F1 has few harmonics under it at 149 Hz; formants.py states that limit).
+    UW is the vowel the measurement moved most from Codec War's table (F2
+    870 Hz in the table). The synthesized UW, measured, must sit within 8 %
+    of the voice's measured F2 and F3 and within 15 % of its F1 (F1 has few
+    harmonics under it at 149 Hz; formants.py states that limit).
     """
-    voice = load_alphavox_voice()
     want = voice.vowel_formants["UW"]
     got = _vowel_medians(dsp, voice)
     old = _vowel_medians(dsp, None)
-    print(f"UW AlphaVox measured {want}, synthesized with it {tuple(round(x) for x in got)}, "
-          f"Codec War's table voice {tuple(round(x) for x in old)}")
+    print(f"UW measured {want}, synthesized with it {tuple(round(x) for x in got)}, "
+          f"Codec War's bare table {tuple(round(x) for x in old)}")
     assert abs(got[0] - want[0]) / want[0] <= 0.15
     assert abs(got[1] - want[1]) / want[1] <= 0.08
     assert abs(got[2] - want[2]) / want[2] <= 0.08
-    assert abs(old[1] - 870.0) / 870.0 <= 0.08  # the table voice is where it was
+    assert abs(old[1] - 870.0) / 870.0 <= 0.08  # the bare table is where it was
     assert abs(got[1] - want[1]) < abs(old[1] - want[1])
 
 
-def test_voice_is_the_one_source_of_pitch_and_rate(dsp):
-    voice = load_alphavox_voice()
+def test_voice_is_the_one_source_of_pitch_and_rate(dsp, voice):
     for extra in ({"f0": 150.0}, {"rate": 1.0}, {"f0_contour": [150.0] * 3}):
         with pytest.raises(ValueError):
             cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2), ("SIL", 0.05)], voice=voice, engine=dsp, **extra)
     r = cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2), ("SIL", 0.05)], voice=voice, engine=dsp)
-    assert r.voice == "AlphaVox" and r.rate == voice.rate
+    assert r.voice == TEST_VOICE_NAME and r.rate == voice.rate
     assert abs(r.phones[1].dur - 0.2 / voice.rate) < 1e-12
+    assert r.renderer == cs_synth.RENDERER_CLEAR
 
 
-# ------------------------------------------- every value beside its source
+# ------------------------------------------------- no voice, no sound
 
 
-def test_profile_is_alphavox_and_names_its_sources():
-    assert PROFILE["voice"] == "AlphaVox"
-    files = PROFILE["sources"]["recordings"]["files"]
-    assert len(files) == 26
-    assert all(len(f["sha256"]) == 64 for f in files)
-    assert PROFILE["sources"]["recordings"]["directory"] == "data/phrases/alphavox_verified"
-    assert PROFILE["sources"]["recordings"]["repository"] == "EverettNC/AlphaVox"
-    assert PROFILE["sources"]["aligner"]["model"] == "vosk-model-en-us-0.22"
-    text = ALPHAVOX_PROFILE_PATH.read_text(encoding="utf-8")
-    for wrong in ("Everett's recorded", "his recorded", "Everett's voice", "his formants", "Everett's formants"):
-        assert wrong not in text, wrong
+def test_no_voice_is_refused(dsp, tmp_path):
+    phones = [("SIL", 0.05), ("AA", 0.2), ("SIL", 0.05)]
+    with pytest.raises(cs_synth.NoVoice, match="no default voice"):
+        cs_synth.synthesize(phones=phones, voice=None, engine=dsp)
+    with pytest.raises(TypeError):
+        cs_synth.synthesize(phones=phones, engine=dsp)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        cs_synth.speak(phones=phones, engine=dsp)  # type: ignore[call-arg]
+    with pytest.raises(cs_synth.NoVoice):
+        cs_synth.synthesize(phones=phones, voice=149.3, engine=dsp)  # type: ignore[arg-type]
+    with pytest.raises(VoiceProfileError):
+        cs_synth.synthesize(phones=phones, voice=tmp_path / "absent.json", engine=dsp)
 
 
-def test_each_vowel_is_the_median_of_its_tokens():
-    names = {f["name"] for f in PROFILE["sources"]["recordings"]["files"]}
-    for group in ("vowels", "measured_not_applied"):
-        for v, e in PROFILE[group].items():
-            toks = e["tokens"]
-            assert e["n_tokens"] == len(toks)
-            assert e["n_frames"] == sum(t["n_frames"] for t in toks)
-            for k in ("f1_hz", "f2_hz", "f3_hz"):
-                assert e[k] == round(statistics.median(t[k] for t in toks), 1), (v, k)
-            assert all(t["phrase"] in names and t["vowel"] == v and t["n_frames"] > 0 for t in toks)
-    assert all(e["n_tokens"] >= 2 for e in PROFILE["vowels"].values())
-    assert all(e["n_tokens"] < 2 for e in PROFILE["measured_not_applied"].values())
-    # nothing applied, held back and unmeasured at once; together they cover Codec War's 15 vowels
-    applied, held, none = set(PROFILE["vowels"]), set(PROFILE["measured_not_applied"]), set(PROFILE["not_measured"])
-    assert not (applied & held) and not (applied & none) and not (held & none)
-    assert len(applied | held | none) == 15
+def test_the_package_ships_no_voice():
+    assert not list((ROOT / "christman_sound").glob("*.json"))
+    loaders = [n for n in dir(vp) if n.startswith("load_")]
+    assert loaders == ["load_voice_profile"], loaders  # one loader, and it takes the caller's path
+    assert vp.__all__ == ["VoiceProfileError", "VoiceProfile", "load_voice_profile"]
 
 
-def test_each_glide_is_the_median_of_its_tokens():
-    """(2026-10-28) AY and OW glides, each end the median of its tokens' ends as written."""
-    names = {f["name"] for f in PROFILE["sources"]["recordings"]["files"]}
-    assert set(PROFILE["glides"]) == {"AY", "OW"}
-    for group in ("glides", "glides_not_applied"):
-        for v, e in PROFILE[group].items():
-            toks = e["tokens"]
-            assert e["n_tokens"] == len(toks)
-            assert all(t["phrase"] in names and t["n_frames"] >= 3 for t in toks)
-            for k in ("onset_hz", "offset_hz"):
-                assert e[k] == [round(statistics.median(t[k][j] for t in toks), 1) for j in range(3)], (v, k)
-    assert all(e["n_tokens"] >= 2 for e in PROFILE["glides"].values())
-    assert all(e["n_tokens"] < 2 for e in PROFILE["glides_not_applied"].values())
-    voice = load_alphavox_voice()
-    assert voice.glides["AY"] == (tuple(PROFILE["glides"]["AY"]["onset_hz"]), tuple(PROFILE["glides"]["AY"]["offset_hz"]))
+def test_a_path_is_a_voice_and_says_whose(dsp, tmp_path):
+    path = write_test_voice(tmp_path)
+    phones = [("SIL", 0.05), ("AA", 0.2), ("SIL", 0.05)]
+    by_path = cs_synth.synthesize(phones=phones, voice=str(path), engine=dsp)
+    by_obj = cs_synth.synthesize(phones=phones, voice=load_voice_profile(path), engine=dsp)
+    assert list(by_path.samples) == list(by_obj.samples)
+    assert by_path.voice == TEST_VOICE_NAME
 
 
-def test_pitch_and_rate_are_the_medians_written_beside_them():
-    c = PROFILE["pitch_contour"]
-    per = c["per_phrase"].values()
-    for k, value in enumerate(c["semitones_from_median"]):
-        col = [p["semitones"][k] for p in per if p["semitones"][k] is not None]
-        assert len(col) == c["n_phrases_per_position"][k]
-        assert value == round(statistics.median(col), 2)
-    r = PROFILE["rate"]
-    assert r["value"] == round(statistics.median(p["ratio"] for p in r["per_phrase"].values()), 3)
-    assert r["n_phrases"] == len(r["per_phrase"])
-    assert 0.6 <= r["value"] <= 1.6
-    assert PROFILE["f0"]["median_hz"] == 149.3
+def test_fingerprint_is_the_hash_of_the_passed_profile(tmp_path):
+    import hashlib
+
+    path = write_test_voice(tmp_path / "a")
+    v = load_voice_profile(path)
+    assert v.fingerprint() == hashlib.sha256(path.read_bytes()).hexdigest()
+    d = json.loads(path.read_text(encoding="utf-8"))
+    d["rate"]["value"] = 1.2
+    other = tmp_path / "b.json"
+    other.write_text(json.dumps(d), encoding="utf-8")
+    assert load_voice_profile(other).fingerprint() != v.fingerprint()
+    built = vp.VoiceProfile(name=v.name, path=None, f0_median_hz=v.f0_median_hz, contour_points=v.contour_points,
+                            rate=v.rate, vowel_formants=v.vowel_formants, glides=v.glides)
+    assert len(built.fingerprint()) == 64 and built.fingerprint() != v.fingerprint()
+    assert cs_synth.voice_fingerprint(v) == v.fingerprint()
 
 
 def test_profile_refusals(tmp_path):
-    good = json.loads(ALPHAVOX_PROFILE_PATH.read_text(encoding="utf-8"))
+    good = TEST_VOICE_PROFILE
     cases = [
         ("f0", lambda d: d.pop("f0")),
         ("rate", lambda d: d["rate"].update(value=2.5)),
@@ -237,53 +224,94 @@ def test_profile_refusals(tmp_path):
         load_voice_profile(tmp_path / "absent.json")
 
 
-# ------------------------------------------------- the measurement, re-run
+# ------------------------------------------------- the measurement, run
 
 
-def test_measurement_from_alphavox_recordings_reproduces_the_profile(tmp_path):
+def _check_medians(profile: dict) -> None:
+    """Every value in a measured profile is the median of the measurements written beside it."""
+    names = {f["name"] for f in profile["sources"]["recordings"]["files"]}
+    for group in ("vowels", "measured_not_applied"):
+        for v, e in profile[group].items():
+            toks = e["tokens"]
+            assert e["n_tokens"] == len(toks)
+            assert e["n_frames"] == sum(t["n_frames"] for t in toks)
+            for k in ("f1_hz", "f2_hz", "f3_hz"):
+                assert e[k] == round(statistics.median(t[k] for t in toks), 1), (v, k)
+            assert all(t["phrase"] in names and t["vowel"] == v and t["n_frames"] > 0 for t in toks)
+    assert all(e["n_tokens"] >= 2 for e in profile["vowels"].values())
+    assert all(e["n_tokens"] < 2 for e in profile["measured_not_applied"].values())
+    applied, held, none = set(profile["vowels"]), set(profile["measured_not_applied"]), set(profile["not_measured"])
+    assert not (applied & held) and not (applied & none) and not (held & none)
+    assert len(applied | held | none) == 15
+    for group in ("glides", "glides_not_applied"):
+        for v, e in profile[group].items():
+            toks = e["tokens"]
+            assert e["n_tokens"] == len(toks)
+            assert all(t["phrase"] in names and t["n_frames"] >= 3 for t in toks)
+            for k in ("onset_hz", "offset_hz"):
+                assert e[k] == [round(statistics.median(t[k][j] for t in toks), 1) for j in range(3)], (v, k)
+    c = profile["pitch_contour"]
+    for k, value in enumerate(c["semitones_from_median"]):
+        col = [p["semitones"][k] for p in c["per_phrase"].values() if p["semitones"][k] is not None]
+        assert len(col) == c["n_phrases_per_position"][k]
+        assert value == round(statistics.median(col), 2)
+    r = profile["rate"]
+    assert r["value"] == round(statistics.median(p["ratio"] for p in r["per_phrase"].values()), 3)
+    assert r["n_phrases"] == len(r["per_phrase"])
+    assert 0.6 <= r["value"] <= 1.6
+
+
+def test_measurement_from_a_beings_recordings(tmp_path):
     """
-    Re-runs scripts/measure_alphavox_voice.py on AlphaVox's recordings with
-    Everett's Vosk and compares every applied value with the committed file.
-    Needs ALPHAVOX_PHRASES_DIR (AlphaVox data/phrases/alphavox_verified),
+    Runs scripts/measure_voice.py on a being's recordings with Everett's
+    Vosk, loads what it wrote, and checks every value against the
+    measurements written beside it. With CHRISTMAN_VOICE_REFERENCE_PROFILE
+    (that being's earlier measured profile) it also compares every applied
+    value with it. Needs CHRISTMAN_VOICE_RECORDINGS (the folder of recorded
+    phrases; CHRISTMAN_VOICE_PREFIX is their file name prefix),
     CHRISTMAN_VOSK_MODEL (vosk-model-en-us-0.22), CHRISTMAN_LEXICON_PATH and
     CHRISTMAN_VOSK_PYTHON (a Python that imports vosk).
     """
     need = {k: os.environ.get(k) for k in
-            ("ALPHAVOX_PHRASES_DIR", "CHRISTMAN_VOSK_MODEL", "CHRISTMAN_LEXICON_PATH", "CHRISTMAN_VOSK_PYTHON")}
+            ("CHRISTMAN_VOICE_RECORDINGS", "CHRISTMAN_VOSK_MODEL", "CHRISTMAN_LEXICON_PATH", "CHRISTMAN_VOSK_PYTHON")}
     missing = [k for k, v in need.items() if not v]
     if missing:
         pytest.skip("not run: needs " + ", ".join(missing) +
-                    " (AlphaVox's recordings, the Vosk model, its lexicon, a Python with vosk); runs on Everett's Mac")
+                    " (a being's recordings, the Vosk model, its lexicon, a Python with vosk); runs on Everett's Mac")
     require_full_model(need["CHRISTMAN_VOSK_MODEL"])
-    out = tmp_path / "alphavox_voice.json"
+    out = tmp_path / "measured_voice.json"
     proc = subprocess.run(
-        [need["CHRISTMAN_VOSK_PYTHON"], str(ROOT / "scripts" / "measure_alphavox_voice.py"),
-         "--phrases", need["ALPHAVOX_PHRASES_DIR"], "--vosk-model", need["CHRISTMAN_VOSK_MODEL"],
+        [need["CHRISTMAN_VOSK_PYTHON"], str(ROOT / "scripts" / "measure_voice.py"),
+         "--recordings", need["CHRISTMAN_VOICE_RECORDINGS"], "--prefix", os.environ.get("CHRISTMAN_VOICE_PREFIX", ""),
+         "--name", "measured voice", "--vosk-model", need["CHRISTMAN_VOSK_MODEL"],
          "--lexicon", need["CHRISTMAN_LEXICON_PATH"], "--out", str(out)],
         capture_output=True, text=True, timeout=1800,
     )
     assert proc.returncode == 0, proc.stderr[-3000:]
     fresh = json.loads(out.read_text(encoding="utf-8"))
-    assert [f["sha256"] for f in fresh["sources"]["recordings"]["files"]] == \
-           [f["sha256"] for f in PROFILE["sources"]["recordings"]["files"]]
+    assert fresh["voice"] == "measured voice"
+    assert fresh["sources"]["script"] == "scripts/measure_voice.py"
+    _check_medians(fresh)
+    load_voice_profile(out)
+    ref_path = os.environ.get("CHRISTMAN_VOICE_REFERENCE_PROFILE")
+    if not ref_path:
+        return
+    ref = json.loads(Path(ref_path).expanduser().read_text(encoding="utf-8"))
     # Vosk's word times on the same file move by up to one 30 ms frame from
-    # run to run (measured 2026-10-28: 3 to 4 of the 26 phrases), and the
-    # values move with them. Measured spread over three runs: 10 Hz on one
-    # vowel's F3, 0.06 semitones on one contour point, rate unchanged. The
+    # run to run (measured 2026-10-28: 3 to 4 of 26 phrases), and the values
+    # move with them. Measured spread over three runs: 10 Hz on one vowel's
+    # F3, 0.06 semitones on one contour point, rate unchanged. The
     # tolerances below are a few times that; a real change is far larger.
-    assert fresh["f0"]["median_hz"] == PROFILE["f0"]["median_hz"]
-    assert abs(fresh["rate"]["value"] - PROFILE["rate"]["value"]) <= 0.02
-    for x, y in zip(fresh["pitch_contour"]["semitones_from_median"], PROFILE["pitch_contour"]["semitones_from_median"]):
+    assert fresh["f0"]["median_hz"] == ref["f0"]["median_hz"]
+    assert abs(fresh["rate"]["value"] - ref["rate"]["value"]) <= 0.02
+    for x, y in zip(fresh["pitch_contour"]["semitones_from_median"], ref["pitch_contour"]["semitones_from_median"]):
         assert abs(x - y) <= 0.25
-    for group in ("vowels", "measured_not_applied", "not_measured"):
-        assert set(fresh[group]) == set(PROFILE[group]), group
-    for v, e in PROFILE["vowels"].items():
+    for group in ("vowels", "glides"):
+        assert set(fresh[group]) == set(ref[group]), group
+    for v, e in ref["vowels"].items():
         for k in ("f1_hz", "f2_hz", "f3_hz"):
             assert abs(fresh["vowels"][v][k] - e[k]) <= 0.02 * e[k], (v, k, fresh["vowels"][v][k], e[k])
-    # The glides (2026-10-28): two runs on his Mac gave the same values to the 0.1 Hz.
-    for group in ("glides", "glides_not_applied"):
-        assert set(fresh[group]) == set(PROFILE[group]), group
-    for v, e in PROFILE["glides"].items():
+    for v, e in ref["glides"].items():
         for k in ("onset_hz", "offset_hz"):
             for got, want in zip(fresh["glides"][v][k], e[k]):
                 assert abs(got - want) <= 0.02 * want, (v, k, got, want)
