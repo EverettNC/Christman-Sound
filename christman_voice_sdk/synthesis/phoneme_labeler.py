@@ -1,42 +1,57 @@
 """
 phoneme_labeler.py — Phoneme and viseme timing for Christman Voice SDK.
 
-MFA when it is installed and a transcript is present.
-Otherwise: energy onsets from the WAV (timing) + transcript-derived
-labels. Never invents a cycling SIL/AA viseme stream.
+WHAT CHANGED AND WHY (2026-10-29 review)
+----------------------------------------
+1. THE ALIGNER IS GONE. Phonemes came from the Montreal Forced Aligner
+   ("mfa align", run as a subprocess), which is built on the recognizer
+   Everett ruled out. Anything built on that recognizer goes, so the "mfa"
+   path is removed: no subprocess, no "mfa version" probe, no TextGrid.
+2. NO INVENTED LABELS. Without the aligner, labels were made from the
+   transcript's LETTERS ("night" -> N IH G HH T) and spread evenly across
+   the voiced time. Letters are not phonemes and even spacing is not
+   timing, so that is removed too.
+3. RULE 6. A failed aligner run was logged as a warning and fell through
+   to the letter labels, and label_phonemes swallowed any config error.
+   Both are gone.
 
-Used by synthesis and nonverbal.
+What it does now: `label_audio` returns a `PhonemeLabeling`. Nothing in this
+package produces phonemes today, so `available` is False and `reason` says
+so; `phonemes` is empty. What IS measured is kept: `voicing`, the voiced
+and silent spans of the recording from its energy, labelled as voicing,
+never as phonemes. A phoneme source can be added later behind
+`available=True`; until then no viseme stream is made from guesses.
+
+Used by synthesis (the orchestrator's lip-sync).
 """
 from __future__ import annotations
 
-import shutil
-import subprocess
-import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 import soundfile as sf
 
-from ..audio.config import get_config
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-try:
-    import textgrid
-except ImportError:
-    textgrid = None
+#: Why phonemes are not available. Said plainly, on every result.
+NO_PHONEME_SOURCE = (
+    "phonemes are not available: this package has no phoneme aligner (the "
+    "Montreal Forced Aligner path was removed; it is built on the recognizer "
+    "Everett ruled out), and labels are never made up from the transcript's "
+    "letters"
+)
 
 
 class Phoneme:
     """
-    One phoneme with timing from MFA or from energy onsets.
+    One phoneme with timing, from a real phoneme source.
 
-    `confidence` is None: neither MFA nor the energy fallback measures one.
-    2026-10-11: the fallback stamped 0.6 / 0.7 / 0.5 on its guesses and MFA
-    output got 1.0 — four constants chosen to look like measurements.
-    `source` says which method produced the timing.
+    `confidence` is None unless a source measures one. `source` names the
+    method that produced the timing.
     """
 
     def __init__(self, label: str, start_time: float, end_time: float,
@@ -63,8 +78,34 @@ class Phoneme:
         return f"Phoneme({self.label}, {self.start_time:.3f}-{self.end_time:.3f})"
 
 
+@dataclass
+class PhonemeLabeling:
+    """
+    The result of labeling one recording.
+
+    available  True only when real phonemes were produced.
+    reason     why not, when available is False.
+    phonemes   the phonemes; empty when not available.
+    voicing    the measured voiced / silent spans, from energy:
+               [{"start", "end", "voiced"}]. Not phonemes.
+    """
+
+    available: bool
+    reason: Optional[str]
+    phonemes: List[Phoneme] = field(default_factory=list)
+    voicing: List[Dict] = field(default_factory=list)
+
+    def to_dict(self) -> Dict:
+        return {
+            "available": self.available,
+            "reason": self.reason,
+            "phonemes": [p.to_dict() for p in self.phonemes],
+            "voicing": list(self.voicing),
+        }
+
+
 class PhonemeLabeler:
-    """Phoneme extraction: MFA first, energy+transcript fallback."""
+    """Phoneme timing. Reports `available: False` with the reason when it has none."""
 
     PHONEME_TO_VISEME = {
         "AA": "aa", "AE": "aa", "AH": "aa", "AO": "oh", "AW": "oh", "AY": "aa",
@@ -74,99 +115,27 @@ class PhonemeLabeler:
         "T": "dd", "D": "dd", "N": "nn", "L": "nn", "SH": "ch", "ZH": "ch",
         "CH": "ch", "JH": "ch", "K": "kk", "G": "kk", "NG": "nn", "HH": "sil",
         "W": "oh", "Y": "ih", "R": "rr", "SIL": "sil", "SP": "sil",
-        "VOI": "aa", "UNK": "sil",
+        "UNK": "sil",
     }
 
-    _GRAPHEME = {
-        "a": "AE", "e": "EH", "i": "IH", "o": "OW", "u": "UW",
-        "y": "IY", "b": "B", "c": "K", "d": "D", "f": "F",
-        "g": "G", "h": "HH", "j": "JH", "k": "K", "l": "L",
-        "m": "M", "n": "N", "p": "P", "q": "K", "r": "R",
-        "s": "S", "t": "T", "v": "V", "w": "W", "x": "K",
-        "z": "Z",
-    }
-
-    def __init__(self, use_mfa: bool = True):
-        self.use_mfa = bool(use_mfa)
-        self.mfa_available = self._check_mfa() if self.use_mfa else False
-
-    def _check_mfa(self) -> bool:
-        try:
-            result = subprocess.run(
-                ["mfa", "version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            logger.warning("MFA not available — energy+transcript labeling")
-            return False
-
-    def label_audio(self, audio_path: Path, transcript: Optional[str] = None) -> List[Phoneme]:
+    def label_audio(self, audio_path: Path, transcript: Optional[str] = None) -> PhonemeLabeling:
+        """
+        Label one recording. `transcript` is accepted for a future phoneme
+        source; it is never turned into labels here.
+        """
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             raise FileNotFoundError(f"phoneme labeler: audio missing: {audio_path}")
-        if self.mfa_available and textgrid is not None and transcript:
-            labeled = self._label_with_mfa(audio_path, transcript)
-            if labeled:
-                return labeled
-        return self._label_simple(audio_path, transcript)
+        voicing = self.voicing_spans(audio_path)
+        logger.warning("Phonemes not available for %s: %s", audio_path.name, NO_PHONEME_SOURCE)
+        return PhonemeLabeling(available=False, reason=NO_PHONEME_SOURCE, voicing=voicing)
 
-    def _label_with_mfa(self, audio_path: Path, transcript: str) -> List[Phoneme]:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            shutil.copy(audio_path, temp_path / audio_path.name)
-            (temp_path / f"{audio_path.stem}.txt").write_text(transcript)
-            output_dir = temp_path / "output"
-            output_dir.mkdir()
-            try:
-                subprocess.run(
-                    [
-                        "mfa", "align",
-                        str(temp_path),
-                        "english_us_arpa",
-                        "english_us_arpa",
-                        str(output_dir),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    check=False,
-                )
-                tg_file = output_dir / f"{audio_path.stem}.TextGrid"
-                if tg_file.is_file():
-                    return self._parse_textgrid(tg_file)
-            except Exception as exc:
-                logger.warning(f"MFA failed: {exc}")
-        return []
-
-    def _parse_textgrid(self, textgrid_path: Path) -> List[Phoneme]:
-        if textgrid is None:
-            return []
-        tg = textgrid.TextGrid.fromFile(str(textgrid_path))
-        phonemes: List[Phoneme] = []
-        for tier in tg.tiers:
-            if getattr(tier, "name", "") != "phones":
-                continue
-            for interval in tier.intervals:
-                mark = (interval.mark or "").strip()
-                if mark:
-                    phonemes.append(Phoneme(mark, interval.minTime, interval.maxTime, None, source="mfa"))
-        return phonemes
-
-    @classmethod
-    def transcript_to_labels(cls, transcript: str) -> List[str]:
-        labels: List[str] = []
-        for word in (transcript or "").lower().split():
-            letters = [ch for ch in word if ch.isalpha()]
-            if not letters:
-                continue
-            labels.extend(cls._GRAPHEME.get(ch, "AH") for ch in letters)
-        return labels
-
-    def _label_simple(self, audio_path: Path, transcript: Optional[str] = None) -> List[Phoneme]:
-        """Energy onsets for timing. Labels come from the transcript, not SIL/AA cycling."""
+    @staticmethod
+    def voicing_spans(audio_path: Path) -> List[Dict]:
+        """
+        Voiced and silent spans, measured from frame energy. A measurement
+        of voicing, not of phonemes.
+        """
         y, sr = sf.read(str(audio_path), dtype="float32")
         if y.ndim > 1:
             y = np.mean(y, axis=1)
@@ -174,6 +143,7 @@ class PhonemeLabeler:
         if duration <= 0:
             raise ValueError(f"phoneme labeler: empty audio {audio_path}")
 
+        # 25 ms frames every 10 ms: the usual speech analysis frame and hop.
         frame_size = max(1, int(0.025 * sr))
         hop_size = max(1, int(0.010 * sr))
         energy = np.array([
@@ -185,6 +155,11 @@ class PhonemeLabeler:
 
         peak_e = float(np.max(energy))
         mean_e = float(np.mean(energy))
+        # Chosen starting values, carried from the earlier version, held
+        # until client data replaces them: below 1e-6 RMS is digital
+        # silence; an energy spread under 15% of its mean is one steady
+        # sound; otherwise a frame is voiced at 40% of the mean or 5% of
+        # the peak, whichever is higher.
         if peak_e < 1e-6:
             voiced = np.zeros_like(energy, dtype=bool)
         elif float(np.std(energy)) < 0.15 * (mean_e + 1e-12):
@@ -197,36 +172,13 @@ class PhonemeLabeler:
             if voiced[i] != voiced[i - 1]:
                 bounds.append(i * hop_size / sr)
         bounds.append(duration)
-        spans = [(bounds[i], bounds[i + 1], bool(voiced[min(int(bounds[i] * sr / hop_size), len(voiced) - 1)]))
+        spans = [{"start": bounds[i], "end": bounds[i + 1],
+                  "voiced": bool(voiced[min(int(bounds[i] * sr / hop_size), len(voiced) - 1)])}
                  for i in range(len(bounds) - 1) if bounds[i + 1] > bounds[i]]
-        if not spans:
-            spans = [(0.0, duration, True)]
-
-        labels = self.transcript_to_labels(transcript or "")
-        phonemes: List[Phoneme] = []
-        voiced_spans = [s for s in spans if s[2]]
-        if labels and voiced_spans:
-            # Stretch transcript labels across voiced spans in order.
-            n = len(labels)
-            starts = [s[0] for s in voiced_spans]
-            ends = [s[1] for s in voiced_spans]
-            t0, t1 = starts[0], ends[-1]
-            for i, lab in enumerate(labels):
-                a = t0 + (t1 - t0) * i / n
-                b = t0 + (t1 - t0) * (i + 1) / n
-                phonemes.append(Phoneme(lab, a, b, None, source="energy_transcript"))
-            for start, end, is_voiced in spans:
-                if not is_voiced:
-                    phonemes.append(Phoneme("SIL", start, end, None, source="energy_transcript"))
-            phonemes.sort(key=lambda p: p.start_time)
-        else:
-            for start, end, is_voiced in spans:
-                phonemes.append(Phoneme("VOI" if is_voiced else "SIL", start, end, None, source="energy_only"))
-
-        logger.warning(f"Energy+transcript labeling: {len(phonemes)} segments from {audio_path.name}")
-        return phonemes
+        return spans
 
     def phonemes_to_visemes(self, phonemes: List[Phoneme], fps: int = 60) -> List[Dict]:
+        """Visemes from real phonemes. No phonemes, no visemes: nothing is made up."""
         if not phonemes:
             return []
         num_frames = max(1, int(phonemes[-1].end_time * fps))
@@ -242,15 +194,10 @@ class PhonemeLabeler:
         return visemes
 
 
-def label_phonemes(audio_path: str | Path, transcript: Optional[str] = None) -> List[Phoneme]:
-    """High-level phoneme labeling. Path setup belongs to the caller (PHONEMES.py)."""
-    try:
-        config = get_config()
-        use_mfa = bool(config.get("audio.mfa_enabled", True))
-    except Exception:
-        use_mfa = True
-    return PhonemeLabeler(use_mfa=use_mfa).label_audio(Path(audio_path), transcript)
+def label_phonemes(audio_path: str | Path, transcript: Optional[str] = None) -> PhonemeLabeling:
+    """High-level phoneme labeling. See PhonemeLabeling for what comes back."""
+    return PhonemeLabeler().label_audio(Path(audio_path), transcript)
 
 
 def phonemes_to_visemes(phonemes: List[Phoneme], fps: int = 60) -> List[Dict]:
-    return PhonemeLabeler(use_mfa=False).phonemes_to_visemes(phonemes, fps)
+    return PhonemeLabeler().phonemes_to_visemes(phonemes, fps)

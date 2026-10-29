@@ -181,6 +181,13 @@ def test_orchestrator_speaks_only_in_the_callers_voice(tmp_path, monkeypatch):
     payload = orch.synthesize("hello", voice=voice)
     assert payload["metadata"]["engine"] == "christman" and len(payload["audio"]) > 0
     assert payload["degraded"] is False
+    # Lip-sync asked for, with no phoneme source: none is made up, and it says why.
+    from christman_voice_sdk.synthesis.phoneme_labeler import NO_PHONEME_SOURCE, PhonemeLabeler
+    orch.phoneme_labeler = PhonemeLabeler()
+    payload = orch.synthesize("hello", voice=voice, generate_lipsync=True)
+    assert payload["lipsync_data"] is None
+    assert payload["metadata"]["lipsync_available"] is False
+    assert payload["metadata"]["lipsync_reason"] == NO_PHONEME_SOURCE
 
 
 def test_speech_response_raises_instead_of_using_the_os_voice():
@@ -221,19 +228,35 @@ def test_tts_service_reports_real_state_and_503s_without_a_voice(tmp_path, monke
 # Honesty of the rest of the speak path.
 # -----------------------------------------------------------------------------
 
-def test_phoneme_confidence_is_none_not_a_constant(tmp_path):
-    import soundfile as sf
-    from christman_voice_sdk.synthesis.phoneme_labeler import PhonemeLabeler
+def test_phonemes_are_unavailable_with_the_reason_never_invented(tmp_path, monkeypatch):
+    # 2026-10-29 review: the "mfa" aligner path (built on the recognizer
+    # Everett ruled out) is gone, and so are labels made from the
+    # transcript's letters. No phonemes: available False, with the reason.
+    import subprocess
 
+    import soundfile as sf
+    from christman_voice_sdk.synthesis import phoneme_labeler as pl
+
+    def no_subprocess(*a, **k):
+        raise AssertionError(f"a subprocess was started: {a!r}")
+
+    monkeypatch.setattr(subprocess, "run", no_subprocess)
+    monkeypatch.setattr(subprocess, "Popen", no_subprocess)
     y = np.concatenate([np.zeros(SR // 4, dtype=np.float32), _tone(220.0, 0.5),
                         np.zeros(SR // 4, dtype=np.float32)])
     wav = tmp_path / "t.wav"
     sf.write(str(wav), y, SR)
-    phonemes = PhonemeLabeler(use_mfa=False).label_audio(wav, "hello")
-    assert phonemes, "energy labeling must produce segments"
-    assert all(p.confidence is None for p in phonemes)
-    assert all(p.to_dict()["confidence_known"] is False for p in phonemes)
-    assert all(p.source in ("energy_transcript", "energy_only") for p in phonemes)
+    labeling = pl.PhonemeLabeler().label_audio(wav, "hello")
+    assert labeling.available is False and labeling.reason == pl.NO_PHONEME_SOURCE
+    assert labeling.phonemes == []
+    assert pl.PhonemeLabeler().phonemes_to_visemes(labeling.phonemes) == []
+    # What is measured is kept, as voicing, not as phonemes: silence, tone, silence.
+    assert [s["voiced"] for s in labeling.voicing] == [False, True, False]
+    assert abs(labeling.voicing[1]["start"] - 0.25) < 0.03
+    import inspect
+    source = inspect.getsource(pl)
+    assert '"mfa"' not in source.replace('the "mfa"', "") and "subprocess" not in source.split('"""', 2)[2]
+    assert not hasattr(pl.PhonemeLabeler, "transcript_to_labels")
 
 
 def test_tts_service_binds_loopback_and_keys_emotion():
