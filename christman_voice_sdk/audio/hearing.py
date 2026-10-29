@@ -45,8 +45,9 @@ are not edited from here.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+import re
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..nonverbal.acoustic_live import deliver_acoustic_key
 from ..nonverbal.engine_temporal import TemporalNonverbalEngine
@@ -67,7 +68,14 @@ from .fusion_engine import (
 )
 from .harm_frame import HarmFrame, Party, Polarity, extract_frames
 from .prosody import ProsodyAnalyzer, ProsodyReading, SpeakerBaseline
-from .structural_affect import AffectReading, Attribution, StructuralAffectAnalyzer
+from .structural_affect import (
+    FIRST_PERSON,
+    AffectReading,
+    Attribution,
+    StructuralAffectAnalyzer,
+    normalize_apostrophes,
+    tokenize,
+)
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -77,10 +85,174 @@ _CLAUSE_READER = StructuralAffectAnalyzer()
 
 #: What follows the harm verb when the one harmed is not a person. "he hurt
 #: my feelings" is in Everett's MUST NOT CALL table (2026-10-11); it stays a
-#: flag when someone else at risk began paging (2026-10-29).
+#: flag, never a page, even when the client asks for help in the same turn.
 _NOT_A_PERSON = frozenset({
     "feelings", "feeling", "pride", "ego", "chances", "reputation", "career",
     "plans", "business", "grades",
+})
+
+
+#: The client asking for help in the same turn. Everett, 2026-10-29 (ruling
+#: D): an observation about another carbon pages "only when the carbon that
+#: stated that requests us to get assistance." His examples: "can you get
+#: someone", "call someone", "help her", "I need help with this". A fixed list
+#: of request shapes, read on word boundaries; a request under a negation
+#: ("don't call anyone", "I don't need help") is not a request.
+HELP_REQUEST_PATTERNS: Tuple[str, ...] = (
+    r"\b(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?"
+    r"(?:get|call|find|send\s+for|send)\s+(?:someone|somebody|anyone|anybody|help|"
+    r"a\s+doctor|a\s+nurse|an\s+ambulance|the\s+police|911|her|him|them)\b",
+    r"\b(?:get|call|find|send\s+for|send)\s+(?:someone|somebody|help|a\s+doctor|"
+    r"a\s+nurse|an\s+ambulance|the\s+police|911)\b",
+    r"\bcall\s+for\s+help\b",
+    r"\bhelp\s+(?:her|him|them|us|me|my\s+[a-z]+)\b",
+    r"\b(?:i|we)\s+need\s+(?:some\s+)?help\b",
+    r"\b(?:i|we)\s+need\s+(?:someone|somebody)\b",
+    r"\b(?:please|somebody|someone|anybody|anyone)\s+help\b",
+    r"\b(?:can|could|will|would)\s+(?:you|u)\s+(?:please\s+)?help\b",
+)
+_REQUEST_NEGATORS = frozenset({
+    "don't", "dont", "not", "never", "doesn't", "doesnt",
+    "won't", "wont", "shouldn't", "shouldnt",
+})
+
+
+def asked_for_help(text: str) -> Optional[str]:
+    """The words of the client's request for help in `text`, or None. Reads only."""
+    lowered = normalize_apostrophes(text or "").lower()
+    for pattern in HELP_REQUEST_PATTERNS:
+        for m in re.finditer(pattern, lowered):
+            # Only the word right before the request can take it back:
+            # "don't call someone", "never call someone". "my mom is not
+            # okay, I need help" is a request: its "not" is about the mom.
+            before = lowered[:m.start()].split()[-1:]
+            if before and before[0].strip(",.;:!?") in _REQUEST_NEGATORS:
+                continue
+            return m.group(0)
+    return None
+
+
+#: The questions a being asks when something is recorded and flagged rather
+#: than paged. Everett, 2026-10-29: the being follows up by asking, in a
+#: plain question such as "Do you need help?" or "Are you safe?" It never
+#: tells. One question each, so a one-word answer can be read: after "Are
+#: you safe?" a "no" means not safe; after "Do you need help?" a "yes" means
+#: help. Both pass the reply guard (synthesis/reply_guard.py).
+FOLLOW_UP_HARM_TO_CLIENT = "Are you safe?"
+FOLLOW_UP_SOMEONE_ELSE = "Do you need help?"
+
+#: A one-word or short answer to the being's question, read only on the turn
+#: right after the question was asked. "Pages when the client asks for help
+#: or answers that they are not safe."
+_ANSWER_NOT_SAFE = re.compile(
+    r"^\s*(?:no|nope|nah|not really|no i'?m not|i'?m not|no not really|not safe|"
+    r"no i am not|i am not)\b(?!\s+(?:sure|hurt|scared)\b)")
+_ANSWER_YES_HELP = re.compile(
+    r"^\s*(?:yes|yeah|yep|yes please|please|i do|we do|she does|he does|they do)\b")
+
+#: Body parts. "he hurt my ARM" is the client's body, not someone else.
+BODY_PARTS = frozenset({
+    "arm", "arms", "neck", "head", "face", "back", "leg", "legs", "hand",
+    "hands", "wrist", "wrists", "finger", "fingers", "rib", "ribs", "chest",
+    "stomach", "belly", "eye", "eyes", "nose", "mouth", "jaw", "throat",
+    "shoulder", "shoulders", "knee", "knees", "foot", "feet", "ankle",
+    "ankles", "hip", "hips", "side", "ear", "ears", "lip", "lips", "tooth",
+    "teeth", "body", "skin", "hair", "cheek", "chin", "spine", "elbow",
+    "elbows", "thumb", "toes",
+})
+
+#: Verbs of physical harm, every form. The form and the words before it
+#: decide whether it is happening now or was reported.
+_HARM_VERB_FORMS = {
+    "hurt": "ambiguous", "hurts": "now", "hurting": "now",
+    "break": "base", "breaks": "now", "breaking": "now", "broke": "past", "broken": "past",
+    "twist": "base", "twists": "now", "twisting": "now", "twisted": "past",
+    "choke": "base", "chokes": "now", "choking": "now", "choked": "past",
+    "squeeze": "base", "squeezes": "now", "squeezing": "now", "squeezed": "past",
+    "grab": "base", "grabs": "now", "grabbing": "now", "grabbed": "past",
+    "hit": "ambiguous", "hits": "now", "hitting": "now",
+    "punch": "base", "punches": "now", "punching": "now", "punched": "past",
+    "kick": "base", "kicks": "now", "kicking": "now", "kicked": "past",
+    "slap": "base", "slaps": "now", "slapping": "now", "slapped": "past",
+    "burn": "base", "burns": "now", "burning": "now", "burned": "past", "burnt": "past",
+    "cut": "ambiguous", "cuts": "now", "cutting": "now",
+    "bite": "base", "bites": "now", "biting": "now", "bit": "past",
+    "stab": "base", "stabs": "now", "stabbing": "now", "stabbed": "past",
+    "pull": "base", "pulls": "now", "pulling": "now", "pulled": "past",
+    "bend": "base", "bends": "now", "bending": "now", "bent": "past",
+    "crush": "base", "crushes": "now", "crushing": "now", "crushed": "past",
+}
+#: Words before the verb that put it in the present: "he IS hurting my arm",
+#: "NOW he's STARTING TO break my neck", "he KEEPS hitting my head".
+_NOW_BEFORE = frozenset({
+    "is", "are", "am", "keeps", "keep", "still", "now", "starting", "trying",
+    "going", "gonna", "about", "again",
+})
+_BODY_HARM = re.compile(
+    r"\b(?P<verb>" + "|".join(sorted(_HARM_VERB_FORMS, key=len, reverse=True)) + r")\s+"
+    r"(?:me\s+(?:in|on)\s+(?:the|my)\s+|my\s+)(?P<part>[a-z]+)\b")
+_PAST_TIME = frozenset({"yesterday", "ago", "earlier", "last"})
+
+
+@dataclass(frozen=True)
+class BodyHarm:
+    """Physical harm by someone else to the client's own body, read from the clause."""
+
+    verb: str
+    part: str
+    now: bool
+    said: str
+
+
+def body_harm(text: str) -> List[BodyHarm]:
+    """
+    "he hurt my arm", "now he's starting to break my neck", "he hit me in the
+    face". Read as the whole clause, before and after: "he hurt my" is never
+    cut off from what follows (Everett, 2026-10-29), and what follows must be
+    the client's body. Who does it is the word before: the client hurting
+    their own arm ("I hurt my arm") is not this; harm_frame reads self-harm.
+    Reads only.
+    """
+    lowered = normalize_apostrophes(text or "").lower()
+    out: List[BodyHarm] = []
+    for m in _BODY_HARM.finditer(lowered):
+        if m.group("part") not in BODY_PARTS:
+            continue
+        clause_start = max(lowered.rfind(p, 0, m.start()) for p in ".!?;,") + 1
+        before = tokenize(lowered[clause_start:m.start()])
+        after: List[str] = []
+        for t in tokenize(re.split(r"[.!?;,]", lowered[m.end():])[0]):
+            if t in {"and", "but", "so", "then", "because"} or len(after) == 3:
+                break       # the next clause is its own; "and now I'm not safe"
+            after.append(t)
+        doer = next((t for t in reversed(before)
+                     if t not in _NOW_BEFORE and t not in {"to", "starting", "started", "trying",
+                                                            "keeps", "kept", "just", "really"}), "")
+        if doer in FIRST_PERSON or not doer:
+            continue
+        form = _HARM_VERB_FORMS[m.group("verb")]
+        now = form == "now" or bool(set(before) & _NOW_BEFORE) or "now" in after
+        if form == "past" and not ({"now", "is", "are", "keeps", "still"} & set(before)):
+            now = False
+        if set(before + after) & _PAST_TIME:
+            now = False
+        out.append(BodyHarm(m.group("verb"), m.group("part"), now, m.group(0)))
+    return out
+
+
+def answered_follow_up(text: str, question: str) -> Optional[str]:
+    """The client's answer to the being's last question, when it calls for a human."""
+    lowered = normalize_apostrophes(text or "").lower()
+    if question == FOLLOW_UP_HARM_TO_CLIENT and _ANSWER_NOT_SAFE.search(lowered):
+        return "answered_not_safe"
+    if question == FOLLOW_UP_SOMEONE_ELSE and _ANSWER_YES_HELP.search(lowered):
+        return "answered_yes_help"
+    return None
+
+
+#: The client's own state that reaches a human at once (ruling A).
+CLIENT_DISTRESS_TERMS = frozenset({
+    "not okay", "not safe", "no one loves me", "no one cares", "have no one",
 })
 
 
@@ -88,27 +260,50 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
     """
     Aegis callback. Uses Everett's frame. Does not rewrite harm_frame.py.
 
-    This is the ONLY crisis gate on the Corti path. What it returns:
+    This is the ONLY crisis gate on the Corti path. Everett, 2026-10-29: "Our
+    position is if someone is in distress: hey, somebody come here and help
+    us. We don't claim to be therapists, psychologists, psychiatrists,
+    doctors. It's never left in our laps to make a decision on someone's
+    life." What it returns:
 
       hard_block     a harm frame whose patient is (or may be) the speaker,
-                     not negated, not history — in ANY modality. "I might
+                     not negated, not history, in ANY modality. "I might
                      kill myself tonight" is hypothetical by grammar and a
                      crisis by every other reading. A hard block MUST reach
                      a human (Aegis raises CrisisNotDelivered otherwise).
-      hard_block     someone else at risk right now ("she wants to die",
-                     "he is going to kill her") or someone else not okay /
-                     not safe ("my mom is not okay"). Everett, 2026-10-29:
-                     "unless it is two beings talking to each other, a carbon
-                     is involved. Someone else at risk pages a human, the same
-                     as the client's own distress." Only
-                     context["between_beings"] is True keeps it a flag.
-      soft_redirect  the speaker's own history ("I used to want to kill
-                     myself"), or someone else at risk when two beings are
-                     talking to each other. Flagged, no human paged.
+      hard_block     nonverbal distress (context["nonverbal_distress"]): a
+                     pressed help, pain or medicine symbol, the grunt key, a
+                     distress sound, pointing up, Hand Up. At ANY confidence:
+                     nonverbal distress is exactly the same as verbal
+                     (ruling B).
+      hard_block     the client's OWN distress (ruling A): "I'm not okay",
+                     "I don't feel safe", "I'm not safe", "no one cares",
+                     "no one loves me", "I have no one", reason
+                     "client_distress"; and the client's own history of harm
+                     ("I used to want to kill myself"), reason
+                     "harm_frame_history_self".
+      soft_redirect  an OBSERVATION about another carbon (ruling D): "she
+                     wants to die", "my mom is not okay", "Mary is not okay",
+                     "my dad isn't safe". Recorded and flagged
+                     ("follow_up:...") for the being to follow up. Everett:
+                     "those do not page unless the carbon that stated that
+                     requests us to get assistance, because we don't want to
+                     step in the middle of a situation where we don't
+                     belong."
+      hard_block     the same observation WITH the client asking for help
+                     in the same turn ("can you get someone", "call
+                     someone", "help her", "I need help with this"). The
+                     request is named in the flags ("asked_for_help:...").
+      soft_redirect  two beings talking to each other
+                     (context["between_beings"] is exactly True): nothing on
+                     this list but a harm frame against the speaker pages
+                     (ruling F; the speaker-at-risk frame pages as it always
+                     has).
       clear          grief and history about others ("my brother died by
                      suicide"), negated harm ("I would never hurt myself"),
-                     or no harm predicate at all. Flags still carry what
-                     was seen; `reason` says which.
+                     a past time word ("yesterday my mom was not okay"), or
+                     no harm predicate at all. Flags still carry what was
+                     seen; `reason` says which.
 
     WHAT CHANGED 2026-10-11: the previous gate required `stated_intent`,
     which excluded hypothetical and ability modalities, and returned a bare
@@ -116,31 +311,55 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
     "I might kill myself tonight", "I want to die", "I am suicidal" all
     came back clear. Everett's MUST-CALL / MUST-NOT-CALL table is pinned in
     tests/test_harm_frame_gate.py and this function is written to it.
-
-    2026-10-29: `context["nonverbal_distress"]` — a list of distress
-    readings from Hearing (the grunt key, the help / pain / medicine
-    symbols) — is a hard block too, reason "nonverbal_distress". A person
-    who cannot say "help" and pressed it has said it.
     """
     context = context or {}
     original = text or ""
-    frames = extract_frames(original)
-    between_beings = context.get("between_beings") is True
-    # "my mom is not okay", "she doesnt feel safe": the clause reader, not a
-    # substring. Negated ("she is not unsafe"), past ("yesterday she wasn't
-    # okay") and the speaker's own state are left out.
-    other_not_okay = [
-        h for h in _CLAUSE_READER.analyze(original).hits
-        if h.term in ("not okay", "not safe") and h.attribution is Attribution.OTHER
-        and h.when == "now" and h.final_weight < 0
-    ] if original else []
+    words = _words_gate(original, context.get("between_beings") is True,
+                        str(context.get("answering_follow_up") or ""))
     nonverbal = [d for d in (context.get("nonverbal_distress") or [])
                  if isinstance(d, dict)]
+    if not nonverbal:
+        return words
+    # Everett, 2026-10-29: the acoustic key (and every nonverbal signal) must
+    # never disrupt the interpretation of what is spoken. The words were read
+    # above, alone. A nonverbal distress signal may only ADD a page: when
+    # the words already page, their reading stands and the signal is added
+    # to the flags; when they do not, the signal pages, and what the words
+    # were read as is kept in the flags beside it.
     nonverbal_flags = [
         f"nonverbal:{d.get('modality')}:{d.get('input')}:{d.get('intent')}"
         for d in nonverbal
     ]
+    if words.status == "hard_block":
+        return replace(words, flags=list(words.flags) + nonverbal_flags)
+    inputs = [str(d.get("input")) for d in nonverbal]
+    return replace(
+        words,
+        status="hard_block",
+        reason="nonverbal_distress",
+        flags=nonverbal_flags + list(words.flags)
+        + [f"words:{words.status}:{words.reason}"],
+        flagged_terms=inputs + list(words.flagged_terms),
+        hold_marker=f"[SAFETY HOLD — nonverbal distress: {', '.join(inputs)}]",
+    )
 
+
+def _words_gate(original: str, between_beings: bool, answering: str = "") -> SafetyResult:
+    """The crisis gate on the words alone. No nonverbal signal reaches here."""
+    frames = extract_frames(original)
+    harms = body_harm(original)
+    harm_now = [h for h in harms if h.now]
+    harm_past = [h for h in harms if not h.now]
+    harm_flags = [f"harm_{'now' if h.now else 'reported'}:{h.said}" for h in harms]
+    # The clause reader, not a substring. A negated state ("she is not
+    # unsafe"), a past one ("yesterday she wasn't okay"), and "you" or a
+    # thing as the subject are left out (see structural_affect).
+    hits = _CLAUSE_READER.analyze(original).hits if original else []
+    states_now = [h for h in hits if h.when == "now" and h.final_weight < 0]
+    own_state = [h for h in states_now
+                 if h.term in CLIENT_DISTRESS_TERMS and h.attribution is Attribution.SELF]
+    other_not_okay = [h for h in states_now
+                      if h.term in ("not okay", "not safe") and h.attribution is Attribution.OTHER]
     crisis: List[HarmFrame] = []
     at_risk_other: List[HarmFrame] = []
     other_not_person: List[HarmFrame] = []
@@ -161,8 +380,14 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
         if frame.speaker_may_be_patient:
             crisis.append(frame)
         elif frame.patient is Party.THIRD_PARTY:
-            if (getattr(frame, "post", "") or "") in _NOT_A_PERSON:
+            post = (getattr(frame, "post", "") or "").split()
+            first = post[0].strip(",.;:!?") if post else ""
+            if first in _NOT_A_PERSON:
                 other_not_person.append(frame)
+            elif first in BODY_PARTS:
+                # "he hurt my ARM" is the client's own body, read by
+                # body_harm above, not someone else at risk.
+                continue
             else:
                 at_risk_other.append(frame)
 
@@ -173,39 +398,110 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
                     f"subject:{f.subject.value}", f"shape:{f.shape}"]
         return out
 
+    other_flags = (_flags("other", at_risk_other)
+                   + [f"other_not_okay:{h.term}" for h in other_not_okay])
+    own_flags = [f"client_distress:{h.term}" for h in own_state]
+
     if crisis:
         return SafetyResult(
             status="hard_block",
             reason="harm_frame_speaker_at_risk",
             said=original,
-            flags=_flags("hard", crisis) + nonverbal_flags,
+            flags=_flags("hard", crisis) + own_flags + other_flags,
             flagged_terms=[f.predicate for f in crisis],
             hold_marker="[SAFETY HOLD — harm with the speaker as patient]",
         )
 
-    if nonverbal:
-        inputs = [str(d.get("input")) for d in nonverbal]
+    if harm_now:
+        # Everett, 2026-10-29: harm happening NOW to the client is "immediate
+        # carbon notification": a human at once, at any confidence.
         return SafetyResult(
             status="hard_block",
-            reason="nonverbal_distress",
+            reason="harm_now_to_client",
             said=original,
-            flags=nonverbal_flags + _flags("other", at_risk_other),
-            flagged_terms=inputs,
-            hold_marker=f"[SAFETY HOLD — nonverbal distress: {', '.join(inputs)}]",
+            flags=harm_flags + own_flags + other_flags,
+            flagged_terms=[h.verb for h in harm_now],
+            hold_marker="[SAFETY HOLD — harm happening now to the client]",
         )
 
-    other_flags = [f"other_not_okay:{h.term}" for h in other_not_okay]
-    if at_risk_other or other_not_okay:
+    answer = answered_follow_up(original, answering) if answering else None
+    if answer is not None and not between_beings:
         return SafetyResult(
-            status="soft_redirect" if between_beings else "hard_block",
-            reason=("harm_frame_third_party_at_risk" if at_risk_other
-                    else "other_person_not_okay"),
+            status="hard_block",
+            reason=answer,
             said=original,
-            flags=_flags("other", at_risk_other) + other_flags,
-            flagged_terms=[f.predicate for f in at_risk_other]
-            + [h.term for h in other_not_okay],
-            hold_marker=("" if between_beings else
-                         "[SAFETY HOLD — someone else at risk]"),
+            flags=[f"answered:{answering}"] + harm_flags + own_flags + other_flags,
+            flagged_terms=[],
+            hold_marker="[SAFETY HOLD — the client answered the being's question]",
+        )
+
+    if own_state or history_self:
+        terms = [h.term for h in own_state] + [f.predicate for f in history_self]
+        flags = own_flags + _flags("history", history_self) + other_flags
+        if between_beings:
+            return SafetyResult(
+                status="soft_redirect",
+                reason="between_beings",
+                said=original,
+                flags=flags,
+                flagged_terms=terms,
+            )
+        return SafetyResult(
+            status="hard_block",
+            reason="client_distress" if own_state else "harm_frame_history_self",
+            said=original,
+            flags=flags,
+            flagged_terms=terms,
+            hold_marker="[SAFETY HOLD — the client's own distress]",
+        )
+
+    if harm_past:
+        # Everett, 2026-10-29: a report of past physical harm to the client
+        # ("he hurt my arm") does not page on its own. The being follows up
+        # by ASKING ("Are you safe?"). It pages when the client asks for help
+        # (here) or answers that they are not safe (the next turn).
+        request = None if between_beings else asked_for_help(original)
+        if request is not None:
+            return SafetyResult(
+                status="hard_block",
+                reason="harm_reported_to_client",
+                said=original,
+                flags=harm_flags + other_flags + [f"asked_for_help:{request}"],
+                flagged_terms=[h.verb for h in harm_past],
+                hold_marker="[SAFETY HOLD — the client asked for help]",
+            )
+        return SafetyResult(
+            status="soft_redirect",
+            reason="harm_reported_to_client",
+            said=original,
+            flags=harm_flags + other_flags + (["between_beings"] if between_beings
+                                              else ["follow_up:ask_if_safe"]),
+            flagged_terms=[h.verb for h in harm_past],
+            follow_up="" if between_beings else FOLLOW_UP_HARM_TO_CLIENT,
+        )
+
+    if at_risk_other or other_not_okay:
+        reason = ("harm_frame_third_party_at_risk" if at_risk_other
+                  else "other_person_not_okay")
+        terms = [f.predicate for f in at_risk_other] + [h.term for h in other_not_okay]
+        request = None if between_beings else asked_for_help(original)
+        if request is not None:
+            return SafetyResult(
+                status="hard_block",
+                reason=reason,
+                said=original,
+                flags=other_flags + [f"asked_for_help:{request}"],
+                flagged_terms=terms,
+                hold_marker="[SAFETY HOLD — the client asked for help for someone else]",
+            )
+        return SafetyResult(
+            status="soft_redirect",
+            reason=reason,
+            said=original,
+            flags=other_flags + (["between_beings"] if between_beings
+                                 else ["follow_up:someone_else"]),
+            flagged_terms=terms,
+            follow_up="" if between_beings else FOLLOW_UP_SOMEONE_ELSE,
         )
 
     if other_not_person:
@@ -215,15 +511,6 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
             said=original,
             flags=_flags("soft", other_not_person),
             flagged_terms=[f.predicate for f in other_not_person],
-        )
-
-    if history_self:
-        return SafetyResult(
-            status="soft_redirect",
-            reason="harm_frame_history_self",
-            said=original,
-            flags=_flags("history", history_self),
-            flagged_terms=[f.predicate for f in history_self],
         )
 
     if history_other:
@@ -342,6 +629,9 @@ class Hearing:
             safety_callback=harm_frame_safety,
             crisis_callback=crisis_callback,
         )
+        #: The question the being asked on the last turn with words, if any.
+        #: The client's next words are read as the answer to it, once.
+        self.awaiting_answer: Optional[str] = None
 
     def hear(
         self,
@@ -446,7 +736,10 @@ class Hearing:
         if text:
             frames = extract_frames(text)
             affect = self.affect.analyze(text)
+            if self.awaiting_answer:
+                live_state["answering_follow_up"] = self.awaiting_answer
             decision = self.fusion.fuse(text, live_state=live_state, prosody=reading)
+            self.awaiting_answer = decision.safety.follow_up or None
         else:
             notes.append("no text — structural_affect and harm_frame not run")
             if distress:
@@ -477,4 +770,6 @@ class Hearing:
 
 
 __all__ = ["Hearing", "HearingTurn", "harm_frame_safety", "CrisisNotDelivered",
-           "NONVERBAL_INPUTS"]
+           "NONVERBAL_INPUTS", "asked_for_help", "HELP_REQUEST_PATTERNS",
+           "CLIENT_DISTRESS_TERMS", "body_harm", "BodyHarm", "BODY_PARTS",
+           "FOLLOW_UP_HARM_TO_CLIENT", "FOLLOW_UP_SOMEONE_ELSE", "answered_follow_up"]

@@ -57,15 +57,22 @@ MUST_CALL = [
     "I used to be happy but now I want to die",
     "I stopped taking my meds. I want to kill myself",
     "years ago I was fine, I want to end it all",
-    # Someone else at risk. Everett, 2026-10-29: pages a human, the same as
-    # the client's own distress, unless two beings are talking to each other.
-    "she wants to die",
-    "he is going to kill her",
-    "my mom is not okay",
-    "my moms not okay",
-    "my mom's not safe",
-    "she doesn't feel safe",
-    "my dad isn't okay",
+    # Everett, 2026-10-29 (ruling A): the client's OWN distress reaches a
+    # human right away, every time, and so does the client's own history of
+    # harm. "It's never left in our laps to make a decision on someone's life."
+    "I'm not okay",
+    "I don't feel safe",
+    "I'm not safe",
+    "no one cares",
+    "no one loves me",
+    "I have no one",
+    "I used to want to kill myself",
+    # Ruling D: an observation about another carbon pages only when the
+    # client asks for help in the same turn.
+    "she wants to die, can you get someone",
+    "my mom is not okay please call someone",
+    "Mary is not okay, help her",
+    "my dad isn't safe I need help with this",
 ]
 
 MUST_NOT_CALL = [
@@ -75,7 +82,6 @@ MUST_NOT_CALL = [
     "I don't want to die",
     "I don't want to kill myself",
     "I would never hurt myself",
-    "I used to want to kill myself",
     "the hitting stopped years ago",
     "I'm reading about how people choke on food",
     "I'm going to kill it at the meeting",
@@ -90,6 +96,21 @@ MUST_NOT_CALL = [
     "my mom is not okay with it",
     "that is not safe",
     "yesterday my mom was not okay",
+    # Ruling D, Everett 2026-10-29: an observation about another carbon does
+    # not page "unless the carbon that stated that requests us to get
+    # assistance, because we don't want to step in the middle of a situation
+    # where we don't belong." Recorded and flagged for the being to follow up.
+    "she wants to die",
+    "he is going to kill her",
+    "my mom is not okay",
+    "my moms not okay",
+    "my mom's not safe",
+    "she doesn't feel safe",
+    "my dad isn't okay",
+    "Mary is not okay",
+    # Ruling E: said at someone, not the client's distress.
+    "you're not okay",
+    "calm down",
 ]
 
 # Everett's open items. Ruled 2026-10-11; one line each to overrule.
@@ -134,28 +155,34 @@ def test_grief_is_named_not_blocked():
     assert any(f.startswith("history:") for f in r.flags), r.flags
 
 
-def test_third_party_at_risk_pages_unless_between_beings():
+def test_third_party_at_risk_is_followed_up_and_pages_only_when_asked():
     r = harm_frame_safety("she wants to die")
-    assert r.status == "hard_block", r
+    assert r.status == "soft_redirect", r
     assert r.reason == "harm_frame_third_party_at_risk"
+    assert "follow_up:someone_else" in r.flags
     assert r.said == "she wants to die"
-    b = harm_frame_safety("she wants to die", {"between_beings": True})
+    asked = harm_frame_safety("she wants to die, can you get someone")
+    assert asked.status == "hard_block", asked
+    assert "asked_for_help:can you get someone" in asked.flags
+    b = harm_frame_safety("she wants to die, can you get someone", {"between_beings": True})
     assert b.status == "soft_redirect", b
-    assert b.said == "she wants to die"
     # Only True counts. A truthy string is not two beings.
-    assert harm_frame_safety("she wants to die", {"between_beings": "yes"}).status == "hard_block"
+    assert harm_frame_safety("she wants to die call someone",
+                             {"between_beings": "yes"}).status == "hard_block"
 
 
-def test_someone_else_not_okay_pages():
+def test_someone_else_not_okay_is_followed_up():
     r = harm_frame_safety("my mom is not okay")
-    assert r.status == "hard_block", r
+    assert r.status == "soft_redirect", r
     assert r.reason == "other_person_not_okay"
+    assert "follow_up:someone_else" in r.flags
     assert r.said == "my mom is not okay"
 
 
-def test_own_history_is_flagged_not_blocked():
+def test_own_history_pages():
+    # Everett, 2026-10-29 (ruling A). This test used to pin a flag only.
     r = harm_frame_safety("I used to want to kill myself")
-    assert r.status == "soft_redirect", r
+    assert r.status == "hard_block", r
     assert r.reason == "harm_frame_history_self"
 
 

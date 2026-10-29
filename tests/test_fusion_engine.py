@@ -104,11 +104,16 @@ def test_plain_distress_is_still_gentle_lift():
 # client's own distress. Unless it is two beings talking to each other."
 # The test this replaces pinned the opposite (soft_redirect, nobody paged).
 
-def test_someone_else_at_risk_pages_a_human_and_keeps_every_word():
+def test_someone_else_at_risk_pages_when_asked_and_keeps_every_word():
+    # Everett, 2026-10-29 (ruling D): an observation pages only when the
+    # client asks for help in the same turn.
     paged = []
     eng = _engine(crisis_callback=lambda r, c: paged.append(r) or True)
-    said = ["she wants to die", "he is going to kill her", "my mom is not okay",
-            "my moms not safe"]
+    for text in ("she wants to die", "my mom is not okay"):
+        assert eng.fuse(text).safety.status == "soft_redirect"
+    assert paged == []
+    said = ["she wants to die can you get someone", "he is going to kill her call someone",
+            "my mom is not okay help her", "my moms not safe I need help"]
     for text in said:
         d = eng.fuse(text)
         assert d.mode == MODE_SAFETY_HOLD, (text, d.to_dict())
@@ -131,9 +136,8 @@ def test_between_beings_someone_else_at_risk_is_flagged_not_paged():
 # HELD for Everett (2026-10-29). The handoff made a safety hold "slower" and
 # "confirm before acting", turned a soft_redirect into hold-space, turned the
 # client's own distress under the grounding bar into hold-space, and rounded
-# the grounding bar. Each changes how the client's own distress is routed, so
-# each is back to main (e35fe46), and these pin main's behavior until Everett
-# rules.
+# the grounding bar. How a turn is DELIVERED is still main's (e35fe46) until
+# Everett rules; WHETHER a human is paged follows his rulings A to F.
 
 def test_held_safety_hold_delivery_is_mains():
     d = _engine().fuse("I want to kill myself")
@@ -144,11 +148,15 @@ def test_held_safety_hold_delivery_is_mains():
     assert "safety_flag" not in d.delivery
 
 
-def test_held_own_not_okay_is_a_standard_turn_as_in_main():
+def test_own_not_okay_pages_a_human():
+    # Everett, 2026-10-29 (ruling A): the client's own distress reaches a
+    # human right away, every time.
     for text in ("I'm not okay", "I don't feel safe", "i have no one"):
-        d = _engine().fuse(text)
-        assert d.mode == MODE_STANDARD, (text, d.to_dict())
-        assert d.delivery["pace"] == "normal"
+        paged = []
+        d = _engine(crisis_callback=lambda r, c: paged.append(r) or True).fuse(text)
+        assert d.mode == MODE_SAFETY_HOLD, (text, d.to_dict())
+        assert d.safety.reason == "client_distress"
+        assert len(paged) == 1
 
 
 def test_plain_words_steer_their_domain():

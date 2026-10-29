@@ -339,6 +339,12 @@ class SafetyResult:
     #: 'clear'} with nothing on it saying the real gate never ran.
     degraded: bool = False
     degraded_reason: str = ""
+    #: The question the being asks next, or "". Everett, 2026-10-29: when
+    #: something is recorded and flagged instead of paged, the being follows
+    #: up by ASKING, in a plain question ("Are you safe?", "Do you need
+    #: help?"). It never tells, and never says "you're not okay" or "calm
+    #: down". The client's answer is read on the next turn.
+    follow_up: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -476,6 +482,7 @@ class Aegis:
             delivered_to_human=True,
             degraded=result.degraded,
             degraded_reason=result.degraded_reason,
+            follow_up=result.follow_up,
         )
 
 
