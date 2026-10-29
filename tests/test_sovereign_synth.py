@@ -433,6 +433,7 @@ print(len(r.samples), sorted(m for m in sys.modules if m.split(".")[0] in BLOCK)
 
 # ------------------------------------------------------------ playback
 
+@pytest.mark.plays_aloud
 def test_speak_plays_through_christman_play(dsp, tmp_path):
     try:
         r = speak(phones=[("SIL", 0.03), ("AA", 0.3), ("SIL", 0.03)], voice=load_test_voice(tmp_path), engine=dsp)

@@ -449,6 +449,7 @@ def test_tts_service_voices_and_never_serves_another_voices_file(dsp, lexicon_fi
 
 # ------------------------------------------------------------------ playback
 
+@pytest.mark.plays_aloud
 def test_generate_speech_audio_plays_through_christman_play(mouth, dsp):
     try:
         mouth.generate_speech_audio("hello", play_audio=True)
