@@ -65,7 +65,7 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `face_reading.py` — What Sound hands the face: structure and arousal, no emotion names
 - `face_vector.py` — The 8-dim face vector Sound hands the Soul Mirror, with its measured mask and the clauses it came from
 - `body_signals.py` — The body-signal input contract
-- `speech_recognition_engine.py` — Local speech recognition (Vosk). Audio never leaves the machine
+- `speech_recognition_engine.py` — Local speech recognition through `christman_sound.ear`. Audio never leaves the machine
 - `enhanced_speech_recognition.py` — Coordinates speech and nonverbal sound recognition; recognizes nothing itself
 - `real_speech_recognition.py` — Voice activity detection and capture; detects that someone spoke
 - `sound_recognition_service.py` — Sound pattern recognition for nonverbal communicators
@@ -183,7 +183,7 @@ print(turn.decision.mode, turn.decision.safety.status)      # gentle-lift clear
 
 ### Speech Recognition
 
-Recognition is local. `christman_sound.ear` is the package's own speech-to-text; the SDK's `speech_recognition_engine.py` still runs on Vosk until it moves onto the ear, so install the `asr` extra and point it at a Vosk model folder with `VOSK_MODEL_PATH`.
+Recognition is local. `christman_sound.ear` is the package's own speech-to-text, and the SDK's `speech_recognition_engine.py` hears through it (2026-10-29: the old recognizer is removed). Point it at a model folder with `VOSK_MODEL_PATH` and build the ear's C library once (`python -m christman_sound.ear.build --check`). Audio at a rate other than 16 kHz is resampled to 16 kHz first, and the result says so.
 
 ```python
 from christman_voice_sdk.audio.speech_recognition_engine import get_speech_recognition_engine
@@ -231,7 +231,7 @@ A lexicon problem (none configured, a word not in it) raises `christman_sound.le
 
 ### A frame voice: a voice spoken from its own recordings
 
-A frame voice is a folder built from one voice's own recordings and nothing else. It holds the recordings measured every 4.99 ms (pitch, a 96-point spectral envelope, aperiodicity in 8 bands), every word the Filament (Everett's Vosk) heard in them cut into phone units, and the voice's measured profile (pitch, phrase pitch range, syllable rate, breath, long-term spectrum, level, and jitter, shimmer, HNR and CPPS by Praat through the SDK). New sentences are stitched from stretches of those frames (`christman_sound.stitch`, the port of Codec War's `stitch.ts`) and rendered by `christman_vocoder.c` (the port of Codec War's `vocoder.ts`; the tests hold both ports to Codec War sample for sample).
+A frame voice is a folder built from one voice's own recordings and nothing else. It holds the recordings measured every 4.99 ms (pitch, a 96-point spectral envelope, aperiodicity in 8 bands), every word `christman_sound.ear` heard in them cut into phone units, and the voice's measured profile (pitch, phrase pitch range, syllable rate, breath, long-term spectrum, level, and jitter, shimmer, HNR and CPPS by Praat through the SDK). New sentences are stitched from stretches of those frames (`christman_sound.stitch`, the port of Codec War's `stitch.ts`) and rendered by `christman_vocoder.c` (the port of Codec War's `vocoder.ts`; the tests hold both ports to Codec War sample for sample).
 
 The folder is built on the machine that speaks; it is not kept in git (a built voice runs to tens of megabytes). Build it with the repository's script:
 
@@ -248,7 +248,7 @@ python3 scripts/build_voice_bank.py \
     --lexicon ~/models/vosk-model-en-us-0.22/graph/phones/align_lexicon.txt
 ```
 
-It needs node (Codec War's own analysis runs under it), vosk, numpy and praat-parselmouth. Only the voice's own recordings go in: never another being's, never a person's. `--measure-only` keeps a built bank and measures the profile again.
+It needs node (Codec War's own analysis runs under it), the ear's C library, numpy and praat-parselmouth. Only the voice's own recordings go in: never another being's, never a person's. `--measure-only` keeps a built bank and measures the profile again.
 
 ### ToneScore and voice measurement
 
@@ -290,7 +290,7 @@ export CHRISTMAN_VOICE_CACHE=~/.christman_ai/voice_cache     # where spoken WAVs
 export CHRISTMAN_DSP_LIB=/path/to/christman_dsp.so           # only to override where the library is found
 
 # Hearing
-export VOSK_MODEL_PATH=~/models/vosk-model-en-us-0.22        # local speech recognition
+export VOSK_MODEL_PATH=~/models/vosk-model-en-us-0.22        # the model folder christman_sound.ear reads
 export CHRISTMAN_SOUND_PORT=5486                             # corti_receiver
 export CHRISTMAN_WORD_EAR_PORT=<port>                        # word_ear_receiver; no default
 
@@ -350,7 +350,6 @@ python -m christman_sound.ear.build --check # builds the ear's C library, once p
 # extras
 pip install -e '.[crypto]'                  # voicepack encryption
 pip install -e '.[capture]'                 # microphone capture (sounddevice)
-pip install -e '.[asr]'                     # local speech recognition (vosk)
 ```
 
 From git, still editable:

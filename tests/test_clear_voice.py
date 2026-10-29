@@ -19,10 +19,11 @@ text as "the": 4 of 53 words on twelve sentences. These tests hold:
   * S and SH put their noise where it belongs (S high, SH lower);
   * AY glides from the voice's measured onset to its measured offset;
   * a measured voice is rendered by the clear renderer, and says so;
-  * words: with Everett's Vosk model on the machine, twelve sentences are
-    synthesized in the test voice and recognized; the clear renderer must
-    be heard far better than christman_synth_voiced. Without the model or a
-    Python vosk, NOT RUN.
+  * words: with the model folder on the machine, twelve sentences are
+    synthesized in the test voice and heard by christman_sound.ear (the old
+    recognizer is removed, Everett's ruling 2026-10-29); the clear renderer
+    must be heard far better than christman_synth_voiced. Without the model
+    folder or its lexicon, NOT RUN.
 
 Real runs only: the C library is built by scripts/build_dsp.py here.
 """
@@ -40,6 +41,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ear_judge  # noqa: E402
 from vosk_models import require_full_model  # noqa: E402
 sys.path.insert(0, str(ROOT))
 
@@ -231,18 +233,26 @@ def _word_errors(ref: str, hyp: str):
 
 def test_free_text_is_heard_word_for_word_far_more_often(dsp, tmp_path, voice):
     """
-    Twelve sentences in the test voice, recognized by Everett's Vosk
-    (vosk-model-en-us-0.22, run directly). Measured on his Mac on 2026-10-28:
-    christman_synth_voiced 3 of 53 words (5.7%); christman_synth_clear 25 of
-    53 (47.2%). Held here: the clear renderer at least 40% and at least 30
-    points above the old one. Not yet clear speech: about half the words. Needs CHRISTMAN_VOSK_MODEL,
-    CHRISTMAN_LEXICON_PATH and CHRISTMAN_VOSK_PYTHON (a Python with vosk).
+    Twelve sentences in the test voice, heard by christman_sound.ear on
+    vosk-model-en-us-0.22 (tests/ear_judge.py). The floors were set from the
+    old recognizer, measured on his Mac on 2026-10-28: christman_synth_voiced
+    3 of 53 words (5.7%); christman_synth_clear 25 of 53 (47.2%). Held here:
+    the clear renderer at least 40% and at least 30 points above the old
+    one. Not yet clear speech: about half the words.
+
+    Measured on the ear on his Mac, 2026-10-29: christman_synth_voiced 3 of
+    53 (5.7%, the same as the old recognizer); christman_synth_clear 18 of 53
+    (34.0%), under the 40% floor. The floor is NOT lowered: it is Everett's
+    to keep or change. The ear reads no rescoring step (the full model's
+    rescore/ folder is not used by christman_sound.ear), which may be why it
+    hears these renderings less well; that is not yet proven. Needs
+    CHRISTMAN_VOSK_MODEL (the model folder) and CHRISTMAN_LEXICON_PATH.
     """
-    need = {k: os.environ.get(k) for k in ("CHRISTMAN_VOSK_MODEL", "CHRISTMAN_LEXICON_PATH", "CHRISTMAN_VOSK_PYTHON")}
+    need = {k: os.environ.get(k) for k in ("CHRISTMAN_VOSK_MODEL", "CHRISTMAN_LEXICON_PATH")}
     missing = [k for k, v in need.items() if not v]
     if missing:
         pytest.skip("not run: needs " + ", ".join(missing) +
-                    " (Everett's Vosk model, its lexicon, a Python with vosk); runs on Everett's Mac")
+                    " (the model folder the ear reads, and its lexicon); runs on Everett's Mac")
     require_full_model(need["CHRISTMAN_VOSK_MODEL"])
     table = dsp.synth_phone_table()
     formant_table = dsp.synth_phone_formants()
@@ -259,21 +269,8 @@ def test_free_text_is_heard_word_for_word_far_more_often(dsp, tmp_path, voice):
         p = tmp_path / f"voiced_{i}.wav"
         cs_synth.write_wav(p, old, r.sample_rate)
         wavs["voiced"].append(str(p))
-    hear = (
-        "import json, sys, wave, vosk\n"
-        "vosk.SetLogLevel(-1)\n"
-        "m = vosk.Model(sys.argv[1])\n"
-        "out = []\n"
-        "for p in sys.argv[2:]:\n"
-        "    w = wave.open(p, 'rb'); sr = w.getframerate(); pcm = w.readframes(w.getnframes())\n"
-        "    rec = vosk.KaldiRecognizer(m, sr); rec.AcceptWaveform(pcm + b'\\x00\\x00' * (sr // 2))\n"
-        "    out.append(json.loads(rec.FinalResult()).get('text', ''))\n"
-        "print(json.dumps(out))\n"
-    )
-    proc = subprocess.run([need["CHRISTMAN_VOSK_PYTHON"], "-c", hear, need["CHRISTMAN_VOSK_MODEL"]]
-                          + wavs["clear"] + wavs["voiced"], capture_output=True, text=True, timeout=1800)
-    assert proc.returncode == 0, proc.stderr[-2000:]
-    heard = json.loads(proc.stdout.strip().splitlines()[-1])
+    model = ear_judge.load(need["CHRISTMAN_VOSK_MODEL"])
+    heard = ear_judge.hear_files(model, wavs["clear"] + wavs["voiced"])
     acc = {}
     for k, part in (("clear", heard[:len(SENTENCES)]), ("voiced", heard[len(SENTENCES):])):
         errs = total = 0

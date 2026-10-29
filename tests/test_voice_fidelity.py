@@ -16,8 +16,9 @@ voice is judged two ways, and neither passes alone:
   timbre_modeler; christman_yin pitch through voice_measure; the
   third-octave long-term spectrum) and must sit where the recordings sit.
 
-  INTELLIGIBILITY. The same renderings are heard by Everett's two ears: the
-  Filament (127.0.0.1:4850) and Vosk with vosk-model-en-us-0.22.
+  INTELLIGIBILITY. The same renderings are heard by two ears: the Filament
+  (127.0.0.1:4850) and christman_sound.ear on vosk-model-en-us-0.22 (the old
+  recognizer is removed, Everett's ruling 2026-10-29; tests/ear_judge.py).
 
 NEW SENTENCES, RECORDED AS THEY STAND. Spoken from units of the long
 recordings, new sentences do not yet sit where the recorded phrases sit on
@@ -43,13 +44,13 @@ TOLERANCES, each a chosen starting value with its reason:
     recordings' average no larger than the recordings' own median distance to it.
   * words: recorded phrases rendered back must be heard at 95% or better by
     both ears (the recordings themselves: 99 to 100%). New sentences: at
-    least 75% on the Filament and 85% on Vosk (the clear renderer measured
+    least 75% on the Filament and 85% on the ear (the clear renderer measured
     41.2% and 52.0% on the same 24 sentences; these floors keep this voice
     far above it while the voice is still learned).
 
 The voice is the frame voice folder at $CHRISTMAN_TEST_VOICE. Built from a voice's own recordings by
 scripts/build_voice_bank.py. Without it, or without Praat, the ears or the
-Vosk model, the gate reports NOT RUN with the reason.
+model folder, the gate reports NOT RUN with the reason.
 """
 
 from __future__ import annotations
@@ -69,6 +70,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT))
+import ear_judge  # noqa: E402
 from vosk_models import require_full_model  # noqa: E402
 
 SENTENCES_24 = [
@@ -85,7 +87,9 @@ EAR = "http://127.0.0.1:4850/stt"
 EAR_TIMEOUT_S = 180
 LTAS_RESYNTH_DB = 2.0
 WORDS_RESYNTH = 0.95
-WORDS_NEW = {"filament": 0.75, "vosk": 0.85}
+#: The "ear" floor was set on the old recognizer (2026-10-28), held for
+#: christman_sound.ear on the same model until it is measured there.
+WORDS_NEW = {"filament": 0.75, "ear": 0.85}
 MEASURES = ("jitter_local_pct", "shimmer_local_pct", "hnr_db", "cpp_db", "f0_median_hz", "range_st")
 
 
@@ -115,25 +119,14 @@ def _ears():
         pytest.skip(f"not run: the Filament ear is not answering on 127.0.0.1:4850 ({exc})")
     model = Path(os.environ.get("CHRISTMAN_VOSK_MODEL", "~/models/vosk-model-en-us-0.22")).expanduser()
     require_full_model(str(model))
-    try:
-        import vosk
-    except ImportError as exc:
-        pytest.skip(f"not run: vosk is not importable here ({exc})")
-    if not model.is_dir():
-        pytest.skip(f"not run: no Vosk model at {model} (set CHRISTMAN_VOSK_MODEL)")
-    vosk.SetLogLevel(-1)
-    vmodel = vosk.Model(str(model))
+    ear = ear_judge.load(model)
 
     def hear(wav_bytes: bytes):
         req = urllib.request.Request(EAR, data=wav_bytes, method="POST", headers={"Content-Type": "audio/wav"})
         body = json.loads(opener.open(req, timeout=EAR_TIMEOUT_S).read().decode())
         words = body.get("words") or []
         fil = " ".join(str(w.get("raw") or w.get("text") or "") for w in words).strip().lower() or (body.get("text") or "").strip().lower()
-        with wave.open(io.BytesIO(wav_bytes), "rb") as w:
-            sr, pcm = w.getframerate(), w.readframes(w.getnframes())
-        rec = vosk.KaldiRecognizer(vmodel, sr)
-        rec.AcceptWaveform(pcm + b"\x00\x00" * (sr // 2))
-        return fil, json.loads(rec.FinalResult()).get("text", "").strip().lower()
+        return fil, ear_judge.hear_bytes(ear, wav_bytes)
 
     return hear
 
@@ -211,7 +204,7 @@ def test_fidelity_and_words_of_recorded_phrases_rendered_back(tmp_path):
     hear = _ears()
     idx = _profile_recordings(voice)
     assert idx, "the voice names no profile recordings"
-    orig, rend, dists, errs = [], [], [], {"filament": [0, 0], "vosk": [0, 0]}
+    orig, rend, dists, errs = [], [], [], {"filament": [0, 0], "ear": [0, 0]}
     for ri in idx:
         src = voice.bank.recordings[ri]["path"]
         out = tmp_path / Path(src).name
@@ -222,7 +215,7 @@ def test_fidelity_and_words_of_recorded_phrases_rendered_back(tmp_path):
         dists.append(float(np.sqrt(np.mean((o["ltas"] - r["ltas"]) ** 2))))
         # A recording is named <voice name>_<its words>.wav; the words are the reference.
         ref = Path(src).stem.replace(voice.name.lower() + "_", "", 1).replace("_", " ")
-        for ear, hyp in zip(("filament", "vosk"), hear(out.read_bytes())):
+        for ear, hyp in zip(("filament", "ear"), hear(out.read_bytes())):
             e, n = _errors(ref, hyp)
             errs[ear][0] += e
             errs[ear][1] += n
@@ -230,7 +223,7 @@ def test_fidelity_and_words_of_recorded_phrases_rendered_back(tmp_path):
     lines.append(f"resynthesis long-term spectrum: median {statistics.median(dists):.2f} dB from its own recording "
                  f"(allowed {LTAS_RESYNTH_DB} dB)")
     words = {k: 1 - e / n for k, (e, n) in errs.items()}
-    lines.append(f"resynthesis words: Filament {100 * words['filament']:.1f}%, Vosk {100 * words['vosk']:.1f}% "
+    lines.append(f"resynthesis words: Filament {100 * words['filament']:.1f}%, ear {100 * words['ear']:.1f}% "
                  f"(allowed {100 * WORDS_RESYNTH:.0f}% or better)")
     print("\n".join(lines))
     assert not failed, failed
@@ -247,7 +240,7 @@ def test_new_sentences_are_heard_and_sound_like_the_voice(tmp_path):
     hear = _ears()
     lexicon = os.environ.get("CHRISTMAN_LEXICON_PATH") or voice.provenance.get("lexicon")
     orig = [_measure(voice.bank.recordings[ri]["path"]) for ri in _profile_recordings(voice)]
-    rend, errs = [], {"filament": [0, 0], "vosk": [0, 0]}
+    rend, errs = [], {"filament": [0, 0], "ear": [0, 0]}
     for s in SENTENCES_24:
         made = synthesize(s, voice=voice, lexicon_path=lexicon)
         assert made.voice == voice.name and made.renderer == "christman_vocoder"
@@ -258,7 +251,7 @@ def test_new_sentences_are_heard_and_sound_like_the_voice(tmp_path):
         out = tmp_path / (s.replace(" ", "_") + ".wav")
         made.write_wav(out)
         rend.append(_measure(str(out)))
-        for ear, hyp in zip(("filament", "vosk"), hear(out.read_bytes())):
+        for ear, hyp in zip(("filament", "ear"), hear(out.read_bytes())):
             e, n = _errors(s, hyp)
             errs[ear][0] += e
             errs[ear][1] += n
@@ -269,8 +262,8 @@ def test_new_sentences_are_heard_and_sound_like_the_voice(tmp_path):
     lines.append(f"new sentences long-term spectrum: median {new:.2f} dB from the recordings' average "
                  f"(the recordings themselves: {own:.2f} dB)")
     words = {k: 1 - e / n for k, (e, n) in errs.items()}
-    lines.append(f"new sentences words: Filament {100 * words['filament']:.1f}%, Vosk {100 * words['vosk']:.1f}% "
-                 f"(floors {100 * WORDS_NEW['filament']:.0f}% and {100 * WORDS_NEW['vosk']:.0f}%)")
+    lines.append(f"new sentences words: Filament {100 * words['filament']:.1f}%, ear {100 * words['ear']:.1f}% "
+                 f"(floors {100 * WORDS_NEW['filament']:.0f}% and {100 * WORDS_NEW['ear']:.0f}%)")
     print("\n".join(lines))
     assert all(words[k] >= WORDS_NEW[k] for k in words), words
     if new > own:

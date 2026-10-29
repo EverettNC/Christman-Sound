@@ -72,9 +72,11 @@ dependencies = [
 crypto = ["cryptography"]
 # Microphone capture (integration/voice_capture_client.capture_audio).
 capture = ["sounddevice"]
-# Local speech recognition (audio/speech_recognition_engine.py, Vosk). The
-# model is not a package: point VOSK_MODEL_PATH at a model folder on disk.
-asr = ["vosk"]
+# Local speech recognition needs no extra (2026-10-29): the old recognizer is
+# removed, Everett's ruling, and audio/speech_recognition_engine.py hears
+# through christman_sound.ear, which is in this package. The model is not a
+# package: point VOSK_MODEL_PATH at a model folder on disk, and build the
+# ear's C library once (python -m christman_sound.ear.build --check).
 
 [tool.setuptools.packages.find]
 include = ["christman_voice_sdk*", "christman_sound*"]

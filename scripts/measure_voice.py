@@ -17,19 +17,19 @@ voice. Every value in that file sits beside the measurements it came from.
 The profile belongs to the being and lives with it, not in this package.
 
 Arguments: the recordings folder (--recordings), the output path (--out) and
-the voice's name (--name), with the Vosk model and its lexicon. The phrase
+the voice's name (--name), with the model folder and its lexicon. The phrase
 text comes from each file name, after an optional --prefix:
 <prefix>i_need_help_please.wav -> "i need help please".
 
 How each value is measured:
 
-  Alignment. Each recording is decoded with Everett's Vosk ear
-  (vosk-model-en-us-0.22, word times on). A recording whose decoded words
-  are not exactly its file-name words is left out and named in the report;
-  nothing is forced onto it. Vosk's word times on the same file move by up
-  to one 30 ms frame from run to run (measured 2026-10-28: 3 to 4 of 26
-  phrases); over three runs that moved one vowel's F3 by 10 Hz and one
-  contour point by 0.06 semitones.
+  Alignment. Each recording is decoded with christman_sound.ear, this
+  package's own ear, on vosk-model-en-us-0.22 (word times on). A recording
+  whose decoded words are not exactly its file-name words is left out and
+  named in the report; nothing is forced onto it. (2026-10-29: the old
+  recognizer this used is removed, Everett's ruling. Its word times moved by
+  up to one 30 ms frame from run to run, measured 2026-10-28; the ear's run
+  to run is not yet measured on these recordings.)
 
   Formants. christman_sound.formants measures every recording frame by frame
   (25 ms frames, 10 ms hop, LPC on Everett's own C engine; see that file for
@@ -65,7 +65,7 @@ How each value is measured:
   Rate. For each phrase, the synthesizer's own duration for its words at rate
   1.0 (first phone of the first word to last phone of the last word,
   including Codec War's 0.08 s gap after each word) divided by the recorded
-  duration of the same span (Vosk: first word start to last word end). The
+  duration of the same span (the ear: first word start to last word end). The
   profile's rate is the median over phrases. christman_synth divides every
   duration by it.
 
@@ -81,7 +81,7 @@ and the duration difference. "after, held out" repeats "after" with a
 profile measured from the other phrases only, so the phrase being scored did
 not shape the voice that speaks it.
 
-Run (python with vosk installed; Christman-Sound's C library built):
+Run (Christman-Sound installed, its C library and the ear's C library built):
 
     python3.11 scripts/measure_voice.py \
         --recordings <the being's recorded phrases> --prefix <file name prefix> \
@@ -108,7 +108,7 @@ from typing import Dict, List, Optional, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # build_voice_bank (the Vosk ear)
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # build_voice_bank (_words: christman_sound.ear)
 
 from christman_sound.dsp import get_dsp  # noqa: E402
 from christman_sound.formants import (  # noqa: E402
@@ -275,15 +275,15 @@ class Phrase:
 
 def align(phrases: List[Phrase], model_dir: str) -> dict:
     """
-    Word times from Everett's Vosk ear. The recognizer is the one
-    scripts/build_voice_bank.py runs (_words): each recording is handed to it
-    as 16-bit PCM at the recording's own rate, the same samples the
-    measurement reads.
+    Word times from christman_sound.ear, this package's own ear. The call is
+    the one scripts/build_voice_bank.py runs (_words): each recording is
+    handed to it as 16-bit PCM at the recording's own rate, the same samples
+    the measurement reads, and _words resamples to the ear's 16 kHz. Times
+    come back in seconds, so they point into the recording as it is.
     """
     import tempfile
     import wave
 
-    import vosk
     import build_voice_bank
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -300,20 +300,19 @@ def align(phrases: List[Phrase], model_dir: str) -> dict:
             heard = build_voice_bank._words(model_dir, wav)
             got = [w["word"] for w in heard]
             if got != p.words:
-                p.excluded = f"Vosk heard {got!r}, the file name says {p.words!r}; left out"
+                p.excluded = f"the ear heard {got!r}, the file name says {p.words!r}; left out"
                 continue
             p.aligned = [
                 {"word": w["word"], "start": float(w["start"]), "end": float(w["end"]), "conf": float(w["conf"])}
                 for w in heard
             ]
     return {
-        "engine": "vosk (Everett's ear), word times on",
-        "vosk_version": getattr(vosk, "__version__", None) or _pip_version("vosk"),
+        "engine": "christman_sound.ear (this package's own ear), word times on, audio at 16 kHz",
+        "christman_sound_version": _pip_version("christman-sound"),
         "model": Path(model_dir).name,
         "phrase_text": "from the file name; a phrase whose decoded words differ is left out",
-        "run_to_run": "word times on the same file move by up to one 30 ms frame between runs "
-                      "(measured 2026-10-28: 3 to 4 of 26 phrases; one vowel's F3 moved 10 Hz, one "
-                      "contour point 0.06 semitones, over three runs)",
+        "run_to_run": "not yet measured on the ear. The old recognizer's word times moved by up "
+                      "to one 30 ms frame between runs (measured 2026-10-28)",
     }
 
 
@@ -484,7 +483,7 @@ def build_profile(phrases: List[Phrase], lex, dsp, table, vowels: set) -> dict:
             "n_phrases": len(per_rate),
             "source": "per phrase: the synthesizer's own duration for the words at rate 1.0 (Codec War "
                       "table, position and mapping factors, 0.08 s gaps) / the recorded duration of the "
-                      "same words (Vosk: first word start to last word end); value = median over phrases",
+                      "same words (the ear: first word start to last word end); value = median over phrases",
             "per_phrase": per_rate,
         },
         "vowels": vow,

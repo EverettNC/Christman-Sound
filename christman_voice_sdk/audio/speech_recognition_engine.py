@@ -32,7 +32,7 @@ WHAT CHANGED AND WHY
 
        text = self.recognizer.recognize_google(audio_data, ...)
 
-   Three call sites. A nonverbal user's voice — the most sensitive recording
+   Three call sites. A nonverbal client's voice — the most sensitive recording
    this stack ever touches — uploaded to a third party, and the whole thing
    dead without a network. Recognition is now on-device through a pluggable
    backend. There is no cloud path in this file and no fallback that reaches
@@ -54,7 +54,7 @@ WHAT CHANGED AND WHY
        return "[Speech API error]", 0.0, {"error": str(exc)}
 
    A caller writing `if text:` received a failure and treated it as an
-   utterance. Downstream, "[Speech API error]" becomes something the user said.
+   utterance. Downstream, "[Speech API error]" becomes something the client said.
    All results now come back as RecognitionResult, which refuses to hold text
    on any non-OK status.
 
@@ -91,13 +91,16 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 #: Set to "1" to write every microphone capture to disk. OFF by default: these
-#: are recordings of a user's voice. The original wrote them unconditionally.
+#: are recordings of a client's voice. The original wrote them unconditionally.
 DEBUG_DUMP_AUDIO = "DEBUG_DUMP_AUDIO"
 
-#: Vosk model location. No default that silently points at nothing — if this is
-#: unset and no path is passed, construction fails loudly.
+#: The model folder the ear reads (a Vosk-format model folder, such as
+#: vosk-model-en-us-0.22). The setting keeps its name so existing setups keep
+#: working. No default that silently points at nothing — if this is unset and
+#: no path is passed, construction fails loudly.
 VOSK_MODEL_PATH_ENV = "VOSK_MODEL_PATH"
 
+#: Capture rate for the microphone loop. Kept under its old name for callers.
 VOSK_SAMPLE_RATE = 16000
 SAMPLE_WIDTH_BYTES = 2  # 16-bit PCM
 
@@ -123,7 +126,7 @@ class LocalASRBackend(Protocol):
     A local, offline recognizer.
 
     Kept as a protocol so the engine can be tested without a model on disk, and
-    so swapping Vosk for another offline recognizer does not touch the engine.
+    so swapping one offline recognizer for another does not touch the engine.
     Any implementation must be offline. There is no interface here for a remote
     service and none should be added.
     """
@@ -165,16 +168,26 @@ class TranscriptionOutput:
         self.detail = detail or {}
 
 
-class VoskBackend:
+class EarBackend:
     """
-    On-device recognition via Vosk.
+    On-device recognition through christman_sound.ear, the package's own ear.
+
+    2026-10-29 (Everett's ruling): the old recognizer is removed from this
+    package. This backend used to hand the PCM to the `vosk` Python package,
+    whose recognizer is the old one. christman_sound.ear reads the same model
+    folder (am/final.mdl, ivector/, conf/, graph/HCLG.fst) with this
+    package's own code: numpy and the C library built from
+    christman_sound/ear/csrc. No recognizer library is imported.
+
+    The model folder comes from `model_path` or VOSK_MODEL_PATH, the same
+    setting as before; the folder is the model, and the ear reads it.
 
     The model is loaded once and shared. Loading takes seconds, so a lock
-    guards it — two threads calling start_listening() must not each load a
+    guards it: two threads calling start_listening() must not each load a
     copy and double the memory.
     """
 
-    name = "vosk"
+    name = "christman_ear"
 
     _model: Any = None
     _model_path: Optional[str] = None
@@ -184,14 +197,14 @@ class VoskBackend:
         path = model_path or os.getenv(VOSK_MODEL_PATH_ENV)
         if not path:
             raise LocalRecognitionUnavailable(
-                f"No Vosk model path. Pass model_path or set "
-                f"{VOSK_MODEL_PATH_ENV}. Refusing to construct a recognizer "
-                "that cannot recognize."
+                f"No model folder. Pass model_path or set {VOSK_MODEL_PATH_ENV} "
+                "to a model folder on disk (for example "
+                "~/models/vosk-model-en-us-0.22). Refusing to construct a "
+                "recognizer that cannot recognize."
             )
+        path = os.path.expanduser(path)
         if not os.path.isdir(path):
-            raise LocalRecognitionUnavailable(
-                f"Vosk model directory not found: {path}"
-            )
+            raise LocalRecognitionUnavailable(f"Model folder not found: {path}")
         self.model_path = path
         self._ensure_model()
 
@@ -201,21 +214,21 @@ class VoskBackend:
             if cls._model is not None and cls._model_path == self.model_path:
                 return cls._model
             try:
-                import vosk  # imported lazily: absence is a runtime condition
+                from christman_sound.ear import load_model
             except ImportError as exc:
                 raise LocalRecognitionUnavailable(
-                    "The 'vosk' package is not installed. On-device "
-                    "recognition is unavailable. There is no cloud fallback "
-                    "by design."
+                    f"christman_sound.ear cannot be imported here ({exc}). "
+                    "Install Christman-Sound whole and build the ear's C "
+                    "library once: python -m christman_sound.ear.build --check. "
+                    "There is no cloud fallback by design."
                 ) from exc
-
             try:
-                vosk.SetLogLevel(-1)
-                cls._model = vosk.Model(self.model_path)
+                cls._model = load_model(self.model_path)
                 cls._model_path = self.model_path
             except Exception as exc:
                 raise LocalRecognitionUnavailable(
-                    f"Failed to load Vosk model at {self.model_path}: {exc}"
+                    f"The ear could not load the model at {self.model_path}: "
+                    f"{type(exc).__name__}: {exc}"
                 ) from exc
         return cls._model
 
@@ -223,33 +236,31 @@ class VoskBackend:
         """
         Transcribe 16-bit mono PCM.
 
-        Confidence is the mean of Vosk's per-word acoustic confidences. When
-        Vosk returns no word list — which happens on short or unclear audio —
+        The ear hears 16 kHz. Audio at another rate is resampled to 16 kHz
+        with scipy's polyphase filter first, and `resampled_from` says so.
+
+        Confidence is the mean of the ear's per-word confidences (each word's
+        posterior in the lattice). When the ear returns no word list,
         confidence is None rather than a filled-in number.
+
+        The text is exactly the ear's words, utterance by utterance, joined
+        with one space. Nothing is cleaned, corrected or withheld.
         """
-        import vosk
+        from christman_sound.ear import Ear
 
         model = self._ensure_model()
-        rec = vosk.KaldiRecognizer(model, float(sample_rate))
-        rec.SetWords(True)
-        rec.AcceptWaveform(pcm_bytes)
+        rate = int(sample_rate)
+        resampled_from: Optional[int] = None
+        if rate != EAR_SAMPLE_RATE:
+            pcm_bytes = _resample_pcm16(pcm_bytes, rate, EAR_SAMPLE_RATE)
+            resampled_from = rate
+        ear = Ear(model, sample_rate=EAR_SAMPLE_RATE, words=True)
+        heard = ear.hear(pcm_bytes)
 
-        try:
-            payload = json.loads(rec.FinalResult())
-        except (ValueError, TypeError) as exc:
-            raise LocalRecognitionUnavailable(
-                f"Vosk returned unparseable output: {exc}"
-            ) from exc
-
-        text = (payload.get("text") or "").strip()
-        words = payload.get("result") or []
-
+        text = " ".join(h.text for h in heard if h.text)
+        words = [w for h in heard for w in h.words]
+        scores = [float(w.conf) for w in words]
         confidence: Optional[float] = None
-        scores = [
-            float(w["conf"])
-            for w in words
-            if isinstance(w, dict) and isinstance(w.get("conf"), (int, float))
-        ]
         if scores:
             confidence = max(0.0, min(1.0, sum(scores) / len(scores)))
 
@@ -258,9 +269,29 @@ class VoskBackend:
             confidence=confidence,
             detail={
                 "word_count": len(words),
-                "confidence_source": "vosk_word_mean" if scores else "none",
+                "confidence_source": "ear_word_mean" if scores else "none",
+                "resampled_from": resampled_from,
             },
         )
+
+
+#: The rate christman_sound.ear hears (its Recognizer refuses any other).
+EAR_SAMPLE_RATE = 16000
+
+
+def _resample_pcm16(pcm_bytes: bytes, rate: int, target: int) -> bytes:
+    """16-bit mono PCM at `rate` to 16-bit mono PCM at `target`. Polyphase."""
+    import numpy as np
+    from math import gcd
+
+    from scipy.signal import resample_poly
+
+    if rate <= 0:
+        raise ValueError(f"sample rate {rate} is not a rate")
+    samples = np.frombuffer(pcm_bytes, dtype="<i2").astype(np.float64)
+    g = gcd(rate, target)
+    out = resample_poly(samples, target // g, rate // g)
+    return np.clip(np.round(out), -32768, 32767).astype("<i2").tobytes()
 
 
 # -----------------------------------------------------------------------------
@@ -292,7 +323,8 @@ class SpeechRecognitionEngine:
     ) -> None:
         """
         Args:
-            backend: A local ASR backend. When None, one is built from
+            backend: A local ASR backend. When None, the ear backend
+                (christman_sound.ear) is built on the model folder at
                 VOSK_MODEL_PATH; if that fails the engine is constructed in an
                 unavailable state that reports itself rather than pretending.
             simulate: Canned-phrase mode. Requires CHRISTMAN_SOUND_SIMULATE_SPEECH=1.
@@ -320,7 +352,7 @@ class SpeechRecognitionEngine:
 
         if self.backend is None and not simulate:
             try:
-                self.backend = VoskBackend()
+                self.backend = EarBackend()
             except LocalRecognitionUnavailable as exc:
                 # Recorded, not raised: the engine stays constructible so a
                 # caller can inspect and report the condition. Every recognition
@@ -661,7 +693,7 @@ class SpeechRecognitionEngine:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(pcm)
-            logger.warning("DEBUG: wrote user audio to %s", path)
+            logger.warning("DEBUG: wrote client audio to %s", path)
         except Exception as exc:
             logger.error("Debug audio dump failed: %s", exc)
 
@@ -745,7 +777,8 @@ def list_microphones() -> List[str]:
 __all__ = [
     "SpeechRecognitionEngine",
     "LocalASRBackend",
-    "VoskBackend",
+    "EarBackend",
+    "EAR_SAMPLE_RATE",
     "TranscriptionOutput",
     "LocalRecognitionUnavailable",
     "get_speech_recognition_engine",

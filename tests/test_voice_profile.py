@@ -20,9 +20,9 @@ own recordings) and hold:
   * the refusals: bad formant rows (code 9), a voice plus f0/rate, a
     profile missing a value;
   * the measurement itself (scripts/measure_voice.py), run on a being's
-    recordings with Everett's Vosk, writes every value as the median of the
-    measurements beside it. That run needs the recordings, the Vosk model
-    and a Python with vosk; without them it reports NOT RUN.
+    recordings with christman_sound.ear, writes every value as the median of the
+    measurements beside it. That run needs the recordings and the model
+    folder the ear reads; without them it reports NOT RUN.
 
 Real runs only: the C library is built by scripts/build_dsp.py here.
 """
@@ -263,25 +263,27 @@ def _check_medians(profile: dict) -> None:
 
 def test_measurement_from_a_beings_recordings(tmp_path):
     """
-    Runs scripts/measure_voice.py on a being's recordings with Everett's
-    Vosk, loads what it wrote, and checks every value against the
+    Runs scripts/measure_voice.py on a being's recordings with
+    christman_sound.ear (2026-10-29: the old recognizer is removed), loads
+    what it wrote, and checks every value against the
     measurements written beside it. With CHRISTMAN_VOICE_REFERENCE_PROFILE
     (that being's earlier measured profile) it also compares every applied
     value with it. Needs CHRISTMAN_VOICE_RECORDINGS (the folder of recorded
     phrases; CHRISTMAN_VOICE_PREFIX is their file name prefix),
-    CHRISTMAN_VOSK_MODEL (vosk-model-en-us-0.22), CHRISTMAN_LEXICON_PATH and
-    CHRISTMAN_VOSK_PYTHON (a Python that imports vosk).
+    CHRISTMAN_VOSK_MODEL (the vosk-model-en-us-0.22 folder the ear reads) and
+    CHRISTMAN_LEXICON_PATH. It runs on this Python, the one with
+    Christman-Sound installed and the ear's C library built.
     """
     need = {k: os.environ.get(k) for k in
-            ("CHRISTMAN_VOICE_RECORDINGS", "CHRISTMAN_VOSK_MODEL", "CHRISTMAN_LEXICON_PATH", "CHRISTMAN_VOSK_PYTHON")}
+            ("CHRISTMAN_VOICE_RECORDINGS", "CHRISTMAN_VOSK_MODEL", "CHRISTMAN_LEXICON_PATH")}
     missing = [k for k, v in need.items() if not v]
     if missing:
         pytest.skip("not run: needs " + ", ".join(missing) +
-                    " (a being's recordings, the Vosk model, its lexicon, a Python with vosk); runs on Everett's Mac")
+                    " (a being's recordings, the model folder, its lexicon); runs on Everett's Mac")
     require_full_model(need["CHRISTMAN_VOSK_MODEL"])
     out = tmp_path / "measured_voice.json"
     proc = subprocess.run(
-        [need["CHRISTMAN_VOSK_PYTHON"], str(ROOT / "scripts" / "measure_voice.py"),
+        [sys.executable, str(ROOT / "scripts" / "measure_voice.py"),
          "--recordings", need["CHRISTMAN_VOICE_RECORDINGS"], "--prefix", os.environ.get("CHRISTMAN_VOICE_PREFIX", ""),
          "--name", "measured voice", "--vosk-model", need["CHRISTMAN_VOSK_MODEL"],
          "--lexicon", need["CHRISTMAN_LEXICON_PATH"], "--out", str(out)],
@@ -297,11 +299,13 @@ def test_measurement_from_a_beings_recordings(tmp_path):
     if not ref_path:
         return
     ref = json.loads(Path(ref_path).expanduser().read_text(encoding="utf-8"))
-    # Vosk's word times on the same file move by up to one 30 ms frame from
-    # run to run (measured 2026-10-28: 3 to 4 of 26 phrases), and the values
-    # move with them. Measured spread over three runs: 10 Hz on one vowel's
-    # F3, 0.06 semitones on one contour point, rate unchanged. The
-    # tolerances below are a few times that; a real change is far larger.
+    # The old recognizer's word times on the same file moved by up to one
+    # 30 ms frame from run to run (measured 2026-10-28: 3 to 4 of 26
+    # phrases), and the values moved with them: over three runs, 10 Hz on
+    # one vowel's F3, 0.06 semitones on one contour point, rate unchanged.
+    # The tolerances below are a few times that; a real change is far
+    # larger. The ear's run to run is not yet measured here, so the
+    # tolerances stay as they were.
     assert fresh["f0"]["median_hz"] == ref["f0"]["median_hz"]
     assert abs(fresh["rate"]["value"] - ref["rate"]["value"]) <= 0.02
     for x, y in zip(fresh["pitch_contour"]["semitones_from_median"], ref["pitch_contour"]["semitones_from_median"]):
