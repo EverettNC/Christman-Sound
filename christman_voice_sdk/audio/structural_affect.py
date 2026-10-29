@@ -1326,8 +1326,16 @@ class StructuralAffectAnalyzer:
         fragments = {c.index for c in clauses
                      if c.attribution is Attribution.UNKNOWN and self._is_fragment(c.tokens)}
         if anchor is not None and fragments:
+            # Rulings X and O (Everett, 2026-10-29): a reaction to a thing
+            # after a question ("this is scary" after "did you like that
+            # haunted house?") is about the thing. It is not the client's
+            # own negative feeling and does not move the mode; it reads as
+            # describing the thing. The client's own body ("your leg") is
+            # the client's.
+            kind = (Attribution.SELF if anchor[0] == "self"
+                    else Attribution.IMPERSONAL)
             clauses = [
-                Clause(c.index, c.text, c.tokens, c.is_resolution, Attribution.SELF)
+                Clause(c.index, c.text, c.tokens, c.is_resolution, kind)
                 if c.index in fragments else c
                 for c in clauses
             ]

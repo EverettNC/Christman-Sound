@@ -208,3 +208,30 @@ def test_6_danger_in_the_context_still_pages_silently():
     turn, pager = _hear(text)
     assert len(pager.calls) == 1
     assert turn.decision.safety.silent_alarm is True
+
+
+# -- 7. rulings X and O: a reaction to a thing is about the thing --------------------
+
+@pytest.mark.parametrize("text,before", [
+    ("Yeah, this is scary", "Did you like that haunted house?"),
+    ("yeah this is scary", "did you like that haunted house"),
+])
+def test_7_a_reaction_to_a_thing_is_not_the_clients_negative_feeling(text, before):
+    from christman_voice_sdk.audio.fusion_engine import MODE_GENTLE_LIFT
+    turn, pager = _hear(text, previous_turn=before)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.mode != MODE_GENTLE_LIFT
+    assert d.affect.is_self_distress is False
+    assert not any(h.attribution.value == "self" and h.final_weight < 0 for h in d.affect.hits)
+    (hit,) = d.affect.hits
+    assert hit.anchored_to == "that haunted house" and hit.anchor_kind == "thing"
+    assert d.safety.reason == "answer_about_thing"
+    assert d.input_text == text
+
+
+def test_7_the_clients_own_body_after_a_question_is_still_the_clients():
+    turn, pager = _hear("yeah it hurts", previous_turn="is there something wrong with your leg?")
+    d = turn.decision
+    assert d.affect.is_self_distress is True
+    assert d.safety.reason == "answer_about_own_body"
