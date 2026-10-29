@@ -5,8 +5,9 @@
 """
 Nonverbal distress reaches the crisis gate and a human.
 
-Everett, 2026-10-29: "A nonverbal client's distress (the grunt; the help,
-pain and medicine symbols) must reach the crisis gate and a human."
+Everett, 2026-10-29: "A nonverbal client's distress is just as important as a verbal client's."
+So the grunt, the help, pain and medicine symbols reach the crisis gate and
+a human.
 
 Measured before: nothing nonverbal reached Hearing at all. Only core.py used
 the nonverbal folder; with no text, fusion did not run; the acoustic key had

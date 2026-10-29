@@ -54,7 +54,8 @@ def test_invalid_live_state_is_named_not_silent():
 
 
 def test_valid_live_state_is_used_and_sourced():
-    d = _engine().fuse("I am scared", live_state={"tone_score": 90})
+    # A fear with its context (ruling O): the live tone score sets the mode.
+    d = _engine().fuse("I am scared of the dark", live_state={"tone_score": 90})
     assert d.mode == "hold-space"
     assert d.delivery["response_mode_source"] == "tone_score"
 
@@ -90,9 +91,16 @@ def test_crisis_without_a_human_raises():
 
 
 def test_plain_distress_is_still_gentle_lift():
-    d = _engine().fuse("I am so scared and alone")
+    d = _engine().fuse("I am so sad and alone")
     assert d.mode in ("gentle-lift", MODE_STANDARD), d.to_dict()
     assert d.knows is True
+
+
+def test_a_fear_with_no_context_concludes_nothing():
+    # Ruling O (Everett, 2026-10-29): "You got to have full context."
+    d = _engine().fuse("I am so scared and alone")
+    assert d.mode == MODE_UNKNOWN and d.knows is False
+    assert d.safety.follow_up == "ask_if_safe"     # the being asks; it words it
 
 
 
@@ -100,8 +108,10 @@ def test_plain_distress_is_still_gentle_lift():
 # Measured before: "she wants to die" and "he is going to kill her" came back
 # mode=standard. "remind me to call mom" scored 0.0 in every domain.
 
-# Everett, 2026-10-29: "Someone else at risk pages a human, the same as the
-# client's own distress. Unless it is two beings talking to each other."
+# Everett's first ruling, 2026-10-29 (in the coordinator's words): someone
+# else at risk pages a human unless two beings are talking to each other.
+# Ruling D later narrowed it: an observation pages only when the client asks
+# for help.
 # The test this replaces pinned the opposite (soft_redirect, nobody paged).
 
 def test_someone_else_at_risk_pages_when_asked_and_keeps_every_word():
@@ -198,7 +208,7 @@ if __name__ == "__main__":
     sys.exit(1 if failures else 0)
 
 
-# -- 2026-10-29: "We never change the truth, ever. We never sanitize anything."
+# -- 2026-10-29, Everett's ruling: never change the truth; nothing sanitizes it.
 
 def test_a_safety_callback_cannot_change_the_words():
     def says_something_else(text, context):

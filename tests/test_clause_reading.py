@@ -3,8 +3,8 @@
 # The Christman AI Project — Luma Cognify AI
 # ==============================================================================
 """
-Everett, 2026-10-29: "A word means nothing without what comes before it and
-what comes after it. Read the clause: who did what to whom."
+Everett, 2026-10-29: "A singular word means nothing without the proper context, the before and the after."
+(He also accepts "who did what to whom" as part of it.)
 
 Every sentence here was run before the fix and read wrong. The left column is
 what the reader said before (measured 2026-10-29). Each sentence is pinned in
@@ -31,18 +31,22 @@ A = StructuralAffectAnalyzer()
 
 SELF = Attribution.SELF
 OTHER = Attribution.OTHER
+UNKNOWN = Attribution.UNKNOWN
 
 # (typed, as the ear sends it, expected valence, attribution, self distress)
 CASES = [
     # whose pain: the mother's, not the speaker's
     ("My mom's in pain", "my moms in pain", -0.188, OTHER, False),
     ("She's scared", "shes scared", -0.2, OTHER, False),
-    # "it" with no person named is the speaker's own hurt
-    ("It hurts", "it hurts", -0.8, SELF, True),
-    # "so" intensifies; it does not stop the negation
-    ("I'm not so scared", "im not so scared", 0.0, SELF, False),
-    # inability over a good state is the lack of it
-    ("I can't be happy", "i cant be happy", -0.425, SELF, True),
+    # "it hurts" with no turn before it is unclear: read against the turn
+    # before it, never alone (Everett, ruling X)
+    ("It hurts", "it hurts", -0.8, UNKNOWN, False),
+    # "not so scared" is a little bit scared, the speaker's own (Everett,
+    # ruling Q, 2026-10-29: not "not scared")
+    ("I'm not so scared", "im not so scared", -0.48, SELF, True),
+    # inability over a good feeling is its own reading, a signal: not the
+    # feeling, not its absence, nothing concluded (Everett, ruling R)
+    ("I can't be happy", "i cant be happy", None, SELF, False),
     # a new subject is a new clause: "want" does not reach "scared"
     ("I want to go home, I'm scared", "i want to go home im scared", -0.8, SELF, True),
     # nobody caring is the client's own isolation (Everett, ruling A)
@@ -50,8 +54,8 @@ CASES = [
     ("No one loves me", "no one loves me", -0.85, SELF, True),
     # was X, now worse: escalation is not discounted as the past
     ("I was scared and now I'm terrified", "i was scared and now im terrified", -0.875, SELF, True),
-    # courtesy is not affect
-    ("Thank you, I'm scared", "thank you im scared", -0.8, SELF, True),
+    # thanks and fear together stay unclear, main's reading (Everett, ruling W)
+    ("Thank you, I'm scared", "thank you im scared", None, SELF, False),
     ("I'm so scared", "im so scared", -1.0, SELF, True),
     # felt danger is not cancelled like "not happy" (Everett, ruling A:
     # the client's own "not okay" / "not safe" is distress)
@@ -67,7 +71,10 @@ CASES = [
 def test_clause_reading(form, typed, heard, valence, who, distress):
     text = typed if form == "typed" else heard
     r = A.analyze(text)
-    assert r.valence == pytest.approx(valence, abs=0.01), (text, r.to_dict())
+    if valence is None:
+        assert r.valence is None, (text, r.to_dict())
+    else:
+        assert r.valence == pytest.approx(valence, abs=0.01), (text, r.to_dict())
     assert r.attribution is who, (text, r.to_dict())
     assert r.is_self_distress is distress, (text, r.to_dict())
 
@@ -111,14 +118,16 @@ def test_not_the_speakers_distress(text):
 
 def test_mixed_love_and_fear_is_withheld_not_guessed():
     """Two opposite feelings, no contrast word. The reader says it cannot
-    tell rather than pick one. Everett, 2026-10-29: "leave it as unclear." """
+    tell rather than pick one, and leaves it unclear (Everett's ruling,
+    2026-10-29, in the coordinator's words). """
     r = A.analyze("i love you im scared")
     assert r.certainty is AffectCertainty.AMBIGUOUS
     assert r.valence is None
 
 
-# -- 2026-10-29: time words. Everett: "Yesterday means the past. Read the time
-# word in the clause and do not report it as happening now." Measured before:
+# -- 2026-10-29: time words. Everett's ruling, in the coordinator's words:
+# yesterday means the past; read time words in the clause and do not report
+# past distress as happening now. Measured before:
 # "yesterday i was scared" read self distress at -0.8, the same as "i am
 # scared".
 
@@ -147,8 +156,8 @@ def test_a_time_word_that_reaches_now_is_still_now(text):
     assert A.analyze(text).is_self_distress is True, A.analyze(text).to_dict()
 
 
-# -- 2026-10-29: the person's own words. Everett: "We never change the truth,
-# ever." Each clause carries `said`, cut from the input; joined, they are the
+# -- 2026-10-29: the person's own words. Everett's ruling: never change the
+# truth. Each clause carries `said`, cut from the input; joined, they are the
 # input, every letter.
 
 @pytest.mark.parametrize("text", [

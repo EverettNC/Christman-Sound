@@ -717,18 +717,17 @@ def test_H1_a_non_physical_object_is_recorded_not_paged(text):
                                   "she broke my arm", "he hurt my arm yesterday",
                                   "he started to break my neck"])
 def test_H2_past_physical_harm_is_followed_up_by_asking(text):
-    from christman_voice_sdk.audio.hearing import FOLLOW_UP_HARM_TO_CLIENT
-    from christman_voice_sdk.synthesis.reply_guard import check_being_reply
+    from christman_voice_sdk.audio.hearing import ASK_IF_SAFE
 
     turn, pager = _hear(text)
     s = turn.decision.safety
     assert pager.calls == []
     assert s.status == "soft_redirect" and s.reason == "harm_reported_to_client"
     assert "follow_up:ask_if_safe" in s.flags
-    # Asked, not told: a plain question, which the reply guard lets through.
-    assert s.follow_up == FOLLOW_UP_HARM_TO_CLIENT == "Are you safe?"
-    assert s.follow_up.endswith("?")
-    assert check_being_reply(s.follow_up) == s.follow_up
+    # The being is marked to ASK whether the client is safe; it words the
+    # question itself (ruling AA: no canned lines in the package).
+    assert s.follow_up == ASK_IF_SAFE
+    assert s.follow_up_about and s.follow_up_about in text
     assert s.said == text
 
 
@@ -741,7 +740,7 @@ def test_H2_the_clients_answer_decides(answer, pages):
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
     first = hearing.hear(text="he hurt my arm")
-    assert first.decision.safety.follow_up == "Are you safe?" and pager.calls == []
+    assert first.decision.safety.follow_up == "ask_if_safe" and pager.calls == []
     second = hearing.hear(text=answer)
     assert bool(pager.calls) is pages, second.decision.safety
     assert second.decision.safety.said == answer
@@ -791,13 +790,11 @@ def test_H_the_clients_own_accident_is_not_someone_hurting_them(text):
 @pytest.mark.parametrize("answer,pages", [("yes", True), ("yes please", True), ("please", True),
                                           ("no", False), ("no she is fine", False)])
 def test_D_the_being_asks_and_a_yes_pages(answer, pages):
-    from christman_voice_sdk.synthesis.reply_guard import check_being_reply
-
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
     first = hearing.hear(text="my mom is not okay")
-    assert first.decision.safety.follow_up == "Do you need help?"
-    assert check_being_reply(first.decision.safety.follow_up)      # asked, not told
+    assert first.decision.safety.follow_up == "ask_if_help_needed"   # the being asks
+    assert first.decision.safety.follow_up_about == "not okay"
     assert pager.calls == []
     hearing.hear(text=answer)
     assert bool(pager.calls) is pages
@@ -1114,3 +1111,547 @@ def test_M_nothing_after_the_gate_can_hold_the_page(text, monkeypatch):
     with pytest.raises(RuntimeError, match="reply path failed"):
         eng.fuse(text)
     assert len(pager.calls) == 1 and pager.calls[0][0].said == text
+
+
+# -- O. a clause is never read alone ------------------------------------------------
+# Everett, 2026-10-29: "You got to have full context." The split at a new
+# subject stays; each clause is read with what comes before and after it.
+
+def test_O_not_enough_to_tell_concludes_nothing_and_asks():
+    text = "I want to go home I'm scared"
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert [c.said for c in d.affect.clauses] == ["I want to go home ", "I'm scared"]  # still split
+    assert pager.calls == []
+    assert d.mode == MODE_UNKNOWN and d.knows is False            # nothing concluded
+    assert d.safety.reason == "fear_without_context"
+    assert d.safety.follow_up == "ask_if_safe"                    # the being asks
+    assert d.safety.follow_up_about == "scared"
+    assert turn.person_message is None                            # nothing spoken for the client
+    assert d.input_text == text and d.safety.said == text         # the words, untouched
+
+
+def test_O_with_the_danger_after_it_is_the_silent_alarm():
+    text = ("I want to go home I'm scared this guy keeps following me and I'm afraid "
+            "he's going to attack me")
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == text
+    assert d.mode == MODE_SAFETY_HOLD
+    assert d.safety.silent_alarm is True and d.speakable is False
+
+
+def test_O_with_a_harmless_cause_after_it_is_not_danger():
+    text = "I want to go home I'm scared this haunted house scared me"
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.status == "clear" and d.safety.silent_alarm is False
+    assert d.safety.follow_up == ""
+    assert d.speakable is True
+
+
+def test_O_bare_nobody_cares_im_alone_pages_by_ruling_A():
+    turn, pager = _hear("nobody cares I'm alone")
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == "client_distress"
+
+
+def test_O_the_next_turn_continues_the_thought():
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager)
+    first = hearing.hear(text="I want to go home I'm scared")
+    assert first.decision.safety.follow_up == "ask_if_safe" and pager.calls == []
+    second = hearing.hear(text="this guy keeps following me")
+    assert len(pager.calls) == 1 and second.decision.safety.silent_alarm is True
+
+
+def test_O_a_no_to_the_question_pages():
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager)
+    hearing.hear(text="I'm scared")
+    hearing.hear(text="no")
+    assert len(pager.calls) == 1
+
+
+# -- P. whose feeling it is ----------------------------------------------------------
+# Everett, 2026-10-29: "you can't take possession of your mother's pain."
+
+@pytest.mark.parametrize("text", ["My mom's in pain", "my moms in pain", "She's scared", "shes scared",
+                                  "Mary is scared", "my dad is sad"])
+def test_P_someone_elses_feeling_is_theirs_never_the_clients(text):
+    r = A.analyze(text)
+    assert r.attribution.value == "other", r.to_dict()
+    assert r.is_self_distress is False
+    turn, pager = _hear(text)
+    assert pager.calls == []
+    assert turn.decision.safety.reason != "whose_feeling_unclear"
+
+
+@pytest.mark.parametrize("text,about", [("mary is scared", "scared"), ("jo is sad", "sad")])
+def test_P_when_whose_cannot_be_told_nothing_is_concluded_and_the_being_asks(text, about):
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.reason == "whose_feeling_unclear"
+    assert d.mode == MODE_UNKNOWN and d.knows is False
+    assert d.affect.is_self_distress is False                  # not taken as the client's
+    assert d.safety.follow_up == "ask_whose"                   # the being asks whose
+    assert d.safety.follow_up_about == about
+    assert d.input_text == text
+
+
+# -- Q. "not so scared" is a little bit scared ----------------------------------------
+
+@pytest.mark.parametrize("text", ["I'm not scared", "im not scared", "I am not scared"])
+def test_Q_not_scared_is_no_fear(text):
+    r = A.analyze(text)
+    assert r.valence == 0.0 and r.is_self_distress is False
+
+
+@pytest.mark.parametrize("text", ["I'm not so scared", "im not so scared", "I'm not that scared",
+                                  "I'm not too scared", "I'm not as scared as before",
+                                  "I don't feel so scared"])
+def test_Q_not_so_scared_is_some_fear_lower_and_the_speakers(text):
+    r = A.analyze(text)
+    plain = A.analyze("I'm scared")
+    assert r.attribution.value == "self"
+    assert r.valence is not None and plain.valence < r.valence < 0.0     # present, lower
+    assert r.is_self_distress is True
+    assert "lower degree" in r.hits[0].note
+
+
+# ====================================================================================
+# Rulings R to AC. Everett, 2026-10-29 (ruling AA): every question he quoted is an
+# EXAMPLE of the kind of question. The package marks that the being should ask, and
+# about what; the being words it. These tests check the reading and the mark.
+# ====================================================================================
+
+from christman_voice_sdk.audio import hearing as H  # noqa: E402
+
+
+def _no_canned_question(safety):
+    """The package hands the being a mark, never a sentence to say."""
+    assert safety.follow_up == "" or safety.follow_up in H.ASK_MARKS, safety.follow_up
+    assert "?" not in safety.follow_up and "?" not in safety.follow_up_about
+
+
+# -- R. "I can't be happy" is an inability, a signal ---------------------------------
+
+@pytest.mark.parametrize("text", ["I can't be happy", "i cant be happy", "I cannot be happy",
+                                  "I'll never be happy again", "ill never be happy again",
+                                  "I could never be happy"])
+def test_R_inability_is_its_own_reading_and_the_being_asks_why(text):
+    r = A.analyze(text)
+    assert [h.kind for h in r.hits] == ["inability"]
+    assert r.inability == ["happy"] and r.attribution.value == "self"
+    assert r.valence is None                       # not happy, and not "no happiness"
+    assert r.is_self_distress is False             # nothing concluded
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []                       # no page on its own
+    assert d.safety.reason == "inability_signal"
+    assert d.mode == MODE_UNKNOWN and d.knows is False
+    assert d.safety.follow_up == H.ASK_WHY_CANT and d.safety.follow_up_about == "happy"
+    _no_canned_question(d.safety)
+    assert d.input_text == text
+
+
+@pytest.mark.parametrize("text", ["I'm not happy right now", "im not happy right now"])
+def test_R_not_happy_right_now_is_a_lack_not_an_inability(text):
+    r = A.analyze(text)
+    assert r.inability == [] and r.hits[0].kind == "emotion" and r.hits[0].negated
+    assert r.valence == 0.0 and r.is_self_distress is False
+    turn, pager = _hear(text)
+    assert pager.calls == [] and turn.decision.safety.reason != "inability_signal"
+
+
+def test_R_the_distress_rules_still_apply_to_the_rest_of_the_turn():
+    turn, pager = _hear("I can't be happy and I'm not okay")
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == "client_distress"
+
+
+# -- S. an emotion is not a state of being -------------------------------------------
+# Everett: "better is a state of being, happier is an emotion."
+
+@pytest.mark.parametrize("text", ["I couldn't be happier", "i couldnt be happier"])
+def test_S_couldnt_be_happier_is_happiness_at_its_fullest(text):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.kind == "emotion" and r.attribution.value == "self"
+    assert r.valence == 1.0 and r.intensity == 1.0
+
+
+@pytest.mark.parametrize("text", ["I couldn't be better", "i couldnt be better",
+                                  "I'm doing great", "im doing great"])
+def test_S_couldnt_be_better_is_a_state_of_being_not_an_emotion(text):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.kind == "state"
+    assert r.valence > 0 and r.is_self_distress is False
+
+
+@pytest.mark.parametrize("text", ["I couldn't be worse", "i couldnt be worse"])
+def test_S_couldnt_be_worse_is_a_low_state_with_no_page_of_its_own(text):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.kind == "state" and r.valence < 0 and r.attribution.value == "self"
+    turn, pager = _hear(text)
+    assert pager.calls == []                      # not a fixed page
+    turn, pager = _hear(text + ", I'm not okay")  # in context, the distress rules decide
+    assert len(pager.calls) == 1
+
+
+# -- T. the added negators are not all the same --------------------------------------
+
+@pytest.mark.parametrize("text,when", [
+    ("I haven't been scared since Monday", "since monday"),
+    ("i havent been scared since monday", "since monday"),
+    ("She hasn't been sad since Friday", "since friday"),
+])
+def test_T_havent_negates_for_the_time_named_and_the_being_may_ask(text, when):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.negated and hit.time_bounded and hit.final_weight == 0.0
+    assert hit.for_time == when and r.is_self_distress is False
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.status == "clear" and d.safety.reason == "feeling_negated_for_a_time"
+    assert d.safety.follow_up == H.ASK_WHAT_HAPPENED and d.safety.follow_up_about == when
+    _no_canned_question(d.safety)
+
+
+@pytest.mark.parametrize("text,term", [
+    ("I shouldn't be this angry", "angry"),
+    ("i shouldnt be this angry", "angry"),
+    ("I should not be this angry", "angry"),
+    ("I shouldn't feel so sad", "sad"),
+])
+def test_T_shouldnt_judges_the_feeling_it_does_not_cancel_it(text, term):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.term == term and hit.judged_by and not hit.negated
+    assert hit.final_weight < 0 and r.attribution.value == "self"   # present, the speaker's
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.reason == "feeling_judged"
+    assert d.safety.follow_up == H.ASK_WHY and d.safety.follow_up_about == term
+    _no_canned_question(d.safety)
+
+
+# -- U. read the whole sentence, never one word --------------------------------------
+
+@pytest.mark.parametrize("text", ["I'm not mad, she's mad", "im not mad shes mad"])
+def test_U_im_not_mad_shes_mad(text):
+    r = A.analyze(text)
+    mine, hers = r.hits
+    assert mine.term == "mad" and mine.attribution.value == "self" and mine.negated
+    assert mine.final_weight == 0.0                       # the speaker is not mad
+    assert hers.term == "mad" and hers.attribution.value == "other" and not hers.negated
+    assert hers.final_weight < 0                          # she is: an observation, hers
+    assert r.is_self_distress is False
+    turn, pager = _hear(text)
+    assert pager.calls == []                              # ruling D: no page on its own
+
+
+@pytest.mark.parametrize("text", ["I don't think she's mad", "i dont think shes mad"])
+def test_U_i_dont_think_shes_mad_is_the_speakers_belief_not_a_fact_about_her(text):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.attribution.value == "other"
+    assert hit.negated is False and hit.final_weight == 0.0   # not "she is not mad"
+    (belief,) = r.beliefs
+    assert belief["held_by"] == "speaker" and belief["about"] == "she"
+    assert belief["state"] == "mad" and belief["negated"] is True
+    assert belief["reads_as"] == "the speaker thinks she is not mad"
+    turn, pager = _hear(text)
+    assert pager.calls == [] and r.is_self_distress is False
+
+
+def test_U_i_think_shes_mad_is_a_belief_too():
+    r = A.analyze("I think she's mad")
+    (hit,) = r.hits
+    assert hit.attribution.value == "other" and hit.final_weight == 0.0   # nothing concluded
+    (belief,) = r.beliefs
+    assert belief["about"] == "she" and belief["negated"] is False
+    assert belief["reads_as"] == "the speaker thinks she is mad"
+
+
+@pytest.mark.parametrize("text", ["I don't think I'm mad", "i dont think im mad"])
+def test_U_i_dont_think_im_mad_is_the_speakers_own_belief(text):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.attribution.value == "self" and hit.negated and hit.final_weight == 0.0
+    (belief,) = r.beliefs
+    assert belief["about"] == "self" and belief["negated"] is True
+    assert r.is_self_distress is False
+
+
+# -- V. being alone --------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", ["I'm not happy, I'm alone", "im not happy im alone"])
+def test_V_not_happy_and_alone_is_an_opening_for_the_being(text):
+    r = A.analyze(text)
+    happy, alone = r.hits
+    assert happy.negated and happy.final_weight == 0.0          # not happy
+    assert alone.final_weight < 0 and not alone.volitional      # alone, not chosen
+    assert all("suffer" not in h.note for h in r.hits)          # no "suffered" category
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []                                    # no page on its own
+    assert d.safety.reason == "alone_opening"
+    assert d.safety.follow_up == H.ASK_OR_OFFER and d.safety.follow_up_about == "alone"
+    _no_canned_question(d.safety)
+
+
+@pytest.mark.parametrize("text", ["I feel like being alone", "i feel like being alone"])
+def test_V_feel_like_being_alone_is_a_wish_and_respected(text):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.volitional and hit.final_weight == 0.0
+    assert "wish" in hit.note and "suffer" not in hit.note
+    assert r.is_self_distress is False
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.status == "clear" and d.safety.reason == "stated_wish"
+    assert d.safety.follow_up == ""                             # does not push
+
+
+def test_V_the_distress_rules_still_apply_to_the_rest_of_the_turn():
+    turn, pager = _hear("Nobody cares, I'm alone")
+    assert len(pager.calls) == 1 and turn.decision.safety.reason == "client_distress"
+
+
+# -- W. "thank you, I'm scared" stays unclear --------------------------------------------
+
+@pytest.mark.parametrize("text", ["thank you, I'm scared", "thank you im scared",
+                                  "Thank you, I'm scared"])
+def test_W_thanks_and_fear_stay_unclear_and_the_being_asks(text):
+    r = A.analyze(text)
+    assert r.certainty.value == "ambiguous" and r.valence is None   # main's reading
+    assert r.is_self_distress is False
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.mode == MODE_UNKNOWN and d.knows is False
+    assert d.safety.reason == "thanks_unclear"
+    assert "thanked" in d.safety.flags                              # answer the thanks
+    assert d.safety.follow_up == H.ASK_WHAT_ABOUT and d.safety.follow_up_about == "scared"
+    _no_canned_question(d.safety)
+    assert d.input_text == text
+
+
+# -- X. a fragment is read against the turn before it --------------------------------
+
+@pytest.mark.parametrize("text,before", [
+    ("Yeah, it hurts", "Is there something wrong with your leg?"),
+    ("yeah it hurts", "is there something wrong with your leg"),
+])
+def test_X_anchored_pain_is_the_clients_own_leg(text, before):
+    r = A.analyze(text, previous_turn=before)
+    (hit,) = r.hits
+    assert hit.fragment and hit.anchored_to == "your leg" and hit.anchor_kind == "self"
+    assert hit.attribution.value == "self" and r.is_self_distress is True
+    turn, pager = _hear(text, previous_turn=before)
+    d = turn.decision
+    assert d.safety.reason == "answer_about_own_body"
+    assert "about:your leg" in d.safety.flags and "need:hurts" in d.safety.flags
+    # The same as saying it whole.
+    whole, whole_pager = _hear("my leg hurts")
+    assert bool(pager.calls) == bool(whole_pager.calls)
+
+
+@pytest.mark.parametrize("text,before", [
+    ("Yeah, this is scary", "Did you like that haunted house?"),
+    ("yeah this is scary", "did you like that haunted house"),
+])
+def test_X_anchored_haunted_house_is_about_the_house_not_danger(text, before):
+    r = A.analyze(text, previous_turn=before)
+    (hit,) = r.hits
+    assert hit.anchored_to == "that haunted house" and hit.anchor_kind == "thing"
+    turn, pager = _hear(text, previous_turn=before)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.status == "clear" and d.safety.reason == "answer_about_thing"
+    assert d.safety.silent_alarm is False and d.safety.follow_up != H.ASK_IF_SAFE
+
+
+@pytest.mark.parametrize("text", ["it hurts", "It hurts", "this is scary", "everything hurts"])
+def test_X_unanchored_fragment_is_unclear_and_the_being_asks(text):
+    r = A.analyze(text)
+    (hit,) = r.hits
+    assert hit.fragment and hit.anchored_to == "" and hit.attribution.value == "unknown"
+    assert r.is_self_distress is False                          # not taken as the client's
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.reason == "fragment_unclear"
+    assert d.mode == MODE_UNKNOWN and d.knows is False
+    assert d.safety.follow_up == H.ASK_WHAT and d.safety.follow_up_about == hit.term
+    _no_canned_question(d.safety)
+
+
+def test_X_the_previous_turn_is_an_explicit_input():
+    import inspect
+    assert "previous_turn" in inspect.signature(Hearing.hear).parameters
+    assert "previous_turn" in inspect.signature(A.analyze).parameters
+
+
+# -- Y. the subject after the verb in a question ---------------------------------------
+
+@pytest.mark.parametrize("text", ["Why am I so sad?", "why am i so sad"])
+def test_Y_why_am_i_so_sad_is_the_speakers_own_and_someone_reaching_out(text):
+    r = A.analyze(text)
+    assert r.attribution.value == "self" and r.is_self_distress is True
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []                                    # no page on its own
+    assert d.safety.reason == "reaching_out"
+    assert d.safety.follow_up == H.ASK_WHAT_IS_MAKING and d.safety.follow_up_about == "sad"
+    _no_canned_question(d.safety)
+
+
+# -- Z. was scared, now terrified --------------------------------------------------------
+
+@pytest.mark.parametrize("text", ["I was scared and now I'm terrified",
+                                  "i was scared and now im terrified"])
+def test_Z_fear_now_and_getting_worse_is_asked_about_not_paged(text):
+    r = A.analyze(text)
+    assert r.is_self_distress is True and r.valence < -0.8         # present now, worse
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []                       # terrified alone is not a danger signal
+    assert d.safety.silent_alarm is False
+    assert d.safety.reason == "fear_getting_worse"
+    assert d.safety.follow_up == H.ASK_WHAT_OF and d.safety.follow_up_about == "terrified"
+
+
+def test_Z_danger_still_comes_from_context():
+    turn, pager = _hear("I was scared and now I'm terrified, I'm scared for my safety")
+    assert len(pager.calls) == 1 and turn.decision.safety.silent_alarm is True
+
+
+# -- AA. no standardized person list; no canned lines --------------------------------
+
+def test_AA_the_handoffs_person_list_is_gone():
+    import christman_voice_sdk.audio.structural_affect as sa
+    assert not hasattr(sa, "PERSON_NOUNS")
+    for word in ("teacher", "nurse", "caregiver", "boss"):
+        assert not sa.is_person(word)
+
+
+@pytest.mark.parametrize("text,about", [("my teacher is sad", "my teacher"),
+                                        ("my dog is sad", "my dog"),
+                                        ("my teacher is not okay", "my teacher")])
+def test_AA_when_it_cannot_tell_a_person_nothing_is_concluded_and_the_being_asks(text, about):
+    r = A.analyze(text)
+    assert r.is_self_distress is False                          # never the client's
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.reason == "person_unclear" and d.mode == MODE_UNKNOWN
+    assert d.safety.follow_up == H.ASK_WHO and d.safety.follow_up_about == about
+    _no_canned_question(d.safety)
+
+
+def test_AA_unclear_person_and_a_help_request_still_reaches_a_human():
+    turn, pager = _hear("my teacher is not okay can you get someone")
+    assert len(pager.calls) == 1
+
+
+def test_AA_the_package_holds_no_canned_question_lines():
+    import christman_voice_sdk.audio.hearing as hearing_mod
+    names = [n for n in dir(hearing_mod) if n.startswith("FOLLOW_UP_") or n.endswith("_question")]
+    assert names == [], names
+
+
+# -- AB. the speaker's own measured baseline -------------------------------------------
+
+def test_AB_the_30_event_minimum_has_its_reason_and_no_baseline_is_said_plainly():
+    import inspect
+    import christman_voice_sdk.audio.prosody as pr
+    source = inspect.getsource(pr.SpeakerBaseline)
+    assert "CHOSEN STARTING VALUE" in source and "held until client data" in source
+    assert pr.SpeakerBaseline.MIN_SAMPLES == 30
+    analyzer = pr.ProsodyAnalyzer(baseline=pr.SpeakerBaseline(speaker_id="c1", sample_count=12))
+    note = analyzer._no_baseline_note()
+    assert "No speaker baseline yet" in note and "12 of 30" in note
+
+
+# -- AC. the face reading is a reading of the carbon -----------------------------------
+
+@pytest.mark.parametrize("text", ["my mom's scared", "my mama's scared"])
+def test_AC_the_face_reading_carries_whose_it_is_and_the_clause(text):
+    from christman_voice_sdk.audio.face_reading import build_face_reading
+
+    face = build_face_reading(affect=A.analyze(text), prosody=None)
+    assert face.attribution != "self" and face.self_distress is False   # never the client's
+    (obj,) = face.objects
+    assert obj.term == "scared" and obj.attribution != "self"
+    assert obj.clause and "scared" in obj.clause
+    assert not any("face should move" in n or "drive their face" in n for n in face.notes)
+
+
+# -- AE. one shared set of reading words, with a per-client layer over it --------------
+
+def test_AE_the_four_readers_use_the_shared_words_not_private_copies():
+    import christman_voice_sdk.tone.tone_manager as tm
+    import christman_voice_sdk.tone.emotion_quantifier as eq
+    import christman_voice_sdk.tone.analyze_emotion as ae
+    import christman_voice_sdk.utils.presence_guide as pg
+    from christman_voice_sdk.audio.structural_affect import (
+        ABILITY_NEGATORS, JUDGING_MODALS, SHARED_READING_WORDS, TIME_BOUNDED_NEGATORS)
+
+    for mod in (tm, eq, ae, pg):
+        assert not hasattr(mod, "NEGATORS") and not hasattr(mod, "SCOPE_BREAKERS"), mod.__name__
+        assert mod.SHARED_READING_WORDS is SHARED_READING_WORDS
+    # today's corrections are in the shared set
+    assert ABILITY_NEGATORS <= SHARED_READING_WORDS.negators
+    assert TIME_BOUNDED_NEGATORS <= SHARED_READING_WORDS.negators
+    assert not (JUDGING_MODALS & SHARED_READING_WORDS.negators)      # ruling T
+
+
+def test_AE_a_clients_learned_words_extend_or_override_the_shared_set(tmp_path):
+    from christman_voice_sdk.audio.structural_affect import SHARED_READING_WORDS
+    from christman_voice_sdk.tone.analyze_emotion import EmotionalTagger
+
+    path = str(tmp_path / "memory.json")
+    shared = EmotionalTagger(path, tags_map={"scared": "fear"})
+    assert shared.tags_for("nah scared") == {"fear"}
+    assert shared.tags_for("not scared") == set()
+
+    learned = {"negators": {"add": ["nah"], "remove": ["not"]}}
+    client = EmotionalTagger(path, tags_map={"scared": "fear"},
+                             reading_words=SHARED_READING_WORDS.for_client(learned))
+    assert client.tags_for("nah scared") == set()                # added for this client
+    assert client.tags_for("not scared") == {"fear"}              # overridden for this client
+    assert shared.tags_for("not scared") == set()                 # the shared set is unchanged
+
+
+def test_AE_a_misspelled_layer_fails_loud():
+    from christman_voice_sdk.audio.structural_affect import SHARED_READING_WORDS
+
+    assert SHARED_READING_WORDS.for_client(None) is SHARED_READING_WORDS
+    with pytest.raises(ValueError):
+        SHARED_READING_WORDS.for_client({"negator": {"add": ["nah"]}})
+    with pytest.raises(ValueError):
+        SHARED_READING_WORDS.for_client({"negators": {"append": ["nah"]}})
+
+
+# -- AD. the mouth stays; its weights stay local ----------------------------------------
+
+def test_AD_no_weight_file_is_bundled_in_the_package():
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
+                                 text=True, check=True).stdout.split()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        pytest.skip(f"NOT RUN: git is needed to list the tracked files ({exc})")
+    weights = [p for p in tracked
+               if p.endswith((".pt", ".pth", ".ckpt", ".safetensors", ".onnx", ".h5"))]
+    assert weights == []

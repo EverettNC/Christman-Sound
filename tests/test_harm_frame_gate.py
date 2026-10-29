@@ -187,7 +187,7 @@ def test_own_history_pages():
 
 
 def test_hard_block_keeps_every_word_and_names_the_frame():
-    # Everett, 2026-10-29: "We never change the truth, ever." This test used
+    # Everett's ruling, 2026-10-29: never change the truth. This test used
     # to assert the words were withheld ("") on a hard block.
     r = harm_frame_safety("I want to kill myself")
     assert r.status == "hard_block"
