@@ -72,6 +72,10 @@ BIND_HOST = "127.0.0.1"  # Not configurable. Offline-first is a bind address.
 MAX_BODY_BYTES = 2 * 1024 * 1024  # A 360-frame tape is ~20 KB. 2 MB is already generous.
 EVENT_PATH = "/api/sound/corti-event"
 ACOUSTIC_PATH = "/api/nonverbal/acoustic"
+# 64: a chosen starting value, not a measurement, held until real keys say
+# otherwise. Reason: the longest live key ("grunt_acknowledge") is 17
+# characters; 64 leaves room for keys not yet named and still refuses a body
+# that is not a key at all. A refused key is a 400 with the reason, never a guess.
 MAX_KEY_CHARS = 64
 HEALTH_PATH = "/health"
 RING_SIZE = 64

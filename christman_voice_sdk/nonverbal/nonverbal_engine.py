@@ -9,7 +9,7 @@
 """
 Nonverbal intent engine — gestures, symbols, eye regions, vocalizations.
 
-For a nonverbal user this module IS their voice. Everything below follows from
+For a nonverbal client this module IS their voice. Everything below follows from
 that: it may report what it recognized, or report that it recognized nothing.
 It may not invent a sentence.
 
@@ -51,9 +51,9 @@ WHAT CHANGED AND WHY
        self.confidence_threshold = 0.6
 
    One occurrence in 938 lines — the assignment. Nothing was ever gated on it
-   and there was no way for the user to reject or undo a reading. It is now
+   and there was no way for the client to reject or undo a reading. It is now
    enforced in one place, `_gate()`, which every public entry point passes
-   through, and `reject_last()` gives the user an undo that also records the
+   through, and `reject_last()` gives the client an undo that also records the
    correction.
 
 4. THE LEARNING SYSTEM WAS INERT, NOT DECAYING.
@@ -180,8 +180,10 @@ CONFIDENCE_CEILING = 0.95
 #: nonverbal client's distress (the grunt; the help, pain and medicine
 #: symbols) must reach the crisis gate and a human." The grunt key, the
 #: "distress" sound and the point_up gesture map to "help"; the symbols map
-#: to need_help, pain and need_medicine. Data, not a heuristic — add an
-#: intent here and it pages.
+#: to need_help, pain and need_medicine. A fixed list of intents: add an
+#: intent here and it pages. (The quotation above is as the handoff wrote it;
+#: it was not in the rulings relayed to this session, so it is listed for
+#: Everett to confirm.)
 DISTRESS_INTENTS = frozenset({"help", "need_help", "pain", "need_medicine"})
 
 
@@ -284,6 +286,15 @@ class MapValidationError(ValueError):
 #   0.6  a sound that often carries no message at all: a hum, a soft sound.
 #        Set AT the floor: it still speaks (the test is "below 0.6"), and it
 #        loses any vote against a stronger reading.
+#
+# Checked entry by entry (2026-10-29). These do not fit the reasons above,
+# and no reason of their own was ever written, so they are listed here as
+# they stand for Everett to give the reason or change the value:
+#   symbols at 0.8: question, tired, play, music, book, outside (each a
+#     pressed symbol with one meaning, which the 0.9 reason would cover).
+#   sounds at 0.8: repeated_sound, grunt_acknowledge, grunt_frustration.
+#   eye region at 0.8: long_stare. At 0.7: rapid_scan.
+#   vocal_stimming at 0.9, while the stimming gesture is 0.7.
 # -----------------------------------------------------------------------------
 
 DEFAULT_GESTURES: Dict[str, Dict[str, Any]] = {
@@ -410,7 +421,7 @@ def _atomic_write_json(path: str, payload: Any) -> None:
 
     The predecessor opened the target and wrote in place. A crash mid-write
     left a truncated file, and the loader caught only JSONDecodeError — so on
-    the next start the user's learned map silently reverted to defaults with a
+    the next start the client's learned map silently reverted to defaults with a
     warning nobody was watching.
     """
     directory = os.path.dirname(os.path.abspath(path))
@@ -753,7 +764,7 @@ class NonverbalEngine:
         }
 
 
-    # -- Interaction record + the user's undo ---------------------------------
+    # -- Interaction record + the client's undo -------------------------------
 
     def _next_id(self) -> str:
         with self._lock:
@@ -787,7 +798,7 @@ class NonverbalEngine:
 
     def reject_last(self, interaction_id: Optional[str] = None) -> bool:
         """
-        The user's undo. Marks the reading wrong and trains confidence down.
+        The client's undo. Marks the reading wrong and trains confidence down.
 
         The predecessor had no override or undo path of any kind — a wrong
         reading was simply spoken and there was no way to say so.
