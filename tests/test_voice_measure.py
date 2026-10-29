@@ -286,7 +286,8 @@ def test_alphavox_phrases_pitch_matches_the_measured_profile(dsp):
     frames inside Vosk's words). Read here at the files' own 24 kHz over every
     voiced frame, the median lands within 1 Hz of it: 149.1 Hz over 940.
     """
-    profile = json.loads((ROOT / "christman_sound" / "alphavox_voice.json").read_text(encoding="utf-8"))
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from voice_fixture import TEST_VOICE_PROFILE as profile  # the same measured numbers, now in the test voice
     voiced = []
     for path in _phrases():
         y, sr = vm.read_wav(path)

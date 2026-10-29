@@ -20,7 +20,7 @@ its phones onto Codec War's.
     christman christman k_B r_I I_I s_I t_I m_I V_I n_E
     hello hello h_B @_I l_I oU_E
 
-Each line is: the word, the word again, then its phones with Kaldi's word-
+Each line is: the word, the word again, then its phones with Vosk's word-
 position markers (_B begin, _I inside, _E end, _S a one-phone word). The
 markers are stripped; the phone is mapped through VOSK_TO_CODECWAR below.
 
@@ -41,7 +41,7 @@ WHERE THE PHONE SET CAME FROM
 -----------------------------
 Vosk side: graph/phones.txt of vosk-model-en-us-0.22-lgraph, which is built
 on the same acoustic model as vosk-model-en-us-0.22 and so has the same phone
-inventory: 54 phones once the position markers and Kaldi's <eps> and #n
+inventory: 54 phones once the position markers and the model's <eps> and #n
 disambiguation symbols are set aside. 44 of them map onto Codec War's phones
 (every one of Codec War's 40 is reached); the 10 non-speech models are
 NOT_MAPPED. The speech phones are X-SAMPA. Only that
@@ -63,7 +63,7 @@ two rows use one other than 1.0, shown in the table with their reasons:
 The factor multiplies the phone's Codec War table duration, on top of Codec
 War's own word-position factor (1.05 at the edges of a word, 0.95 inside).
 These are chosen starting values with their reasons written beside them,
-held until measurements of AlphaVox's recorded voice replace them.
+held until measurements of a being's recorded voice replace them.
 """
 
 from __future__ import annotations
@@ -208,7 +208,7 @@ DURATION_REASONS: Dict[str, str] = {
         "D's own shape — the near-silent closure then the burst, which "
         "synth.ts:51-52 lays out over whatever duration the phone is given "
         "— compressed into a single tap. A chosen starting value, held until "
-        "AlphaVox's own flaps are measured."
+        "a being's own flaps are measured."
     ),
     "E:": (
         "x 1.625. EH is 0.08 s in Codec War (phonemes.ts:25). Codec War's "
@@ -216,7 +216,7 @@ DURATION_REASONS: Dict[str, str] = {
         "0.08 x 1.625 = 0.13 s, so the long E is held exactly as long as "
         "Codec War already holds its long vowels. Same formants as EH, so "
         "the same vowel, held long. A chosen starting value, held until "
-        "AlphaVox's recorded voice is measured."
+        "a being's recorded voice is measured."
     ),
 }
 
@@ -246,7 +246,7 @@ _POSITION = re.compile(r"_[BIES]$")
 
 
 def strip_position(phone: str) -> str:
-    """Remove Kaldi's word-position marker: 'k_B' -> 'k', 'aI_S' -> 'aI', 'SIL' -> 'SIL'."""
+    """Remove Vosk's word-position marker: 'k_B' -> 'k', 'aI_S' -> 'aI', 'SIL' -> 'SIL'."""
     return _POSITION.sub("", phone)
 
 

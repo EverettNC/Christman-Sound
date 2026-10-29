@@ -10,9 +10,9 @@ from a recording with Everett's own C engine and nothing else.
 
 WHAT CHANGED AND WHY
 --------------------
-(2026-10-18) New file. AlphaVox's sovereign voice (the Codec War Klatt-lite
+(2026-10-18) New file. A being's sovereign voice (the Codec War Klatt-lite
 synthesizer) needs the speaker's own measured resonances: F1, F2, F3 and the
-bandwidth of each, frame by frame, from AlphaVox's recordings. No module in
+bandwidth of each, frame by frame, from the being's own recordings. No module in
 Christman-Sound measured that correctly:
 
   - timbre/timbre_modeler.py `_extract_formants` takes the roots of the
@@ -107,7 +107,7 @@ A root is NOT a formant, and is rejected, when any of these four holds:
     2. its frequency is below FORMANT_MIN_HZ = 200 Hz. The lowest adult first
        formants (closed vowels such as /i/ and /u/ in men) sit around
        250-300 Hz; below 200 Hz a pole is modelling the voice source near F0
-       (AlphaVox's measured F0 median on its 26 phrases is about 149 Hz), not
+       (a being's measured F0 median on its 26 recorded phrases was about 149 Hz), not
        the vocal tract.
     3. its frequency is above Nyquist - FORMANT_NYQUIST_GUARD_HZ (50 Hz). A
        pole pressed against Nyquist models the resampling low-pass edge.
@@ -310,8 +310,8 @@ def _floats_from_bytes(raw: bytes, typecode: str) -> List[float]:
 def _read_riff_float(path: Path) -> Tuple[List[float], int]:
     """
     WAV with format tag 3 (IEEE float) or WAVE_FORMAT_EXTENSIBLE wrapping
-    float. The standard-library `wave` module refuses these; the 26 recorded
-    AlphaVox phrases are exactly this (24 kHz, 32-bit float, mono).
+    float. The standard-library `wave` module refuses these; recorded phrases
+    are often exactly this (24 kHz, 32-bit float, mono).
     """
     data = path.read_bytes()
     if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":

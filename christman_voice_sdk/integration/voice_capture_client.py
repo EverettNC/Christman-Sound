@@ -1,109 +1,46 @@
 """
 voice_capture_client.py
 The Christman AI Project — Luma Cognify AI
-Voice Frequency Capture + Stealth TTS Relay
+Voice frequency capture, and speaking through the package's own mouth.
 
-WHAT CHANGED AND WHY (2026-10-28) — MEASURED AT THE RECORDING'S OWN RATE
-------------------------------------------------------------------------
-Lane 2 of ADR-001. sdk-review A, finding 7, measured on AlphaVox's phrases:
+MEASURED AT THE RECORDING'S OWN RATE
+------------------------------------
+`extract_frequency_signature(audio, sample_rate)` takes the rate, with no
+default: it is the rate the samples were recorded at, never assumed (a 24 kHz
+recording read as 44.1 kHz comes out 1.84 times too high).
+`extract_frequency_signature_from_file(path)` reads the rate from the WAV
+header. 44100 is only the rate `capture_audio` records at
+(CAPTURE_SAMPLE_RATE), and `run_capture` passes it.
 
-1. `SAMPLE_RATE = 44100` was used for every input. AlphaVox's phrases are
-   24 kHz, so F0 read 1.3 to 1.9 times too high (44100 / 24000 = 1.84; "i am
-   angry" read 207.0 Hz, christman_yin reads it near 136). Now
-   `extract_frequency_signature(audio, sample_rate)` takes the rate, with no
-   default, and `extract_frequency_signature_from_file(path)` reads it from
-   the WAV header. 44100 is only the rate `capture_audio` records at
-   (CAPTURE_SAMPLE_RATE), and `run_capture` passes it.
+  - F0 is christman_yin through christman_sound.dsp.get_dsp(), the one
+    loader, via tone/voice_measure.py (Everett: "We have our own DSP for that
+    exact reason"). No library, no pitch: PitchUnavailable is raised.
+  - F1, F2 and F3 are LPC formants from christman_sound.formants.
+    measure_formants (christman_lpc per 25 ms frame, roots on the real axis
+    dropped, so no 0 Hz formant; bandwidth and range rules; voiced frames
+    only; medians) — the same measurement scripts/measure_voice.py writes a
+    voice profile with. A recording shorter than one frame, or with no voiced
+    frame, gives None and `formant_reason` says why.
+  - A value that was not measured is None, never a stand-in (silence once
+    came back as a complete "150 Hz" profile). The signature says how many
+    frames were voiced, so the reader knows what each number stands on.
+  - The profile directory is created when a profile is saved, never at
+    import.
 
-2. The pitch was an autocorrelation peak whose lag was one sample short
-   (`argmax + min_lag` over a search that began at lag 1). That tracker is
-   gone: F0 is christman_yin through christman_sound.dsp.get_dsp(), the one
-   loader, via tone/voice_measure.py (Everett: "We have our own DSP for that
-   exact reason"). No library, no pitch: PitchUnavailable is raised.
-
-3. The "formants" were the strongest FFT bin in 200-1000 Hz and in
-   700-3000 Hz. The bands overlap, and F1 equalled F2 on 5 runs. They are
-   harmonics, not resonances. Now F1, F2 and F3 are LPC formants from
-   christman_sound.formants.measure_formants (christman_lpc per 25 ms frame,
-   roots on the real axis dropped, so no 0 Hz formant; bandwidth and range
-   rules; voiced frames only; medians), the same measurement that wrote
-   AlphaVox's alphavox_voice.json. A recording shorter than one frame, or
-   with no voiced frame, gives None and `formant_reason` says why.
-
-WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
-------------------------------------------------------
-Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. The
-local fallback spoke in the operating system's voice. Removed from
-`local_speak_fallback` (quoted from main 99a6cce):
-
-    if sys.platform == "darwin":
-        cmd = ["say", "-v", "Samantha"]
-    elif sys.platform.startswith("linux"):
-        cmd = ["espeak", "--stdin", "-s", "150"]
-    ...
-            proc = subprocess.run(cmd, input=data, check=False,
-                                  stderr=subprocess.DEVNULL, timeout=120)
-    ...
-        import pyttsx3
-        engine = pyttsx3.init()
-        engine.say(text)
-        engine.runAndWait()
-
-`local_speak_fallback` keeps its name and raises
-`SynthesisUnavailable("sovereign synthesizer not wired yet")`. When Derek is
-offline, `run_speak` now ends in that typed failure instead of a stranger's
-voice. The Derek relay (`speak_via_derek`) — a Christman being, not an
-outside engine — and voice-profile capture are unchanged. `import
-subprocess` and `import sys` went with the fallback; nothing else used them.
-
-EARLIER HISTORY (2026-10-11, every line measured before it was changed)
-----------------------------------------------------------------------
-
-1. THE SAFETY NET HAD A NameError IN IT.
-
-       os.system(f'say -v "Samantha" "{text}"')
-
-   `os` was never imported. The local fallback runs at exactly one moment —
-   when Derek is already unreachable — and at that moment it raised
-   NameError. It was also a shell string with the text interpolated into it.
-   The text now goes to `say` on stdin; nothing is parsed as a command.
-
-2. IT MEASURED NOTHING AND REPORTED 150 Hz.
-
-       else:
-           fundamental = 150.0
-           pitch_min = 100.0
-           pitch_max = 250.0
-       ...
-       spectral_centroid = ... if fft_mag.sum() > 0 else 1500.0
-       ...
-       if mask.sum() == 0:
-           return (low_hz + high_hz) / 2
-
-   Silence, or a recording with no voiced frames, came back as a complete
-   voice profile: F0 150 Hz, range 100–250, centroid 1500, formants at the
-   band midpoints. Saved under the person's name. Sent to Derek as their
-   voice. A value that was not measured is None (HANDOFF rule), and the
-   profile now says how many frames were voiced so the reader knows what the
-   number stands on.
-
-3. `speak_via_derek` filled the same gaps again on the way out:
-
-       "pitch_hz": signature.get("fundamental_hz", 150)
-
-   None now travels as null. Derek decides what to do without a reading;
-   this file does not invent one for it.
-
-4. `PROFILE_DIR.mkdir(...)` ran at import. Importing a module must not write
-   to the home directory. It runs when a profile is saved.
-
-5. The Derek socket default is plaintext `ws://` to a config-overridable
-   host. Rule 12: accepted only to loopback; anything else must be `wss://`.
+SPEAKING
+--------
+`speak(text, voice)` speaks through the package's own mouth
+(christman_voice_sdk.synthesis.voice_synthesis, rendering through
+christman_sound.synth) in the caller's voice: a voice profile file, a frame
+voice folder, or a loaded VoiceProfile or FrameVoice. There is no default
+voice. It plays, or raises the typed failure with the reason (NothingVoiced,
+PlaybackFailed, or the lexicon's and synthesizer's own refusals). No outside
+speech engine (no `say`, espeak, pyttsx3, browser speech or cloud engine)
+and no relay to any other process.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from pathlib import Path
@@ -113,10 +50,6 @@ import numpy as np
 import scipy.signal as signal
 
 import argparse
-
-# websockets is needed only to reach Derek (speak_via_derek). It is imported
-# there, so measuring a voice does not depend on it (2026-10-28: the module
-# failed to import without it, and two tests with it).
 
 # sounddevice needs the PortAudio system library. Only capture_audio() needs
 # sounddevice. Analysis, profiles and speaking must not die at import on a
@@ -131,26 +64,18 @@ except (ImportError, OSError) as _exc:   # OSError: "PortAudio library not found
 
 from christman_sound.formants import AudioTooShortError, measure_formants
 
-from ..audio.config import get_config, require_local_or_tls
-from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
 from ..tone.voice_measure import pitch_contour, read_wav
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── Config from SDK ───────────────────────────────────────────────────────────
-config = get_config()
-DEREK_WS_URI = require_local_or_tls(
-    config.get("derek.ws_uri", "ws://localhost:8000/ws/derek"), what="derek.ws_uri"
-)
 PROFILE_DIR = Path.home() / ".christman_ai" / "voice_profiles"
 #: The rate capture_audio records at. Never assumed for any other audio.
 CAPTURE_SAMPLE_RATE = 44100
 CAPTURE_DURATION = 8
-DEFAULT_PROFILE = "default"
 
 #: LPC formant ceiling. A chosen value: christman_sound.formants' default,
-#: the one AlphaVox's alphavox_voice.json was measured with.
+#: the one scripts/measure_voice.py measures a voice profile with.
 FORMANT_CEILING_HZ = 5000.0
 
 
@@ -328,41 +253,28 @@ def list_profiles() -> list[str]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — SPEAKING (Derek relay + fallback)
+# SECTION 3 — SPEAKING (the package's own mouth, the caller's voice)
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def speak_via_derek(text: str, signature: Optional[Dict] = None) -> str:
-    """Send TTS request to Derek. Unmeasured profile fields travel as null."""
-    try:
-        import websockets  # pyright: ignore[reportMissingImports]
-
-        async with websockets.connect(DEREK_WS_URI, open_timeout=5) as ws:
-            payload: Dict[str, Any] = {"text": text, "mode": "stealth"}
-            if signature:
-                payload["voice_profile"] = {
-                    "pitch_hz": signature.get("fundamental_hz"),
-                    "pitch_range": signature.get("pitch_range_hz"),
-                    "formant_f1": signature.get("formant_f1_hz"),
-                    "formant_f2": signature.get("formant_f2_hz"),
-                    "voiced_frames": signature.get("voiced_frames"),
-                }
-            await ws.send(json.dumps({"command": "tts", "payload": payload}))
-            return await ws.recv()
-    except Exception as e:
-        logger.warning(f"Derek unreachable: {e}")
-        return '{"status": "offline"}'
-
-
-def local_speak_fallback(text: str, signature: Optional[Dict] = None) -> bool:
+def speak(text: str, voice: Any, lexicon_path: Optional[str] = None) -> str:
     """
-    There is no local voice until the sovereign synthesizer is wired. This
-    raises `SynthesisUnavailable` with the reason; it never speaks in an
-    outside voice and never returns as if it had spoken.
+    Speak `text` in the caller's `voice` through the package's own mouth and
+    play it. `voice` is required: a voice profile file, a frame voice folder,
+    or a loaded VoiceProfile or FrameVoice. Returns the WAV path once it has
+    played. Raises NothingVoiced (no voice, or nothing could be made),
+    PlaybackFailed, or the lexicon's and synthesizer's own typed failures;
+    never speaks in another voice and never returns as if it had spoken.
     """
-    del signature
-    err = SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="voice_capture_client.local_speak_fallback")
-    logger.error(f"Text was NOT voiced ({(text or '')[:40]!r}): {err}")
-    raise err
+    from ..synthesis.voice_synthesis import NothingVoiced, SpeechSynthesisEngine
+
+    if voice is None:
+        raise NothingVoiced("no voice given: pass the caller's voice (a voice profile file or frame voice folder)",
+                            where="voice_capture_client.speak")
+    mouth = SpeechSynthesisEngine(lexicon_path=lexicon_path, voice=voice)
+    path = mouth.generate_speech_audio(text, play_audio=True)
+    if path is None:
+        raise NothingVoiced("no text to speak", where="voice_capture_client.speak")
+    return path
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -377,22 +289,12 @@ def run_capture(name: str):
     save_profile(name, signature)
 
 
-async def run_speak(text: str, profile_name: str):
-    """Speak using profile."""
-    try:
-        signature = load_profile(profile_name)
-    except FileNotFoundError:
-        signature = None
-    response = await speak_via_derek(text, signature)
-    if "offline" in response:
-        local_speak_fallback(text, signature)
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Christman Voice Capture + Stealth TTS")
+    parser = argparse.ArgumentParser(description="Christman voice capture, and speaking in the caller's voice")
     parser.add_argument("--capture", metavar="NAME", help="Capture new profile")
-    parser.add_argument("--speak", metavar="TEXT", help="Speak text")
-    parser.add_argument("--profile", default="default", help="Profile name")
+    parser.add_argument("--speak", metavar="TEXT", help="Speak text (needs --voice)")
+    parser.add_argument("--voice", metavar="PATH", help="the voice to speak in: a voice profile file or frame voice folder")
+    parser.add_argument("--lexicon", metavar="PATH", default=None, help="align_lexicon.txt (else $CHRISTMAN_LEXICON_PATH)")
     parser.add_argument("--list", action="store_true", help="List profiles")
 
     args = parser.parse_args()
@@ -403,7 +305,9 @@ def main():
     elif args.capture:
         run_capture(args.capture)
     elif args.speak:
-        asyncio.run(run_speak(args.speak, args.profile))
+        if not args.voice:
+            parser.error("--speak needs --voice: there is no default voice")
+        print(speak(args.speak, args.voice, args.lexicon))
     else:
         parser.print_help()
 

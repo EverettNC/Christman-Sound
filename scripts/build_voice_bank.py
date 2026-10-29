@@ -7,12 +7,12 @@
 Build a frame voice from a voice's own recordings: the bank the frame mouth
 (christman_sound.stitch) speaks from, and the voice's measured profile.
 
-    python3 scripts/build_voice_bank.py --name AlphaVox --out ~/.christman_ai/voices/alphavox \\
+    python3 scripts/build_voice_bank.py --name <voice name> --out ~/.christman_ai/voices/<voice> \\
         --recordings <folder or WAV> [<folder or WAV> ...] \\
         --profile-from <folder or WAV> [...] \\
         --codecwar <CODECWAR5TH checkout> --vosk-model <vosk-model-en-us-0.22> \\
         --lexicon <vosk-model-en-us-0.22>/graph/phones/align_lexicon.txt \\
-        [--spoken-as alphavox="alpha vox"]
+        [--spoken-as WORD="OTHER WORDS"]
 
 Every recording must be a 22050 Hz, 16-bit, mono WAV (convert first, e.g.
 on a Mac: afconvert -f WAVE -d LEI16@22050 -c 1 in.mp3 out.wav). Only the
@@ -176,7 +176,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--min-conf", type=float, default=0.9,
                     help="lowest Vosk confidence a word may have to be cut into units (0.9: the words the ear is sure of)")
     ap.add_argument("--spoken-as", action="append", default=[], metavar='WORD="WORDS"',
-                    help="a word the recordings say as other words, e.g. alphavox=\"alpha vox\"")
+                    help="a word the recordings say as other words, a name the lexicon lacks, said as words it has")
     ap.add_argument("--node", default=shutil.which("node") or "node")
     ap.add_argument("--measure-only", action="store_true",
                     help="keep the bank already in --out (bank.json, frames.bin) and measure the profile again")
@@ -285,7 +285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Calibration. The frames' aperiodicity reads the recordings' jitter and
     # shimmer as noise too, so rendered as measured the voice comes back
-    # noisier than it is (on AlphaVox, 2026-10-28: HNR 2.6 dB and CPPS 3.3 dB
+    # noisier than it is (on the first voice built, 2026-10-28: HNR 2.6 dB and CPPS 3.3 dB
     # under the recordings). For each aperiodicity scale in CALIBRATION_SCALES
     # the profile recordings are rendered from their own frames, first with no
     # jitter or shimmer added (what the frames carry), then with the
@@ -347,7 +347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Stitched calibration. A new sentence is spoken from units of many
     # recordings, joined, rescaled in time and in pitch range; rendered with
     # the whole-recording values above it came out rougher and noisier than
-    # the recordings (AlphaVox, 2026-10-28: jitter 3.56%, shimmer 13.3%, HNR
+    # the recordings (the first voice built, 2026-10-28: jitter 3.56%, shimmer 13.3%, HNR
     # 7.5 dB, CPPS 7.3 dB). So the same calibration is run on stitched speech:
     # for each aperiodicity in STITCHED_APERIODICITIES the CALIBRATION_SENTENCES
     # are spoken by the mouth itself (christman_sound.synth.synthesize) with no

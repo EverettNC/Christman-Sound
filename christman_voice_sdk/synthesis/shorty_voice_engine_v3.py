@@ -3,7 +3,7 @@ Shorty Voice Engine V3 - ULTRA Tier Implementation
 
 WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
 -----------------------------------------------------
-Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. This
+Everett's ruling: the rebuild cuts every outside speech engine. This
 class drove Coqui XTTS to render; that render call is the only thing that
 came out. Removed (quoted from main 99a6cce):
 

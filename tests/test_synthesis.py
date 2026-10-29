@@ -33,6 +33,8 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from voice_fixture import load_test_voice  # noqa: E402
 
 SR = 24000
 
@@ -57,9 +59,7 @@ def test_mouth_without_a_lexicon_raises_the_lexicon_failure_and_writes_nothing(t
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
     monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
-    from christman_sound.voice_profile import load_alphavox_voice
-
-    eng = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path), voice=load_alphavox_voice())
+    eng = vs.SpeechSynthesisEngine(cache_dir=str(tmp_path / "cache"), voice=load_test_voice(tmp_path / "voice"))
     for play in (False, True):
         with pytest.raises(LexiconUnavailable) as excinfo:
             eng.generate_speech_audio("hello", play_audio=play)
@@ -67,7 +67,8 @@ def test_mouth_without_a_lexicon_raises_the_lexicon_failure_and_writes_nothing(t
         assert not isinstance(excinfo.value, SynthesisUnavailable)
         assert eng.last_engine == "none"
         assert "no lexicon configured" in (eng.last_error or "")
-    assert list(tmp_path.iterdir()) == [], "no empty WAV may be left behind"
+    cache = tmp_path / "cache"
+    assert not cache.exists() or list(cache.iterdir()) == [], "no empty WAV may be left behind"
 
 
 def test_mouth_without_the_engine_raises_nothing_voiced_with_the_loaders_reason(tmp_path, monkeypatch):
@@ -81,10 +82,9 @@ def test_mouth_without_the_engine_raises_nothing_voiced_with_the_loaders_reason(
     assert not broken.available
     monkeypatch.setattr(dsp_mod, "_instance", broken)
     cache = tmp_path / "cache"
-    from christman_sound.voice_profile import load_alphavox_voice
-
-    eng = vs.SpeechSynthesisEngine(cache_dir=str(cache), lexicon_path=str(lex), voice=load_alphavox_voice())
-    ready, reason = vs.synthesis_readiness(str(lex), load_alphavox_voice())
+    voice = load_test_voice(tmp_path / "voice")
+    eng = vs.SpeechSynthesisEngine(cache_dir=str(cache), lexicon_path=str(lex), voice=voice)
+    ready, reason = vs.synthesis_readiness(str(lex), voice)
     assert ready is False and "no_such_library.so" in reason
     with pytest.raises(vs.NothingVoiced) as excinfo:
         eng.generate_speech_audio("hello", play_audio=False)
@@ -99,14 +99,14 @@ def test_synthesize_speech_raises_instead_of_returning_none(tmp_path, monkeypatc
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
     monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)
-    monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
-    from christman_sound.voice_profile import load_alphavox_voice
-
-    vs.get_speech_synthesis_engine(voice=load_alphavox_voice())
+    voice = load_test_voice(tmp_path / "voice")
     with pytest.raises(LexiconUnavailable):
-        vs.synthesize_speech("hello")
-    assert vs.synthesize_speech("   ") is None, "empty text is not a synthesis request"
+        vs.synthesize_speech("hello", voice=voice)
+    assert vs.synthesize_speech("   ", voice=voice) is None, "empty text is not a synthesis request"
+    with pytest.raises(TypeError):
+        vs.synthesize_speech("hello")  # type: ignore[call-arg]  the caller's voice is required
 
 
 def test_mouth_has_no_outside_engine_left(monkeypatch):
@@ -151,29 +151,36 @@ def test_shorty_quantifies_then_refuses_to_render():
     assert err.voice_params == eng.quantify_emotion("hello", "happy", 0.0)["voice_params"]
 
 
-def test_orchestrator_embeds_emotion_then_refuses_to_render(tmp_path, monkeypatch):
+def test_orchestrator_speaks_only_in_the_callers_voice(tmp_path, monkeypatch):
+    """No voice: refused with the reason. A non-neutral emotion: refused as a control the voice has no input for."""
     # VoicepackBuilder creates data/voicepacks relative to the working directory.
     monkeypatch.chdir(tmp_path)
     missing = _torch_stack_missing()
     if missing is not None:
         pytest.skip(f"not run: {missing} is not installed here; the orchestrator and its timbre and tone modules import it at module top")
+    from christman_sound.stitch import StitchRefused
     from christman_voice_sdk.audio.config import Tier
-    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+    from christman_voice_sdk.engines.synthesis_result import SynthesisUnavailable
     from christman_voice_sdk.synthesis.voice_synthesis_orchestrator import VoiceSynthesisOrchestrator
     from christman_voice_sdk.tone.emotion_embedder import EmotionEmbedder
 
+    lex = tmp_path / "lex.txt"
+    lex.write_text("hello hello h_B @_I l_I oU_E\n", encoding="utf-8")
+    monkeypatch.setenv("CHRISTMAN_LEXICON_PATH", str(lex))
     orch = VoiceSynthesisOrchestrator.__new__(VoiceSynthesisOrchestrator)
     orch.engine = None
     orch.tier = Tier.ELITE
     orch.emotion_embedder = EmotionEmbedder(tier=Tier.ELITE)
     orch.current_voicepack = {"metadata": {}}
-    with pytest.raises(SynthesisUnavailable) as excinfo:
+    with pytest.raises(SynthesisUnavailable, match="no voice given"):
         orch.synthesize("hello", emotion="happy")
-    err = excinfo.value
-    assert err.reason == SOVEREIGN_NOT_WIRED
-    assert err.emotion_params == orch.emotion_embedder.embed_emotion("happy", 1.0).to_dict()
-    with pytest.raises(SynthesisUnavailable):
-        VoiceSynthesisOrchestrator(tier=Tier.ELITE, auto_load_engine=True)
+    voice = load_test_voice(tmp_path / "voice")
+    with pytest.raises(StitchRefused, match="no input for these controls") as excinfo:
+        orch.synthesize("hello", emotion="happy", voice=voice)
+    assert excinfo.value.emotion_params == orch.emotion_embedder.embed_emotion("happy", 1.0).to_dict()
+    payload = orch.synthesize("hello", voice=voice)
+    assert payload["metadata"]["engine"] == "christman" and len(payload["audio"]) > 0
+    assert payload["degraded"] is False
 
 
 def test_speech_response_raises_instead_of_using_the_os_voice():
@@ -196,6 +203,7 @@ def test_tts_service_reports_real_state_and_503s_without_a_voice(tmp_path, monke
     monkeypatch.delenv("CHRISTMAN_LEXICON_PATH", raising=False)  # no lexicon: no voice
     monkeypatch.setattr(vs, "DEFAULT_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(vs, "_speech_synthesis_engine", None)
+    monkeypatch.setattr(ts, "_service_voice", None)  # started with no voice
     client = ts.app.test_client()
     status = client.get("/status").get_json()
     assert status["synthesis_available"] is False

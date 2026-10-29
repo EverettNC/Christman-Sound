@@ -1,47 +1,24 @@
 """
 Voice synthesis orchestrator — voicepack, timbre, emotion, lipsync.
 
-WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICE CUT
------------------------------------------------------
-Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. The
-only engine this orchestrator could drive was Coqui XTTS. Removed (quoted
-from main 99a6cce):
+Speaking goes through the package's own mouth (voice_synthesis, which renders
+through christman_sound.synth) in the caller's voice. `synthesize` takes the
+voice as a required argument: a voice profile file, a frame voice folder, or
+a loaded VoiceProfile or FrameVoice. With none, SynthesisUnavailable says so;
+there is no default voice and no fallback. No outside speech engine is
+driven from here (Coqui XTTS, the only engine it once drove, was cut on
+2026-10-17 and lives in quarantine/2026-10_outside_voices/).
 
-    from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
-    ...
-    self.engine: Optional[XTTSEngine] = None
-    ...
-    def _ensure_engine(self) -> Any:
-        if self.engine is None:
-            raise SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="VoiceSynthesisOrchestrator")
-        return self.engine
-    ...
-    engine = self._ensure_engine()
-    reference_audio = self.current_voicepack.get("reference_audio") or []
-    if reference_audio:
-        engine.load_voice(reference_audio=reference_audio[0])
-    ...
-    result = engine.synthesize(
-        text=text,
-        emotion_params=emotion_embedding.to_dict(),
-        **kwargs,
-    )
+The emotion reaches the mouth only as its named controls. A neutral emotion
+(or none) adds nothing. Any other emotion is passed as `affect`, which the
+frame voice refuses with the reason (it has no affect input; mapping an
+emotion onto pitch or rate here would be an invented mapping) and a voice
+profile refuses as a control it has no input for. The embedded emotion
+travels on the exception as `emotion_params`.
 
 Kept whole: the AudioProcessor / PhonemeLabeler / TimbreModeler /
 EmotionEmbedder / VoicepackBuilder wiring, voicepack validation and loading,
 the lipsync path and `SynthesisResultPayload`.
-
-What happens now:
-  - `load_voicepack` validates and loads the voicepack exactly as before and
-    records its reference audio in `self.reference_audio`; there is no
-    engine to point it at.
-  - `_ensure_engine` raises `SynthesisUnavailable("sovereign synthesizer not
-    wired yet")`. `auto_load_engine=True` therefore raises at construction
-    instead of half-building.
-  - `synthesize` validates its inputs and embeds the emotion as before, then
-    raises that same typed failure with the embedded emotion on the
-    exception as `emotion_params`. It never returns a payload with
-    audio=None that a caller could mistake for a quiet success.
 """
 
 from __future__ import annotations
@@ -57,9 +34,9 @@ from ..synthesis.phoneme_labeler import PhonemeLabeler
 from ..timbre.voicepack import VoicepackBuilder, VoicepackMetadata
 from ..timbre.timbre_modeler import TimbreModeler, VoiceProfile
 from ..tone.emotion_embedder import EmotionEmbedder
-from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
-# Re-exported: consumers (AlphaVox voice_stack) import SynthesisResult from
-# this module, as the pre-migration package did.
+from ..engines.synthesis_result import SynthesisUnavailable
+# Re-exported: consumers import SynthesisResult from this module, as the
+# pre-migration package did.
 from ..engines.synthesis_result import SynthesisResult  # noqa: F401
 from ..tone.tonescore_engine import ToneScoreEngine
 from ..audio.config import Config, Tier, get_config
@@ -104,17 +81,9 @@ class SynthesisResultPayload:
 class VoiceSynthesisOrchestrator:
     """
     Coordinates the complete voice synthesis pipeline.
-    
-    WHAT CHANGED AND WHY
-    --------------------
-    1. ENGINE SWAP.
-       Replaced GPTSoVITSEngine (which was acting as a placeholder) with the 
-       production XTTSEngine. (2026-10-17: XTTS cut too — see the module
-       docstring. No engine is wired until the sovereign synthesizer is.)
-    
-    2. FABRICATED EMOTION MODELS REMOVED.
-       `_build_custom_emotion_models` previously returned fake dictionary payloads 
-       labeled "placeholder-ready". It now explicitly raises NotImplementedError.
+
+    `_build_custom_emotion_models` raises NotImplementedError: it once
+    returned made-up emotion models, and none is made up here.
     """
 
     def __init__(
@@ -134,7 +103,7 @@ class VoiceSynthesisOrchestrator:
         self.emotion_embedder = EmotionEmbedder(tier=tier)
         self.voicepack_builder = VoicepackBuilder()
 
-        #: The renderer. None until Everett's own synthesizer is wired in.
+        #: The renderer: the package's own mouth (voice_synthesis), made on first use.
         self.engine: Optional[Any] = None
         self.reference_audio: List[Path] = []
         self.current_voicepack: Optional[Dict[str, Any]] = None
@@ -146,8 +115,14 @@ class VoiceSynthesisOrchestrator:
         logger.info("VoiceSynthesisOrchestrator initialized", extra={"tier": tier.value})
 
     def _ensure_engine(self) -> Any:
+        """The package's own mouth. Raises SynthesisUnavailable with the reason when it cannot load."""
         if self.engine is None:
-            raise SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="VoiceSynthesisOrchestrator")
+            try:
+                from .voice_synthesis import SpeechSynthesisEngine
+            except Exception as exc:
+                raise SynthesisUnavailable(f"voice_synthesis not importable: {type(exc).__name__}: {exc}",
+                                           where="VoiceSynthesisOrchestrator") from exc
+            self.engine = SpeechSynthesisEngine()
         return self.engine
 
     def _build_custom_emotion_models(
@@ -173,21 +148,32 @@ class VoiceSynthesisOrchestrator:
         if not self.reference_audio:
             logger.warning("Voicepack contains no reference audio.")
 
-        logger.info(
-            "Voicepack loaded. Speech from it is unavailable: %s.", SOVEREIGN_NOT_WIRED
-        )
+        logger.info("Voicepack loaded.")
 
     def synthesize(
         self,
         text: str,
         emotion: Optional[str] = None,
         emotion_intensity: float = 1.0,
-        sierra_signal: Optional[Dict[str, Any]] = None,
         tonescore: Optional[float] = None,
         generate_lipsync: bool = False,
+        *,
+        voice: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-
+        """
+        Speak `text` in the caller's `voice` (required). `kwargs` are the
+        mouth's named controls (voice_synthesis.CONTROL_KEYWORDS), applied or
+        refused with the reason. Raises SynthesisUnavailable when there is no
+        voice or it cannot be read.
+        """
+        if voice is None:
+            err = SynthesisUnavailable(
+                "no voice given: pass the caller's voice (voice=<voice profile file or frame voice folder>, or a "
+                "loaded VoiceProfile or FrameVoice); there is no default voice",
+                where="VoiceSynthesisOrchestrator.synthesize")
+            logger.error("Orchestrator did not speak %r: %s", (text or "")[:40], err)
+            raise err
         if self.current_voicepack is None:
             raise ValueError("No voicepack loaded. Call load_voicepack() first.")
         if not text or not text.strip():
@@ -198,18 +184,16 @@ class VoiceSynthesisOrchestrator:
         # Simplified for brevity; logic routes through EmotionEmbedder
         emotion_embedding = self.emotion_embedder.embed_emotion(emotion or "neutral", emotion_intensity)
 
+        controls = dict(kwargs)
+        if emotion_embedding.state.value != "neutral":
+            controls.setdefault("affect", emotion_embedding.state.value)
         try:
             engine = self._ensure_engine()
-        except SynthesisUnavailable as err:
-            err.emotion_params = emotion_embedding.to_dict()
+            result = engine._render(text, None, "en", voice=voice, controls=controls)
+        except Exception as err:
+            err.emotion_params = emotion_embedding.to_dict()  # type: ignore[attr-defined]
             logger.error("Orchestrator did not speak %r: %s", text[:40], err)
             raise
-
-        result = engine.synthesize(
-            text=text,
-            emotion_params=emotion_embedding.to_dict(),
-            **kwargs,
-        )
 
         lipsync_data = None
         if generate_lipsync and result.audio is not None:

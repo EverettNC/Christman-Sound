@@ -37,7 +37,7 @@ TOLERANCES, each a chosen starting value with its reason:
   * long-term spectrum: a recorded phrase rendered back must lie within 2 dB
     (third-octave bands, 100 Hz to 8 kHz, mean removed) of its own recording,
     median over the phrases. Reason: the voice's own phrases differ from each
-    other by about 6 dB (median, AlphaVox, 2026-10-28); 2 dB is a third of that.
+    other by about 6 dB (median, the first voice built, 2026-10-28); 2 dB is a third of that.
     New sentences say other words than the recordings, so their spectrum is
     held to the recordings' spread instead: the median distance to the
     recordings' average no larger than the recordings' own median distance to it.
@@ -47,8 +47,7 @@ TOLERANCES, each a chosen starting value with its reason:
     41.2% and 52.0% on the same 24 sentences; these floors keep this voice
     far above it while the voice is still learned).
 
-The voice is the frame voice folder at $CHRISTMAN_TEST_VOICE, else
-~/.christman_ai/voices/alphavox. Built from a voice's own recordings by
+The voice is the frame voice folder at $CHRISTMAN_TEST_VOICE. Built from a voice's own recordings by
 scripts/build_voice_bank.py. Without it, or without Praat, the ears or the
 Vosk model, the gate reports NOT RUN with the reason.
 """
@@ -91,10 +90,13 @@ MEASURES = ("jitter_local_pct", "shimmer_local_pct", "hnr_db", "cpp_db", "f0_med
 
 
 def _need_voice():
-    path = Path(os.environ.get("CHRISTMAN_TEST_VOICE", "~/.christman_ai/voices/alphavox")).expanduser()
+    folder = os.environ.get("CHRISTMAN_TEST_VOICE")
+    if not folder:
+        pytest.skip("not run: needs CHRISTMAN_TEST_VOICE, a frame voice folder (build one with "
+                    "scripts/build_voice_bank.py); runs on Everett's Mac")
+    path = Path(folder).expanduser()
     if not (path / "voice.json").is_file():
-        pytest.skip(f"not run: no frame voice at {path} (build one with scripts/build_voice_bank.py, or set "
-                    "CHRISTMAN_TEST_VOICE); runs on Everett's Mac")
+        pytest.skip(f"not run: no frame voice at {path} (build one with scripts/build_voice_bank.py)")
     try:
         import parselmouth  # noqa: F401
         import numpy  # noqa: F401
@@ -218,7 +220,8 @@ def test_fidelity_and_words_of_recorded_phrases_rendered_back(tmp_path):
         orig.append(o)
         rend.append(r)
         dists.append(float(np.sqrt(np.mean((o["ltas"] - r["ltas"]) ** 2))))
-        ref = Path(src).stem.replace("alphavox_", "").replace("_", " ")
+        # A recording is named <voice name>_<its words>.wav; the words are the reference.
+        ref = Path(src).stem.replace(voice.name.lower() + "_", "", 1).replace("_", " ")
         for ear, hyp in zip(("filament", "vosk"), hear(out.read_bytes())):
             e, n = _errors(ref, hyp)
             errs[ear][0] += e

@@ -9,7 +9,7 @@
 // WHAT CHANGED AND WHY (added 2026-10-17)
 // Every voice the family had came from somebody else's engine: XTTS/Coqui,
 // GPT-SoVITS, espeak, Apple `say`, pyttsx3, gTTS, the browser. Step 1 of
-// giving AlphaVox a sovereign voice is a synthesizer that is ours down to the
+// giving the beings a sovereign voice is a synthesizer that is ours down to the
 // last multiply. This file is a C port of Everett's Codec War synthesizer
 // (CODECWAR5TH, src/lib/audio/synth.ts + phonemes.ts): a Klatt-lite
 // source-filter synthesizer — glottal pulse plus noise source, a 40-phone
@@ -72,9 +72,9 @@
 //       the sequence: F1, F2, F3, BW1, BW2 in Hz. The cascade steers toward
 //       the row's values instead of the table's. Everything else (source,
 //       envelopes, durations, the fixed BW3 of 160 Hz) is the table's and
-//       synth.ts's, unchanged. This is how AlphaVox's measured vowels reach
+//       synth.ts's, unchanged. This is how a being's measured vowels reach
 //       the synthesizer: christman_sound/voice_profile.py builds the rows
-//       from christman_sound/alphavox_voice.json. Extra return code:
+//       from the voice profile the caller passes. Extra return code:
 //         9 a formant row value not > 0, finite and below sample_rate / 2
 //   int christman_synth_clear(ids, durs, n, f0_contour_or_NULL, f0, rate,
 //                             sample_rate, formants_or_NULL, glides_or_NULL,
@@ -404,11 +404,11 @@ int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_ph
 // christman_synth_clear — the same voice, rendered so it can be understood
 // (added 2026-10-28)
 // =============================================================================
-// WHY. AlphaVox's free text came out of christman_synth_voiced as sound the
+// WHY. A being's free text in its measured voice came out of christman_synth_voiced as sound the
 // Filament ear (Everett's Vosk, vosk-model-en-us-0.22-lgraph, 127.0.0.1:4850)
 // heard as "the" for almost every sentence: 4 of 53 words right on twelve
 // test sentences (7.5%), and 3 of 53 (5.7%) for Vosk run directly with the
-// full vosk-model-en-us-0.22. AlphaVox's own recordings are heard word for
+// full vosk-model-en-us-0.22. The being's own recordings are heard word for
 // word by the same ear. Measured on his Mac on 2026-10-28, the causes found:
 //
 //   1. The resonator gain. synth.ts gives each resonator g = 1 - r. That is
@@ -433,9 +433,8 @@ int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_ph
 //   4. Silence pulled the formants to SIL's row (200/900/2200 Hz), so every
 //      word began with a W-like rise ("I" heard as "wait"). Here, during
 //      silence, the formants move to the next phone's row.
-//   5. AY and OW were one steady row. AlphaVox's voice glides in them; the
-//      measured onset and offset (christman_sound/alphavox_voice.json,
-//      "glides") are drawn across the vowel. A gliding vowel with no
+//   5. AY and OW were one steady row. A recorded voice glides in them; the
+//      measured onset and offset (the voice profile's "glides") are drawn across the vowel. A gliding vowel with no
 //      measured glide moves from its own row toward its offglide vowel.
 //
 // AFTER, same machine, same day, same twelve sentences: the Filament ear
@@ -447,12 +446,12 @@ int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_ph
 //
 // What did NOT help, measured and left out: closing the gaps between words
 // (worse: 19% with no gap), lengthening vowels, a sharper glottal pulse with
-// pre-emphasis to match AlphaVox's high band (worse: 28%), wider bandwidths,
+// pre-emphasis to match the recordings' high band (worse: 28%), wider bandwidths,
 // jitter and shimmer, breath noise.
 //
-// WHAT IS KEPT. The voice: the per-phone pitch the caller passes (AlphaVox's
+// WHAT IS KEPT. The voice: the per-phone pitch the caller passes (its voice's
 // F0 median and contour), the rate, the vibrato (synth.ts:57), each phone's
-// F1, F2, F3, BW1, BW2 from `formants` (AlphaVox's measured vowels; Codec
+// F1, F2, F3, BW1, BW2 from `formants` (the voice's measured vowels; Codec
 // War's table for the rest; a vowel with a glide row draws that glide for
 // its F1-F3 instead), BW3 160 Hz (synth.ts:142), the glottal pulse's
 // shape (synth.ts:6-13), the deterministic noise (synth.ts:15-19), the
@@ -461,7 +460,7 @@ int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_ph
 // not changed: they stay Codec War's synth.ts sample for sample.
 //
 // Every level and time below is a chosen starting value, written with the
-// reason it was chosen, held until listening by AlphaVox's clients replaces
+// reason it was chosen, held until listening by the beings' clients replaces
 // it.
 //
 // CONTRACT
@@ -502,7 +501,7 @@ int christman_synth_voiced(const int* phone_ids, const double* durs, size_t n_ph
 // fills the whole period; a closed part gives the harmonics their strength).
 #define CL_OPEN_QUOTIENT 0.7
 // Two fixed higher formants above F3, so the cascade does not fall off a cliff
-// above it. AlphaVox's own recordings carry energy to 4-5 kHz.
+// above it. A being's own recordings carry energy to 4-5 kHz.
 #define CL_F4 3600.0
 #define CL_BW4 250.0
 #define CL_F5 4600.0

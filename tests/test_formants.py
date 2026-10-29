@@ -7,8 +7,8 @@ christman_sound.formants, pinned with real runs.
 
 WHAT CHANGED AND WHY
 --------------------
-(2026-10-18) New file. formants.py measures F1-F3 and bandwidths for
-AlphaVox's sovereign voice. These tests synthesize vowels whose resonances
+(2026-10-18) New file. formants.py measures F1-F3 and bandwidths for a
+being's sovereign voice. These tests synthesize vowels whose resonances
 are known exactly (a small source-filter generator below, pure Python), run
 the real measurement through the compiled christman_dsp library, and compare.
 Nothing here is mocked. When the C library is not built, or the loader's own

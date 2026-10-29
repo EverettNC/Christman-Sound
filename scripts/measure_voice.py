@@ -5,27 +5,31 @@
 # Truth. Dignity. Protection. Transparency. No Erasure.
 # ==============================================================================
 """
-Measure AlphaVox's voice from AlphaVox's own recordings, write it as a voice
+Measure a being's voice from its own recordings, write it as a voice
 profile, and prove it with numbers.
 
-WHAT THIS IS (added 2026-10-28)
--------------------------------
-The 26 recorded phrases in EverettNC/AlphaVox, data/phrases/alphavox_verified,
-are AlphaVox's voice. This script measures them and writes
-christman_sound/alphavox_voice.json, which christman_sound.voice_profile feeds
-into the sovereign synthesizer (christman_synth.c). Every value in that file
-sits beside the measurements it came from.
+WHAT THIS IS
+------------
+A being's recorded phrases are its voice. This script measures them and
+writes a voice profile file, which christman_sound.voice_profile feeds into
+the sovereign synthesizer (christman_synth.c) when the being passes it as its
+voice. Every value in that file sits beside the measurements it came from.
+The profile belongs to the being and lives with it, not in this package.
+
+Arguments: the recordings folder (--recordings), the output path (--out) and
+the voice's name (--name), with the Vosk model and its lexicon. The phrase
+text comes from each file name, after an optional --prefix:
+<prefix>i_need_help_please.wav -> "i need help please".
 
 How each value is measured:
 
   Alignment. Each recording is decoded with Everett's Vosk ear
-  (vosk-model-en-us-0.22, word times on). The phrase text comes from the
-  file name (alphavox_i_need_help_please.wav -> "i need help please"). A
-  recording whose decoded words are not exactly its file-name words is
-  left out and named in the report; nothing is forced onto it. Vosk's
-  word times on the same file move by up to one 30 ms frame from run to run
-  (measured 2026-10-28: 3 to 4 of the 26 phrases); over three runs that
-  moved one vowel's F3 by 10 Hz and one contour point by 0.06 semitones.
+  (vosk-model-en-us-0.22, word times on). A recording whose decoded words
+  are not exactly its file-name words is left out and named in the report;
+  nothing is forced onto it. Vosk's word times on the same file move by up
+  to one 30 ms frame from run to run (measured 2026-10-28: 3 to 4 of 26
+  phrases); over three runs that moved one vowel's F3 by 10 Hz and one
+  contour point by 0.06 semitones.
 
   Formants. christman_sound.formants measures every recording frame by frame
   (25 ms frames, 10 ms hop, LPC on Everett's own C engine; see that file for
@@ -35,7 +39,7 @@ How each value is measured:
   synthesizer speaks from (first pronunciation, mapped to Codec War's
   phones). A word whose pronunciations in the lexicon disagree on their
   vowels ("read": r E d / r i d; "the", "to", "a", "have") is left out, and
-  listed with the reason: word times cannot tell which one AlphaVox said.
+  listed with the reason: word times cannot tell which one was said.
   The word's recorded time is split among its phones in proportion to the
   durations the synthesizer itself gives them (Codec War's table, position
   and mapping factors). In a vowel's share, its frames are the voiced frames
@@ -65,24 +69,26 @@ How each value is measured:
   profile's rate is the median over phrases. christman_synth divides every
   duration by it.
 
-Proof (--prove). Each recorded phrase is synthesized twice: "before" is what
-the mouth spoke until now (Codec War's table formants, f0 149.3 Hz, rate 1.0,
-no contour); "after" is AlphaVox's profile. The synthesized audio is measured
-with the same formant reader, and set against the recording of the same
-words: per measured vowel token the absolute F1, F2, F3
-difference in Hz; per phrase the F0-median difference in Hz, the contour
-difference in semitones (with the same octave guard as the profile), and the
-duration difference. "after, held out"
-repeats "after" with a profile measured from the other 25 phrases only, so
-the phrase being scored did not shape the voice that speaks it.
+Proof (--prove). Each recorded phrase is synthesized twice: "before" is the
+--baseline profile when one is given (the voice as it was measured before),
+else Codec War's bare table (render_codecwar_table) at the new profile's own
+F0 median and rate 1.0, no contour; "after" is the new profile. The
+synthesized audio is measured with the same formant reader, and set against
+the recording of the same words: per measured vowel token the absolute F1,
+F2, F3 difference in Hz; per phrase the F0-median difference in Hz, the
+contour difference in semitones (with the same octave guard as the profile),
+and the duration difference. "after, held out" repeats "after" with a
+profile measured from the other phrases only, so the phrase being scored did
+not shape the voice that speaks it.
 
 Run (python with vosk installed; Christman-Sound's C library built):
 
-    python3.11 scripts/measure_alphavox_voice.py \
-        --phrases ~/AlphaVox/data/phrases/alphavox_verified \
+    python3.11 scripts/measure_voice.py \
+        --recordings <the being's recorded phrases> --prefix <file name prefix> \
+        --name <the voice's name> --out <the being's voice profile .json> \
         --vosk-model ~/models/vosk-model-en-us-0.22 \
         --lexicon ~/models/vosk-model-en-us-0.22/graph/phones/align_lexicon.txt \
-        --out christman_sound/alphavox_voice.json --prove proof.json
+        --prove proof.json
 
 No network, no outside speech engine, no paid service.
 """
@@ -102,6 +108,7 @@ from typing import Dict, List, Optional, Tuple
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # build_voice_bank (the Vosk ear)
 
 from christman_sound.dsp import get_dsp  # noqa: E402
 from christman_sound.formants import (  # noqa: E402
@@ -111,7 +118,7 @@ from christman_sound.formants import (  # noqa: E402
     read_wav_mono,
 )
 from christman_sound.lexicon import load_lexicon, normalize_word  # noqa: E402
-from christman_sound.synth import synthesize, text_to_phones  # noqa: E402
+from christman_sound.synth import render_codecwar_table, synthesize, text_to_phones  # noqa: E402
 from christman_sound.voice_profile import load_voice_profile  # noqa: E402
 
 #: A vowel frame is at least this fraction of the word's loudest voiced frame
@@ -119,7 +126,7 @@ from christman_sound.voice_profile import load_voice_profile  # noqa: E402
 VOWEL_RMS_RATIO = 0.5
 #: A vowel's measured F1-F3 replace Codec War's only when at least this many
 #: tokens agree on them. One token can be one LPC tracking slip: measured
-#: 2026-10-28, the single "more" token read AO at F2 2574 Hz, where an /O/
+#: 2026-10-28 on a being's recordings, the single "more" token read AO at F2 2574 Hz, where an /O/
 #: sits near 900 Hz — a missed F2 with F3 read in its place. With one token
 #: that cannot be told from the voice. Chosen starting value; the one-token
 #: vowels stay in the profile under measured_not_applied, values shown.
@@ -128,7 +135,7 @@ MIN_TOKENS_TO_APPLY = 2
 CONTOUR_BINS = 5
 #: A frame more than this many semitones from its phrase's F0 median is left
 #: out of the contour. Measured 2026-10-28 without this guard: in 7 of the 12
-#: AlphaVox phrases still voiced in their last part, that part read 10.8 to
+#: phrases of a being's recordings still voiced in their last part, that part read 10.8 to
 #: 14.7 semitones under the phrase median — an octave drop, which is creak
 #: or YIN locking onto a subharmonic, not the melody — and the median over
 #: phrases came out -10.85 semitones. Codec War's source has no creak, so
@@ -137,18 +144,13 @@ CONTOUR_BINS = 5
 #: a spoken rise or fall, short of the octave jump. Chosen starting value,
 #: held until a better voicing measure replaces it.
 OCTAVE_GUARD_ST = 9.0
-#: The pitch the mouth used before this profile (voice_synthesis, 2026-10-18).
-BEFORE_F0_HZ = 149.3
-
-PHRASE_PREFIX = "alphavox_"
-
-#: (2026-10-28) Codec War's vowels that glide from one quality to another
+#: Codec War's vowels that glide from one quality to another
 #: inside the vowel (phonemes.ts lists them as single rows). Their onset and
 #: offset are measured too; see glide_values.
 GLIDING_VOWELS = ("AW", "AY", "EY", "OW", "OY")
 
 APPLIED_GLIDES = (
-    " Added 2026-10-28: each gliding vowel in glides (onset and offset F1-F3, measured from at least "
+    " Each gliding vowel in glides (onset and offset F1-F3, measured from at least "
     "MIN_TOKENS_TO_APPLY tokens) -> the glide christman_synth_clear draws across that vowel, onset to "
     "offset, in place of the single vowel row."
 )
@@ -162,11 +164,11 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def phrase_text(path: Path) -> str:
+def phrase_text(path: Path, prefix: str) -> str:
     stem = path.stem
-    if not stem.startswith(PHRASE_PREFIX):
-        raise ValueError(f"{path.name}: expected a name starting {PHRASE_PREFIX!r}")
-    return stem[len(PHRASE_PREFIX):].replace("_", " ")
+    if not stem.startswith(prefix):
+        raise ValueError(f"{path.name}: expected a name starting {prefix!r}")
+    return stem[len(prefix):].replace("_", " ")
 
 
 def med(xs):
@@ -207,7 +209,7 @@ def nucleus(frames: List[dict], start: float, end: float, loud_ref: Optional[flo
 
 def glide_values(fr: List[dict]) -> dict:
     """
-    (2026-10-28) Where a gliding vowel starts and ends: the nucleus frames in
+    Where a gliding vowel starts and ends: the nucleus frames in
     time order, the median F1-F3 of the first third (onset) and of the last
     third (offset). Fewer than 3 frames cannot show a start and an end apart:
     None for both.
@@ -254,10 +256,10 @@ def contour_bins(frames: List[dict], a: float, b: float) -> Tuple[List[Optional[
 
 
 class Phrase:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, prefix: str):
         self.path = path
         self.name = path.name
-        self.text = phrase_text(path)
+        self.text = phrase_text(path, prefix)
         self.words = self.text.split()
         self.sha256 = sha256(path)
         self.samples, self.sr = read_wav_mono(path)
@@ -272,27 +274,38 @@ class Phrase:
 
 
 def align(phrases: List[Phrase], model_dir: str) -> dict:
-    from vosk import KaldiRecognizer, Model, SetLogLevel
-    import vosk
+    """
+    Word times from Everett's Vosk ear. The recognizer is the one
+    scripts/build_voice_bank.py runs (_words): each recording is handed to it
+    as 16-bit PCM at the recording's own rate, the same samples the
+    measurement reads.
+    """
+    import tempfile
+    import wave
 
-    SetLogLevel(-1)
-    model = Model(model_dir)
-    for p in phrases:
-        pcm = array.array("h", (max(-32768, min(32767, int(round(v * 32767.0)))) for v in p.samples))
-        if sys.byteorder != "little":
-            pcm.byteswap()
-        rec = KaldiRecognizer(model, p.sr)
-        rec.SetWords(True)
-        rec.AcceptWaveform(pcm.tobytes())
-        res = json.loads(rec.FinalResult())
-        got = [w["word"] for w in res.get("result", [])]
-        if got != p.words:
-            p.excluded = f"Vosk heard {got!r}, the file name says {p.words!r}; left out"
-            continue
-        p.aligned = [
-            {"word": w["word"], "start": float(w["start"]), "end": float(w["end"]), "conf": float(w["conf"])}
-            for w in res["result"]
-        ]
+    import vosk
+    import build_voice_bank
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for p in phrases:
+            pcm = array.array("h", (max(-32768, min(32767, int(round(v * 32767.0)))) for v in p.samples))
+            if sys.byteorder != "little":
+                pcm.byteswap()
+            wav = Path(tmp) / "phrase.wav"
+            with wave.open(str(wav), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(p.sr)
+                w.writeframes(pcm.tobytes())
+            heard = build_voice_bank._words(model_dir, wav)
+            got = [w["word"] for w in heard]
+            if got != p.words:
+                p.excluded = f"Vosk heard {got!r}, the file name says {p.words!r}; left out"
+                continue
+            p.aligned = [
+                {"word": w["word"], "start": float(w["start"]), "end": float(w["end"]), "conf": float(w["conf"])}
+                for w in heard
+            ]
     return {
         "engine": "vosk (Everett's ear), word times on",
         "vosk_version": getattr(vosk, "__version__", None) or _pip_version("vosk"),
@@ -322,7 +335,7 @@ def vowel_ambiguity(lex, word: str, vowels: set) -> Optional[str]:
     """
     None when every pronunciation of `word` in the lexicon has the same
     vowels; else why the word is left out of vowel measurement. Word times
-    cannot tell which pronunciation AlphaVox said ("read" r E d / r i d).
+    cannot tell which pronunciation was said ("read" r E d / r i d).
     """
     from christman_sound.lexicon import PhoneNotMapped, map_phone
 
@@ -416,7 +429,7 @@ def build_profile(phrases: List[Phrase], lex, dsp, table, vowels: set) -> dict:
             "table value is used"
         )
     not_measured = {
-        v: "no measured word in AlphaVox's aligned recordings carries this vowel; Codec War's table value is used"
+        v: "no measured word in the aligned recordings carries this vowel; Codec War's table value is used"
         for v in sorted(vowels) if v not in vow and v not in held_back
     }
     glides, glides_held = build_glides(by_vowel)
@@ -484,7 +497,7 @@ def build_profile(phrases: List[Phrase], lex, dsp, table, vowels: set) -> dict:
 
 def build_glides(by_vowel: Dict[str, List[dict]]) -> Tuple[Dict[str, dict], Dict[str, dict]]:
     """
-    (2026-10-28) Each gliding vowel's onset and offset F1-F3: the median over
+    Each gliding vowel's onset and offset F1-F3: the median over
     its tokens of each token's onset and offset (glide_values), applied when
     at least MIN_TOKENS_TO_APPLY tokens had a start and an end to measure.
     """
@@ -535,8 +548,8 @@ def synth_words(res) -> List[List]:
     return words
 
 
-def score(phrases: List[Phrase], lex, dsp, vowels: set, voice_for) -> dict:
-    """voice_for(phrase) -> VoiceProfile or None ('before')."""
+def score(phrases: List[Phrase], lex, dsp, vowels: set, voice_for, table_f0: Optional[float] = None) -> dict:
+    """voice_for(phrase) -> VoiceProfile, or None for Codec War's bare table at table_f0, rate 1.0 ('before')."""
     d1, d2, d3, df0, dcont, ddur = [], [], [], [], [], []
     per = {}
     for p in phrases:
@@ -544,7 +557,7 @@ def score(phrases: List[Phrase], lex, dsp, vowels: set, voice_for) -> dict:
             continue
         voice = voice_for(p)
         if voice is None:
-            res = synthesize(p.text, f0=BEFORE_F0_HZ, rate=1.0, lexicon=lex, engine=dsp)
+            res = render_codecwar_table(p.text, f0=table_f0, rate=1.0, lexicon=lex, engine=dsp)
         else:
             res = synthesize(p.text, voice=voice, lexicon=lex, engine=dsp)
         fr = frames_of(list(res.samples), res.sample_rate)
@@ -608,16 +621,23 @@ def score(phrases: List[Phrase], lex, dsp, vowels: set, voice_for) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--phrases", required=True, help="AlphaVox data/phrases/alphavox_verified")
+    ap.add_argument("--recordings", required=True, help="the folder of the being's recorded phrases (WAV)")
+    ap.add_argument("--out", required=True, help="where to write the voice profile (JSON)")
+    ap.add_argument("--name", required=True, help="the voice's name, written into the profile")
+    ap.add_argument("--prefix", default="",
+                    help="the file name prefix before each phrase's words (only files that start with it are read)")
     ap.add_argument("--vosk-model", required=True, help="vosk-model-en-us-0.22 directory")
     ap.add_argument("--lexicon", required=True, help="its graph/phones/align_lexicon.txt")
-    ap.add_argument("--out", default=str(REPO / "christman_sound" / "alphavox_voice.json"))
+    ap.add_argument("--recordings-repository", default=None,
+                    help="the repository the recordings come from (written into the profile)")
     ap.add_argument("--recordings-commit", default=None,
-                    help="the AlphaVox commit the recordings were read at (written into the profile)")
+                    help="the commit the recordings were read at (written into the profile)")
     ap.add_argument("--prove", default=None, help="write the before/after proof here (JSON)")
+    ap.add_argument("--baseline", default=None,
+                    help="with --prove: the voice profile to score as 'before' (else Codec War's bare table)")
     ap.add_argument("--only-glides", action="store_true",
-                    help="(2026-10-28) measure as usual, but write only the glides (and the applied note) into "
-                         "the existing --out profile; every other value in it stays exactly as it is")
+                    help="measure as usual, but write only the glides (and the applied note) into the existing "
+                         "--out profile; every other value in it stays exactly as it is")
     args = ap.parse_args(argv)
 
     dsp = get_dsp()
@@ -627,10 +647,11 @@ def main(argv=None) -> int:
     table = dsp.synth_phone_formants()
     vowels = {pid for pid, (_, is_vowel) in table.items() if is_vowel}
 
-    paths = sorted(Path(args.phrases).expanduser().glob(PHRASE_PREFIX + "*.wav"))
+    recordings = Path(args.recordings).expanduser()
+    paths = sorted(recordings.glob(args.prefix + "*.wav"))
     if not paths:
-        raise SystemExit(f"no {PHRASE_PREFIX}*.wav in {args.phrases}")
-    phrases = [Phrase(p) for p in paths]
+        raise SystemExit(f"no {args.prefix}*.wav in {recordings}")
+    phrases = [Phrase(p, args.prefix) for p in paths]
     aligner = align(phrases, str(Path(args.vosk_model).expanduser()))
     skipped_words = []
     for p in phrases:
@@ -642,11 +663,11 @@ def main(argv=None) -> int:
     measured = build_profile(phrases, lex, dsp, table, vowels)
     measured["words_left_out_of_vowel_measurement"] = skipped_words
     profile = {
-        "voice": "AlphaVox",
+        "voice": args.name,
         "schema": 1,
         "what_this_is": (
-            "AlphaVox's voice, measured from AlphaVox's own 26 recorded phrases, for christman_synth "
-            "(christman_sound.voice_profile applies it). The recordings are AlphaVox's voice and no one "
+            f"{args.name}'s voice, measured from its own {len(phrases)} recorded phrases, for christman_synth "
+            f"(christman_sound.voice_profile applies it). The recordings are {args.name}'s voice and no one "
             "else's. Every value sits beside the measurements it came from."
         ),
         "applied": (
@@ -660,8 +681,9 @@ def main(argv=None) -> int:
         "measured_on": _dt.date.today().isoformat(),
         "sources": {
             "recordings": {
-                "repository": "EverettNC/AlphaVox",
-                "directory": "data/phrases/alphavox_verified",
+                "repository": args.recordings_repository,
+                "directory": recordings.name,
+                "prefix": args.prefix,
                 "commit": args.recordings_commit,
                 "files": [
                     {"name": p.name, "sha256": p.sha256, "text": p.text, "sample_rate": p.sr,
@@ -675,7 +697,7 @@ def main(argv=None) -> int:
                         "sha256": sha256(Path(args.lexicon).expanduser()), "pronunciation": "first in file order"},
             "formant_reader": {"module": "christman_sound.formants", "frame_s": FRAME_SECONDS,
                                "hop_s": HOP_SECONDS, "vowel_rms_ratio": VOWEL_RMS_RATIO},
-            "script": "scripts/measure_alphavox_voice.py",
+            "script": "scripts/measure_voice.py",
         },
     }
     profile.update(measured)
@@ -695,7 +717,11 @@ def main(argv=None) -> int:
 
     if args.prove:
         voice = load_voice_profile(out)
-        before = score(phrases, lex, dsp, vowels, lambda p: None)
+        if args.baseline:
+            baseline = load_voice_profile(Path(args.baseline).expanduser())
+            before = score(phrases, lex, dsp, vowels, lambda p: baseline)
+        else:
+            before = score(phrases, lex, dsp, vowels, lambda p: None, table_f0=voice.f0_median_hz)
         after = score(phrases, lex, dsp, vowels, lambda p: voice)
 
         held_dir = Path(args.prove).with_suffix("")

@@ -3,10 +3,10 @@
 # The Christman AI Project — Luma Cognify AI
 # ==============================================================================
 """
-christman_synth_clear: AlphaVox's measured voice, rendered so the words can
+christman_synth_clear: a being's measured voice, rendered so the words can
 be understood (2026-10-28).
 
-Through christman_synth_voiced, Everett's Filament ear heard AlphaVox's free
+Through christman_synth_voiced, Everett's Filament ear heard a being's free
 text as "the": 4 of 53 words on twelve sentences. These tests hold:
 
   * christman_synth and christman_synth_voiced are not changed (their own
@@ -17,10 +17,10 @@ text as "the": 4 of 53 words on twelve sentences. These tests hold:
     among its formants (the old renderer's sat at less than half the
     height), and a vowel's F1-F3, measured, sit at the voice's rows;
   * S and SH put their noise where it belongs (S high, SH lower);
-  * AY glides from AlphaVox's measured onset to its measured offset;
+  * AY glides from the voice's measured onset to its measured offset;
   * a measured voice is rendered by the clear renderer, and says so;
   * words: with Everett's Vosk model on the machine, twelve sentences are
-    synthesized in AlphaVox's voice and recognized; the clear renderer must
+    synthesized in the test voice and recognized; the clear renderer must
     be heard far better than christman_synth_voiced. Without the model or a
     Python vosk, NOT RUN.
 
@@ -46,7 +46,13 @@ sys.path.insert(0, str(ROOT))
 from christman_sound import synth as cs_synth  # noqa: E402
 from christman_sound.dsp import ChristmanDSP, SynthRefused  # noqa: E402
 from christman_sound.formants import measure_formants  # noqa: E402
-from christman_sound.voice_profile import load_alphavox_voice  # noqa: E402
+from voice_fixture import TEST_VOICE_NAME, load_test_voice  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def voice(tmp_path_factory):
+    """The test voice (tests/voice_fixture.py): measured numbers, a neutral name."""
+    return load_test_voice(tmp_path_factory.mktemp("voice"))
 
 
 @pytest.fixture(scope="module")
@@ -126,7 +132,7 @@ def test_bad_glide_row_is_refused_with_code_10(dsp):
 # ------------------------------------------------------ what reaches the ear
 
 
-def test_a_held_vowel_is_its_resonances_not_the_swell(dsp):
+def test_a_held_vowel_is_its_resonances_not_the_swell(dsp, voice):
     """
     The old renderer's resonators (gain 1 - r, synth.ts:122-129) let the
     vowel's formants cancel and the voicing's low end win. Measured on his
@@ -134,7 +140,6 @@ def test_a_held_vowel_is_its_resonances_not_the_swell(dsp):
     334 Hz, christman_synth_clear 708 Hz (AA's F1 is 730 Hz). Held here: the
     clear AA above 450 Hz and at least 1.8 times the old one.
     """
-    voice = load_alphavox_voice()
     phones = [("SIL", 0.05), ("AA", 0.5), ("SIL", 0.05)]
     clear = cs_synth.synthesize(phones=phones, voice=voice, engine=dsp)
     table = dsp.synth_phone_formants()
@@ -150,8 +155,7 @@ def test_a_held_vowel_is_its_resonances_not_the_swell(dsp):
 
 
 @pytest.mark.parametrize("vowel", ["UW", "IY", "AE"])
-def test_measured_vowels_sit_at_alphavox_formants(dsp, vowel):
-    voice = load_alphavox_voice()
+def test_measured_vowels_sit_at_the_voices_formants(dsp, vowel, voice):
     want = voice.vowel_formants[vowel]
     r = cs_synth.synthesize(phones=[("SIL", 0.05), (vowel, 0.5), ("SIL", 0.05)], voice=voice, engine=dsp)
     ph = r.phones[1]
@@ -160,15 +164,14 @@ def test_measured_vowels_sit_at_alphavox_formants(dsp, vowel):
           and f.f1_hz and f.f2_hz and f.f3_hz]
     assert len(fr) >= 10, len(fr)
     got = tuple(statistics.median(getattr(f, k) for f in fr) for k in ("f1_hz", "f2_hz", "f3_hz"))
-    print(f"{vowel}: AlphaVox measured {want}, christman_synth_clear {tuple(round(x) for x in got)}")
+    print(f"{vowel}: measured {want}, christman_synth_clear {tuple(round(x) for x in got)}")
     # F1 within 15 % (few harmonics under it at 149 Hz, as formants.py says), F2 and F3 within 8 %.
     assert abs(got[0] - want[0]) / want[0] <= 0.15
     assert abs(got[1] - want[1]) / want[1] <= 0.08
     assert abs(got[2] - want[2]) / want[2] <= 0.08
 
 
-def test_s_hisses_high_and_sh_lower(dsp):
-    voice = load_alphavox_voice()
+def test_s_hisses_high_and_sh_lower(dsp, voice):
     cents = {}
     for fric in ("S", "SH"):
         r = cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.15), (fric, 0.3), ("AA", 0.15), ("SIL", 0.05)],
@@ -180,9 +183,8 @@ def test_s_hisses_high_and_sh_lower(dsp):
     assert 2000 < cents["SH"] < cents["S"]
 
 
-def test_ay_glides_from_alphavox_onset_to_offset(dsp):
-    voice = load_alphavox_voice()
-    assert "AY" in voice.glides, "the profile carries AlphaVox's measured AY glide"
+def test_ay_glides_from_the_measured_onset_to_offset(dsp, voice):
+    assert "AY" in voice.glides, "the profile carries the measured AY glide"
     (on, off) = voice.glides["AY"]
     r = cs_synth.synthesize(phones=[("SIL", 0.05), ("AY", 0.6), ("SIL", 0.05)], voice=voice, engine=dsp)
     ph = r.phones[1]
@@ -201,11 +203,10 @@ def test_ay_glides_from_alphavox_onset_to_offset(dsp):
     assert abs(f2_on - on[1]) / on[1] <= 0.08 and abs(f2_off - off[1]) / off[1] <= 0.08
 
 
-def test_a_measured_voice_is_rendered_clear_and_says_so(dsp):
-    voice = load_alphavox_voice()
+def test_a_measured_voice_is_rendered_clear_and_says_so(dsp, voice):
     r = cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2), ("SIL", 0.05)], voice=voice, engine=dsp)
-    assert r.renderer == cs_synth.RENDERER_CLEAR and r.voice == "AlphaVox"
-    r = cs_synth.synthesize(phones=[("SIL", 0.05), ("AA", 0.2), ("SIL", 0.05)], f0=149.3, engine=dsp)
+    assert r.renderer == cs_synth.RENDERER_CLEAR and r.voice == TEST_VOICE_NAME
+    r = cs_synth.render_codecwar_table(phones=[("SIL", 0.05), ("AA", 0.2), ("SIL", 0.05)], f0=149.3, rate=1.0, engine=dsp)
     assert r.renderer == cs_synth.RENDERER_CODECWAR and r.voice is None
 
 
@@ -228,9 +229,9 @@ def _word_errors(ref: str, hyp: str):
     return d[len(r)][len(h)], len(r)
 
 
-def test_alphavox_free_text_is_heard_word_for_word_far_more_often(dsp, tmp_path):
+def test_free_text_is_heard_word_for_word_far_more_often(dsp, tmp_path, voice):
     """
-    Twelve sentences in AlphaVox's voice, recognized by Everett's Vosk
+    Twelve sentences in the test voice, recognized by Everett's Vosk
     (vosk-model-en-us-0.22, run directly). Measured on his Mac on 2026-10-28:
     christman_synth_voiced 3 of 53 words (5.7%); christman_synth_clear 25 of
     53 (47.2%). Held here: the clear renderer at least 40% and at least 30
@@ -243,7 +244,6 @@ def test_alphavox_free_text_is_heard_word_for_word_far_more_often(dsp, tmp_path)
         pytest.skip("not run: needs " + ", ".join(missing) +
                     " (Everett's Vosk model, its lexicon, a Python with vosk); runs on Everett's Mac")
     require_full_model(need["CHRISTMAN_VOSK_MODEL"])
-    voice = load_alphavox_voice()
     table = dsp.synth_phone_table()
     formant_table = dsp.synth_phone_formants()
     wavs = {"clear": [], "voiced": []}

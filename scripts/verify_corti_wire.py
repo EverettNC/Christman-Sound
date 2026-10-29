@@ -16,6 +16,7 @@ TypeScript client emits (JSON.stringify of a VocalEvent), and checks:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -89,7 +90,15 @@ CARD = {
 }
 
 
+#: The browser origin this check posts from. The receiver allows no origin by
+#: default; the caller names the ones it allows in CORTI_ALLOWED_ORIGINS.
+ALLOWED_ORIGIN = "http://localhost:5487"
+
+
 def main() -> None:
+    have = [o.strip() for o in os.environ.get("CORTI_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    if ALLOWED_ORIGIN not in have:
+        os.environ["CORTI_ALLOWED_ORIGINS"] = ",".join(have + [ALLOWED_ORIGIN])
     turns = []
     server, receiver, thread = start_in_thread(port=0, on_turn=turns.append)
     host, port = server.server_address[0], server.server_address[1]
@@ -127,13 +136,13 @@ def main() -> None:
             base + EVENT_PATH,
             data=json.dumps(CARD).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "Origin": "http://localhost:5487"},
+            headers={"Content-Type": "application/json", "Origin": ALLOWED_ORIGIN},
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             acao = resp.headers.get("Access-Control-Allow-Origin")
-            if acao != "http://localhost:5487":
+            if acao != ALLOWED_ORIGIN:
                 fail(f"allowed origin not echoed, got {acao!r}")
-        ok("allowed origin http://localhost:5487 gets CORS header")
+        ok(f"allowed origin {ALLOWED_ORIGIN} gets CORS header")
 
         code, body = post(base, EVENT_PATH, json.dumps(CARD).encode(), origin="https://evil.example")
         if code != 403:
