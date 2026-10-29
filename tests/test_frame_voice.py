@@ -201,7 +201,8 @@ CASES = [
 def _measures(ltas):
     return {"f0_median_hz": 140.0, "phrase_range_st": 1.0, "syllable_rate": 4.0, "voiced_aperiodicity": 0.2,
             "ltas_db": ltas, "level_db": -20.0, "jitter": 0.02, "shimmer": 0.06, "jitter_carried": 0.005,
-            "shimmer_carried": 0.02, "hnr_db": 10.0, "cpp_db": 15.0}
+            "shimmer_carried": 0.02, "hnr_db": 10.0, "cpp_db": 15.0, "stitched_aperiodicity": 0.2,
+            "stitched_jitter_carried": 0.006, "stitched_shimmer_carried": 0.025}
 
 
 def _close(a, b, tol=1e-9):
