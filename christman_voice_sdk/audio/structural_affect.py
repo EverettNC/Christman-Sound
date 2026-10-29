@@ -40,7 +40,10 @@ WHAT THIS DOES
 Seven passes, in order. Each one can veto or reweight what the lexicon found:
 
   1. Multiword expressions   "can't complain" is not can't + complain
-  2. Clause segmentation     split on sentence enders and conjunctions
+  2. Clause segmentation     split on sentence enders, conjunctions, and —
+                             because the ear sends no punctuation — where a
+                             new subject starts: "i want to go home i'm
+                             scared" is two clauses, not one
   3. Discourse relation      "X but Y" -> Y is the resolution, X the concession
   4. Negation scope          "not scared" cancels; it does not invert
   5. Volition / modality     "want to be alone" is chosen, not suffered
@@ -79,7 +82,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # -----------------------------------------------------------------------------
 # Vocabulary
@@ -94,7 +97,7 @@ from typing import Any, Dict, List, Optional, Tuple
 LEXICON: Dict[str, float] = {
     # --- positive: connection, relief, joy, satisfaction
     "love": 0.95, "adore": 0.9, "grateful": 0.85, "thankful": 0.85,
-    "thank": 0.6, "thanks": 0.6, "happy": 0.85, "glad": 0.8, "joy": 0.9,
+    "happy": 0.85, "glad": 0.8, "joy": 0.9,
     "joyful": 0.9, "delighted": 0.9, "excited": 0.8, "thrilled": 0.9,
     "proud": 0.75, "relieved": 0.8, "calm": 0.6, "safe": 0.75, "peaceful": 0.7,
     "comfortable": 0.6, "content": 0.65, "beautiful": 0.7, "wonderful": 0.85,
@@ -126,6 +129,13 @@ REQUEST_WORDS = frozenset({"help", "need", "please", "urgent", "emergency"})
 #: Multiword expressions, checked BEFORE token scoring. Their meaning is not
 #: the sum of their parts, so compositional scoring gets them backwards.
 #: Everett's own examples are the first three.
+#: The weights are chosen starting values, not measurements, held until
+#: client data replaces them. Reasons, for the entries added in this review:
+#: "not safe" -0.7 and "not okay" -0.6 sit below "scared"/"afraid" (-0.8),
+#: "not okay" near "upset" (-0.65); "no one loves me" -0.85, "no one cares"
+#: -0.8 and "have no one" -0.75 sit with "scared" (-0.8), as isolation is
+#: as heavy as fear; the positive ones sit with "happy" (0.85). The older
+#: entries were here before with no reason written.
 IDIOMS: Dict[str, float] = {
     "can't complain": 0.5,        # means: I'm fine
     "cant complain": 0.5,
@@ -148,12 +158,66 @@ IDIOMS: Dict[str, float] = {
     "hanging in there": -0.2,
     "getting by": -0.15,
     "at a loss": -0.5,
+    # 2026-10-29, Everett: "Read the clause: who did what to whom." Measured
+    # before this: "Nobody cares, I'm alone" 0.0 and "No one loves me" 0.0 —
+    # "nobody" read as a negator and cancelled the caring word. Nobody caring
+    # is the speaker's isolation, not an absence of feeling.
+    "no one loves me": -0.85,
+    "no one cares": -0.8,
+    "have no one": -0.75,
+    # Inability over a good state reads as the lack of it (ABILITY_NEGATORS),
+    # so the idiom that means the opposite is listed.
+    "couldn't be happier": 0.9,
+    "couldnt be happier": 0.9,
+    "couldn't be better": 0.85,
+    "couldnt be better": 0.85,
+    # Plain negation cancels ("not happy" is not "sad"). These two do not:
+    # "I don't feel safe" and "I'm not okay" are reports of danger and
+    # distress, not the absence of a good state. Measured 2026-10-29 before:
+    # both read 0.0, no distress. The subject stays outside the match, so
+    # "she doesn't feel safe" is still hers.
+    "not safe": -0.7,
+    "not okay": -0.6,
 }
 
 #: Idiom match patterns that need more than word boundaries. "had enough TO
 #: EAT" is a meal, not distress (measured 2026-10-11: self_distress=True).
+_NOBODY = r"(?:nobody|no one|noone|no body)"
+_FEEL_NEG = (r"don't|dont|do\s+not|doesn't|doesnt|does\s+not|didn't|didnt|"
+             r"did\s+not|never|not|can't|cant|cannot")
+#: A person and a form of "be", kept OUTSIDE the match by lookbehind so the
+#: subject still decides whose state it is.
+_PERSON_BE = (r"(?:(?<=\bi am )|(?<=\bi'm )|(?<=\bim )|(?<=\bhe is )|(?<=\bhe's )"
+              r"|(?<=\bhes )|(?<=\bshe is )|(?<=\bshe's )|(?<=\bshes )"
+              r"|(?<=\bwe are )|(?<=\bwe're )|(?<=\bthey are )|(?<=\bthey're )"
+              r"|(?<=\btheyre )|(?<=\byou are )|(?<=\byou're )|(?<=\byoure ))")
 IDIOM_PATTERNS: Dict[str, str] = {
     "had enough": r"\bhad enough\b(?!\s+(?:to|food|money|time|sleep|rest)\b)",
+    # The object decides whose isolation it is: "nobody cares about HIM" is
+    # not the speaker's, so it is left to ordinary scoring.
+    "no one loves me": (
+        rf"\b{_NOBODY}\s+(?:even\s+|really\s+|ever\s+)?"
+        r"(?:loves|likes|wants|needs|believes|cares\s+about)\s+(?:me|us)\b"
+    ),
+    "no one cares": (
+        rf"\b{_NOBODY}\s+(?:even\s+|really\s+|ever\s+)?"
+        r"(?:cares|listens|understands|notices|helps)\b"
+        r"(?!\s+(?:about\s+)?(?:him|her|them|it|that|this|his|their)\b)"
+    ),
+    "have no one": rf"\b(?:have|got)\s+{_NOBODY}\b",
+    # Felt unsafety: "don't feel safe", "never feel safe", "not feeling
+    # safe". Or a person, not a thing, is not safe: "I'm not safe", "she is
+    # not safe". "that's not safe" (a warning about a thing) is left alone.
+    "not safe": (
+        rf"\b(?:{_FEEL_NEG})\s+(?:feel|feeling|felt)\s+(?:very\s+|really\s+|so\s+)?safe\b"
+        rf"|\b(?:{_FEEL_NEG})\s+(?:think|believe)\s+(?:i\s+am|i'm|im)\s+safe\b"
+        rf"|{_PERSON_BE}\s*not\s+(?:very\s+|really\s+)?safe\b"
+    ),
+    "not okay": (
+        rf"\b(?:{_FEEL_NEG})\s+(?:feel|feeling)\s+(?:okay|ok|alright|all right)\b(?!\s+with\b)"
+        rf"|\b(?:{_FEEL_NEG})\s+(?:think|believe)\s+(?:i\s+am|i'm|im)\s+(?:okay|ok|alright|all right)\b(?!\s+with\b)"
+        rf"|{_PERSON_BE}\s*not\s+(?:really\s+|very\s+)?(?:okay|ok|alright|all right)\b(?!\s+with\b)"
+    ),
 }
 
 #: Negators. Cancel the affect in their scope. They do NOT invert it —
@@ -164,6 +228,22 @@ NEGATORS = frozenset({
     "cannot", "without", "hardly", "barely", "scarcely", "don't", "dont",
     "doesn't", "doesnt", "didn't", "didnt", "isn't", "isnt", "aren't",
     "arent", "wasn't", "wasnt", "won't", "wont", "ain't", "aint",
+})
+
+#: Negators of ability. Plain negation cancels ("not happy" is not "sad"),
+#: but inability over a good state is the lack of it: "I can't be happy",
+#: "I can't feel safe". Measured 2026-10-29: "I can't be happy" read +0.85,
+#: because "can't" was not a negator at all. Affect only: harm_frame keeps
+#: its own NEGATORS, pinned to Everett's crisis table.
+ABILITY_NEGATORS = frozenset({
+    "can't", "cant", "cannot", "couldn't", "couldnt", "unable",
+})
+
+#: Every negator the affect reader honours.
+AFFECT_NEGATORS = NEGATORS | ABILITY_NEGATORS | frozenset({
+    "shouldn't", "shouldnt", "wouldn't", "wouldnt", "haven't", "havent",
+    "hasn't", "hasnt", "hadn't", "hadnt", "weren't", "werent",
+    "mustn't", "mustnt",
 })
 
 #: Ends a negation's reach. Without these, "I am not scared but I am alone"
@@ -204,9 +284,102 @@ THIRD_PERSON = frozenset({
     "story", "topic", "subject",
 })
 
+#: People. A possessive in front of one points at that person ("my mom's in
+#: pain"), and one as the subject makes the experience theirs.
+PERSON_NOUNS = frozenset({
+    "mom", "mommy", "mum", "mama", "mother", "dad", "daddy", "papa", "father",
+    "sister", "brother", "son", "daughter", "wife", "husband", "partner",
+    "boyfriend", "girlfriend", "friend", "friends", "baby", "kid", "kids",
+    "child", "children", "grandma", "grandpa", "grandmother", "grandfather",
+    "nana", "granny", "aunt", "uncle", "cousin", "niece", "nephew",
+    "neighbor", "teacher", "doctor", "nurse", "caregiver", "boss", "man",
+    "woman", "boy", "girl", "guy", "lady", "family", "parents", "anyone",
+    "anybody",
+})
+
+#: Who else can be the experiencer, for affect. "it" is NOT here: "it hurts"
+#: names no one, and on an AAC board it is the speaker's own hurt (Everett's
+#: subjectless ruling, 2026-10-11). Measured 2026-10-29: "It hurts" came back
+#: attribution=other, distress=False. harm_frame keeps THIRD_PERSON as is.
+OTHER_EXPERIENCER = (THIRD_PERSON - {"it", "its"}) | PERSON_NOUNS
+
+#: Someone else is not okay / not safe. Everett, 2026-10-29: "My mom is not
+#: okay: a carbon is saying another person is not okay." Measured before:
+#: "my mom is not okay" read "okay" negated, 0.0 — nobody was flagged. The
+#: person stays OUTSIDE the match (lookbehind) so the subject still decides
+#: whose state it is.
+_OTHER_SUBJECTS = sorted(PERSON_NOUNS | {"he", "she", "they", "we", "you"})
+_OTHER_BE = "|".join(rf"(?<=\b{re.escape(n)} )" for n in _OTHER_SUBJECTS)
+_OTHER_POSS = "|".join(rf"(?<=\b{re.escape(n)})" for n in sorted(PERSON_NOUNS))
+_BE_NOT = r"(?:is\s+not|isn't|isnt|are\s+not|aren't|arent)"
+# "not okay WITH it" is disagreement, not danger.
+for _name, _state in (("not okay", r"(?:okay|ok|alright|all right)\b(?!\s+with\b)"),
+                      ("not safe", r"safe")):
+    IDIOM_PATTERNS[_name] += (
+        rf"|(?:{_OTHER_BE}){_BE_NOT}\s+(?:really\s+|very\s+)?{_state}\b"
+        rf"|(?:{_OTHER_POSS})(?:'s|s)\s+not\s+(?:really\s+|very\s+)?{_state}\b"
+    )
+
+
+#: Subjects that name no one: "it hurts", "this is scary", "everything hurts".
+EXPLETIVE_SUBJECTS = frozenset({
+    "it", "this", "that", "everything", "something", "things", "all",
+})
+
+#: Possessives. "my MOM", "her BROTHER".
+POSSESSIVES = frozenset({"my", "our", "your", "his", "her", "their"})
+
+#: Courtesy. "thank you" is manners, not a feeling. Measured 2026-10-29:
+#: "thank you I'm scared" came back AMBIGUOUS ("thank" +0.6 against "scared"
+#: -0.8, no contrast marker) and the fear was withheld.
+COURTESY = frozenset({"thank", "thanks", "thankyou"})
+
 #: Past-tense / resolved markers.
 PAST_MARKERS = frozenset({"was", "were", "had", "used", "before", "earlier",
                           "yesterday", "ago", "then", "back"})
+
+#: Time words that put a clause in the past. Everett, 2026-10-29:
+#: "Yesterday means the past. Read the time word in the clause and do not
+#: report it as happening now." Measured before: "yesterday i was scared"
+#: came back self distress -0.8, the same as "i am scared".
+PAST_TIME_WORDS = frozenset({"yesterday", "ago", "earlier", "previously",
+                             "formerly"})
+PAST_TIME_PHRASES: Tuple[Tuple[str, ...], ...] = (
+    ("last", "night"), ("last", "week"), ("last", "month"), ("last", "year"),
+    ("last", "time"), ("last", "weekend"), ("back", "then"), ("used", "to"),
+    ("the", "other", "day"), ("when", "i", "was"),
+)
+#: A time word with one of these still reaches now: "since yesterday",
+#: "still scared from last night".
+ONGOING_MARKERS = frozenset({"since", "still", "ever", "anymore", "now",
+                             "today", "tonight"})
+
+
+#: A clause made only of these is a time phrase standing in front of the
+#: next clause: "a week ago | i was terrified".
+TIME_PHRASE_WORDS = frozenset({
+    "a", "an", "the", "one", "two", "three", "few", "couple", "of", "several",
+    "some", "hour", "hours", "day", "days", "week", "weeks", "month", "months",
+    "year", "years", "ago", "yesterday", "last", "night", "earlier", "back",
+    "then", "morning", "evening", "afternoon", "weekend", "time",
+})
+
+
+def past_time_word(tokens: Sequence[str]) -> Optional[str]:
+    """The time word that puts this clause in the past, or None."""
+    toks = list(tokens)
+    if set(toks) & ONGOING_MARKERS:
+        return None
+    for t in toks:
+        if t in PAST_TIME_WORDS:
+            return t
+    for phrase in PAST_TIME_PHRASES:
+        n = len(phrase)
+        for i in range(len(toks) - n + 1):
+            if tuple(toks[i:i + n]) == phrase:
+                return " ".join(phrase)
+    return None
+
 
 #: Present-resolution markers — "I'm fine NOW".
 RESOLUTION_MARKERS = frozenset({"now", "today", "currently", "anymore",
@@ -240,8 +413,173 @@ PROFANITY = frozenset({
     "freaking",
 })
 
-_CLAUSE_SPLIT = re.compile(r"[.!?;]+|,\s*(?=but|however|though|yet|so|and)\s*", re.I)
+# 2026-10-29: the lookahead had no word boundary, so ", soon" split as ", so".
+_CLAUSE_SPLIT = re.compile(
+    r"[.!?;]+|,\s*(?=(?:but|however|though|yet|so|and)\b)\s*", re.I
+)
 _WORD = re.compile(r"[a-z'_]+")
+
+# -----------------------------------------------------------------------------
+# Tokens. The ear's text has no punctuation and often no apostrophes, so the
+# reader cannot lean on either. Contractions are opened into subject + verb:
+# "she's scared" is "she is scared", and "she" is the subject. Measured
+# 2026-10-29, before this: "She's scared" read as the speaker's own fear
+# (no verb was found, so the clause fell to the subjectless ruling), and
+# "My mom's in pain" read as the speaker's own pain.
+# -----------------------------------------------------------------------------
+
+_CONTRACTIONS: Dict[str, Tuple[str, ...]] = {
+    "i'm": ("i", "am"), "im": ("i", "am"), "i've": ("i", "have"),
+    "ive": ("i", "have"), "i'll": ("i", "will"), "i'd": ("i", "would"),
+    "you're": ("you", "are"), "youre": ("you", "are"),
+    "you've": ("you", "have"),
+    "he's": ("he", "is"), "hes": ("he", "is"),
+    "she's": ("she", "is"), "shes": ("she", "is"),
+    "it's": ("it", "is"), "that's": ("that", "is"), "thats": ("that", "is"),
+    "there's": ("there", "is"), "theres": ("there", "is"),
+    "what's": ("what", "is"), "whats": ("what", "is"), "who's": ("who", "is"),
+    "we're": ("we", "are"), "they're": ("they", "are"),
+    "theyre": ("they", "are"), "we've": ("we", "have"),
+    "they've": ("they", "have"), "he'll": ("he", "will"),
+    "she'll": ("she", "will"), "we'll": ("we", "will"),
+    "they'll": ("they", "will"), "he'd": ("he", "would"),
+    "she'd": ("she", "would"), "we'd": ("we", "would"),
+    "they'd": ("they", "would"),
+}
+
+#: Words that can open a predicate. After "mom's", one of these means "mom
+#: is" ("my mom's in pain"); anything else means a possessive ("my mom's car").
+_PREDICATE_START = frozenset({
+    "in", "not", "so", "very", "really", "too", "always", "never", "still",
+    "been", "being", "going", "gonna", "a", "an", "just", "also", "sick",
+    "ill", "gone", "here", "there", "home", "crying", "mad", "back", "out",
+    "at", "on", "with", "over", "under", "falling",
+})
+
+
+def _opens_predicate(tok: str) -> bool:
+    return bool(tok) and (
+        tok in _PREDICATE_START or tok in LEXICON or tok in INTENSIFIERS
+        or tok in DOWNTONERS or tok in AFFECT_NEGATORS
+        or tok.startswith("__idiom_") or tok.endswith("ing")
+    )
+
+
+def tokenize(text: str) -> List[str]:
+    """
+    Lowercase word tokens with contractions opened.
+
+    "i'm" -> "i", "am"; "she's" -> "she", "is"; "mom's in" -> "mom", "is",
+    "in"; "mom's car" -> "mom", "car". Negator contractions ("can't",
+    "don't") stay whole: they are negators, not subject + verb.
+
+    These are the reader's working tokens, not the person's words.
+    """
+    return [t for t, _ in _tokenize_with_start(text)]
+
+
+def _same_length_lower(text: str) -> str:
+    """Lower case, one character for one, so positions still point at the input."""
+    return "".join(
+        c.lower() if len(c.lower()) == 1 else c
+        for c in normalize_apostrophes(text or "")
+    )
+
+
+def _tokenize_with_start(text: str) -> List[Tuple[str, int]]:
+    """`tokenize`, with where in `text` the word each token came from starts."""
+    raw = list(_WORD.finditer(_same_length_lower(text)))
+    out: List[Tuple[str, int]] = []
+    for i, m in enumerate(raw):
+        tok, at = m.group(0).strip("'"), m.start()
+        if not tok:
+            continue
+        if tok in _CONTRACTIONS:
+            out.extend((t, at) for t in _CONTRACTIONS[tok])
+            continue
+        nxt = raw[i + 1].group(0).strip("'") if i + 1 < len(raw) else ""
+        if tok.endswith("'s") and len(tok) > 2 and not tok.startswith("__"):
+            out.append((tok[:-2], at))
+            if _opens_predicate(nxt):
+                out.append(("is", at))
+            continue
+        if (tok.endswith("s") and tok not in PERSON_NOUNS
+                and tok[:-1] in PERSON_NOUNS and _opens_predicate(nxt)):
+            # The ear drops apostrophes: "my moms in pain" is "my mom's in
+            # pain". Only before a predicate, so "my moms car" stays a
+            # possessive.
+            out.extend(((tok[:-1], at), ("is", at)))
+            continue
+        out.append((tok, at))
+    return out
+
+
+#: Opened from a contraction, or added after "mom's"; not always a word of
+#: its own in what was said, so it is not used to place a clause.
+_ADDED_TOKENS = frozenset({"is", "am", "are"})
+
+
+def place_said(text: str, clauses: List["Clause"],
+               surface: Optional[Dict[str, str]] = None) -> List["Clause"]:
+    """
+    Give each clause the person's own words for it.
+
+    Each clause is found in the input by its tokens, in order, and runs to
+    where the next one starts. Nothing is dropped between clauses ("and",
+    commas, spaces stay with the clause before), so the pieces join back to
+    exactly `text`. A clause that cannot be found carries the whole input.
+    """
+    from dataclasses import replace
+
+    surface = surface or {}
+    words = [(t, at) for t, at in _tokenize_with_start(text)
+             if t not in _ADDED_TOKENS]
+    starts: List[Optional[int]] = []
+    pointer = 0
+    for clause in clauses:
+        want: List[str] = []
+        for tok in clause.tokens:
+            want.extend(tokenize(surface[tok]) if tok in surface else [tok])
+        want = [t for t in want if t not in _ADDED_TOKENS]
+        found: Optional[int] = None
+        for size in (len(want), 1):
+            if not want or size == 0:
+                break
+            for j in range(pointer, len(words) - size + 1):
+                if [w for w, _ in words[j:j + size]] == want[:size]:
+                    found = j
+                    break
+            if found is not None:
+                break
+        if found is None:
+            starts.append(None)
+            continue
+        starts.append(words[found][1])
+        pointer = found + 1
+
+    if starts:
+        starts[0] = 0
+    known = [s for s in starts if s is not None]
+    if known != sorted(set(known)):
+        # Out of order or repeated: cannot cut safely. Every clause gets the
+        # whole input, marked unplaced.
+        return [replace(c, said=text, said_placed=False) for c in clauses]
+
+    out: List[Clause] = []
+    for k, clause in enumerate(clauses):
+        if starts[k] is None:
+            out.append(replace(clause, said=text, said_placed=False))
+            continue
+        end = next((s for s in starts[k + 1:] if s is not None), len(text))
+        out.append(replace(clause, said=text[starts[k]:end]))
+    return out
+
+
+def is_person(tok: str) -> bool:
+    """A word that names someone other than the speaker, plurals included."""
+    return tok in OTHER_EXPERIENCER or (
+        tok.endswith("s") and tok[:-1] in PERSON_NOUNS
+    )
 
 #: Curly and typographic apostrophes, as phones and AAC boards emit them.
 #: Everett, 2026-10-11: "I don’t want to be here anymore" (U+2019) must read
@@ -333,10 +671,16 @@ class AffectHit:
     attribution: Attribution = Attribution.UNKNOWN
     modifier: float = 1.0
     note: str = ""
+    #: "now", or "past" when a time word in the clause puts it there.
+    when: str = "now"
+    #: The time word that did it ("yesterday", "last night"), or "".
+    time_word: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "term": self.term,
+            "when": self.when,
+            "time_word": self.time_word,
             "base_weight": round(self.base_weight, 3),
             "final_weight": round(self.final_weight, 3),
             "clause": self.clause_index,
@@ -351,11 +695,24 @@ class AffectHit:
 
 @dataclass(frozen=True)
 class Clause:
+    """
+    One clause. `text` and `tokens` are the reader's working form (lower
+    case, contractions opened). They are NOT the person's words and are never
+    passed on as them. `said` is the person's words for this clause, cut from
+    what they said with every letter kept: the clauses' `said` joined back
+    together is exactly the input. Everett, 2026-10-29: "We never change the
+    truth, ever."
+    """
+
     index: int
     text: str
     tokens: List[str]
     is_resolution: bool = False
     attribution: Attribution = Attribution.UNKNOWN
+    said: str = ""
+    #: False when the clause could not be placed in the words; `said` is
+    #: then the whole input, unchanged, rather than a guess at a piece of it.
+    said_placed: bool = True
 
 
 @dataclass(frozen=True)
@@ -429,14 +786,26 @@ class StructuralAffectAnalyzer:
 
     #: A conceded clause ("I'm overwhelmed BUT...") keeps this share of weight.
     #: Not zero — the person did say it. It is just not where they landed.
+    #: Chosen starting value, held until client data replaces it. Reason:
+    #: about a third, so the landed-on clause always outweighs it.
     CONCESSION_WEIGHT = 0.35
 
     #: Past-tense affect with a present resolution keeps this share.
+    #: Chosen starting value, held until client data replaces it. Reason:
+    #: the person said it got better; a fifth keeps it on record, not now.
     PAST_RESOLVED_WEIGHT = 0.2
 
     #: Affect attributed to someone else keeps this share for the speaker's own
     #: reading. Empathy is real; it is not the same as the speaker's distress.
+    #: Chosen starting value, held until client data replaces it. Reason:
+    #: a quarter, so "my mom is scared" never reads as the speaker's own fear.
+    #: Someone else at risk is paged by the gate, not by this weight.
     OTHER_ATTRIBUTION_WEIGHT = 0.25
+
+    #: "can't" over a good state keeps this share, as the lack of it.
+    #: Chosen starting value, held until client data replaces it. Reason:
+    #: "I can't be happy" is a lack, weaker than saying "I am sad"; half.
+    INABILITY_WEIGHT = 0.5
 
     def analyze(
         self, text: str, prosody: Optional[ProsodyFeatures] = None
@@ -477,12 +846,18 @@ class StructuralAffectAnalyzer:
         # Every one of those is somebody else's state, a negation, or a
         # resolved past — and every one passed the single gate for a care
         # response.
-        idiom_scores, idioms_found, masked, idiom_map = self._match_idioms(lowered)
+        idiom_scores, idioms_found, masked, idiom_map, surface = self._match_idioms(lowered)
         if idioms_found:
             notes.append(f"idioms matched: {idioms_found}")
 
-        # PASS 2 — clauses.
-        clauses = self._segment(masked)
+        # PASS 2 — clauses. The placeholder stays in the tokens; the clause
+        # text shows the words the person said.
+        clauses = [
+            Clause(c.index,
+                   " ".join(surface.get(t, t) for t in c.tokens),
+                   c.tokens)
+            for c in self._segment(masked)
+        ]
 
         # PASS 3 — contrast: which clause is the resolution.
         clauses = self._mark_resolution(clauses, masked)
@@ -493,6 +868,9 @@ class StructuralAffectAnalyzer:
                    self._attribute(c.tokens))
             for c in clauses
         ]
+
+        # The person's own words for each clause, every letter kept.
+        clauses = place_said(text or "", clauses, surface)
 
         # PASSES 4, 5, 7 — score each clause with negation, volition, tense.
         hits: List[AffectHit] = []
@@ -520,7 +898,8 @@ class StructuralAffectAnalyzer:
 
     def _match_idioms(
         self, lowered: str
-    ) -> Tuple[List[Tuple[float, str]], List[str], str, Dict[str, Tuple[str, float]]]:
+    ) -> Tuple[List[Tuple[float, str]], List[str], str,
+               Dict[str, Tuple[str, float]], Dict[str, str]]:
         """
         Find multiword expressions and replace each with one placeholder token.
 
@@ -529,35 +908,42 @@ class StructuralAffectAnalyzer:
         meaning competes with its own parts. The placeholder stays IN the
         clause so negation, tense, contrast and attribution still see it.
 
-        Returns (scores, names, rewritten_text, token -> (phrase, weight)).
+        Returns (scores, names, rewritten_text, token -> (phrase, weight),
+        token -> the words the person actually said, for the clause text).
         """
         found: List[Tuple[float, str]] = []
         names: List[str] = []
         idiom_map: Dict[str, Tuple[str, float]] = {}
+        surface: Dict[str, str] = {}
         masked = lowered
         # Longest first, so "can't stop laughing" wins over "can't stop".
         for n, phrase in enumerate(sorted(IDIOMS, key=len, reverse=True)):
             pattern = IDIOM_PATTERNS.get(phrase) or rf"\b{re.escape(phrase)}\b"
-            if not re.search(pattern, masked):
+            first = re.search(pattern, masked)
+            if not first:
                 continue
             token = self._idiom_token(n)
             idiom_map[token] = (phrase, IDIOMS[phrase])
+            surface[token] = " ".join(first.group(0).split())
             found.append((IDIOMS[phrase], phrase))
             names.append(phrase)
             masked = re.sub(pattern, f" {token} ", masked)
-        return found, names, masked, idiom_map
+        return found, names, masked, idiom_map, surface
 
     # -- Pass 2 ---------------------------------------------------------------
 
     @staticmethod
     def _segment(text: str) -> List[Clause]:
-        """Split into clauses on sentence enders and pre-conjunction commas."""
+        """
+        Split into clauses: sentence enders, pre-conjunction commas, contrast
+        markers, coordinated clauses, and — for the ear's unpunctuated text —
+        the start of a new subject.
+        """
         parts = [p.strip() for p in _CLAUSE_SPLIT.split(text) if p and p.strip()]
         if not parts:
             parts = [text]
 
-        clauses: List[Clause] = []
-        idx = 0
+        segments: List[str] = []
         for part in parts:
             # Split again on a leading/internal contrast marker so "I am
             # overwhelmed but I am glad" becomes two clauses.
@@ -566,21 +952,114 @@ class StructuralAffectAnalyzer:
             for piece in sub:
                 if piece.lower() in CONTRAST_MARKERS:
                     if buf.strip():
-                        for seg in StructuralAffectAnalyzer._split_coordinated(buf):
-                            clauses.append(
-                                Clause(idx, seg.strip(), _WORD.findall(seg.lower()))
-                            )
-                            idx += 1
+                        segments.extend(StructuralAffectAnalyzer._split_coordinated(buf))
                     buf = piece + " "
                 else:
                     buf += piece
             if buf.strip():
-                for seg in StructuralAffectAnalyzer._split_coordinated(buf):
-                    clauses.append(
-                        Clause(idx, seg.strip(), _WORD.findall(seg.lower()))
-                    )
-                    idx += 1
+                segments.extend(StructuralAffectAnalyzer._split_coordinated(buf))
+
+        clauses: List[Clause] = []
+        for seg in segments:
+            for toks in StructuralAffectAnalyzer._split_at_subjects(tokenize(seg)):
+                clauses.append(Clause(len(clauses), " ".join(toks), toks))
         return clauses
+
+    #: Pronouns that only ever stand as a subject. A new one starts a clause.
+    _SUBJECT_STARTS = frozenset({"i", "he", "she", "we", "they"})
+
+    #: After one of these, a subject pronoun is inside a question ("am I
+    #: scared"), a condition ("if I"), or a complement ("that I"), and does
+    #: not start a clause of its own.
+    _BOUND_BEFORE = frozenset({
+        "am", "is", "are", "was", "were", "do", "does", "did", "can", "could",
+        "will", "would", "should", "shall", "may", "might", "must", "have",
+        "has", "had", "don't", "dont", "doesn't", "doesnt", "didn't", "didnt",
+        "can't", "cant", "won't", "wont", "that", "if", "whether", "than",
+        "as", "what", "how", "why", "where", "who", "when",
+    })
+
+    #: Words that may lead a clause without being one ("now I'm terrified",
+    #: "but I'm fine"). A buffer made only of these is not split from what
+    #: follows.
+    _LEAD_INS = (SCOPE_BREAKERS | CONTRAST_MARKERS | RESOLUTION_MARKERS
+                 | PAST_MARKERS | frozenset({"well", "because", "cause", "cuz", "when",
+                              "after", "before", "until", "like", "just",
+                              "even", "also", "maybe", "really"}))
+
+    #: Verbs that let a person noun or "it" start a clause.
+    _CLAUSE_VERBS = frozenset({
+        "is", "am", "are", "was", "were", "will", "would", "can", "could",
+        "can't", "cant", "has", "have", "had", "feels", "felt", "hurts",
+        "hurt", "wants", "needs", "says", "said", "loves", "hates", "left",
+        "died", "does", "doesn't", "doesnt", "did", "didn't", "didnt",
+    })
+
+    _NEG_RAISING = frozenset({
+        "think", "believe", "guess", "suppose", "reckon", "expect", "feel",
+    })
+
+    _SEEM_VERBS = frozenset({
+        "feel", "feels", "felt", "feeling", "look", "looks", "looked",
+        "seem", "seems", "seemed", "sound", "sounds", "sounded", "just",
+    })
+
+    @staticmethod
+    def _starts_clause(tokens: List[str], i: int) -> bool:
+        tok = tokens[i]
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+        nxt2 = tokens[i + 2] if i + 2 < len(tokens) else ""
+        prev = tokens[i - 1] if i > 0 else ""
+        cls = StructuralAffectAnalyzer
+        if tok in cls._SUBJECT_STARTS:
+            return True
+        if tok == "you" and nxt in {"are", "were", "have", "will", "would"}:
+            return True
+        if tok in EXPLETIVE_SUBJECTS and nxt in cls._CLAUSE_VERBS:
+            return True
+        if tok in POSSESSIVES and nxt in OTHER_EXPERIENCER and nxt2 in cls._CLAUSE_VERBS:
+            return True
+        if (tok in PERSON_NOUNS and nxt in cls._CLAUSE_VERBS
+                and prev not in POSSESSIVES and prev not in {"the", "a", "an"}):
+            return True
+        return False
+
+    @staticmethod
+    def _bound_to_previous(tokens: List[str], i: int) -> bool:
+        prev = tokens[i - 1]
+        cls = StructuralAffectAnalyzer
+        if prev in cls._BOUND_BEFORE or prev in cls._NEG_RAISING:
+            return True
+        # "glad I'm alone" and "feel like I'm alone" are each one thought.
+        # Whether "like" chooses anything is decided in _volitional, not here.
+        return prev in VOLITION_MARKERS
+
+    @staticmethod
+    def _split_at_subjects(tokens: List[str]) -> List[List[str]]:
+        """
+        Split a run of words where a new subject starts.
+
+        Everett, 2026-10-29: "A word means nothing without what comes before
+        it and what comes after it. Read the clause: who did what to whom."
+        The ear sends "i want to go home i'm scared" with no punctuation.
+        Read as one clause, "want" governed "scared" five words later and
+        cancelled it as chosen — measured valence 0.0. A new subject is a new
+        clause: "i want to go home" | "i am scared".
+        """
+        out: List[List[str]] = []
+        buf: List[str] = []
+        cls = StructuralAffectAnalyzer
+        for i, tok in enumerate(tokens):
+            if (buf
+                    and cls._starts_clause(tokens, i)
+                    and not cls._bound_to_previous(tokens, i)
+                    and not all(t in cls._LEAD_INS for t in buf)):
+                out.append(buf)
+                buf = []
+            buf.append(tok)
+        if buf:
+            out.append(buf)
+        return out
 
     @staticmethod
     def _split_coordinated(text: str) -> List[str]:
@@ -597,21 +1076,26 @@ class StructuralAffectAnalyzer:
         make it impersonal and drop it too. So a coordinator only breaks a
         clause when the segment after it looks like an independent clause.
         """
-        pieces = re.split(r"\b(?:and|so)\b", text)
+        pieces = re.split(r"\b(and|so)\b", text)
         if len(pieces) == 1:
             return [text]
 
         out: List[str] = [pieces[0]]
-        for piece in pieces[1:]:
-            toks = _WORD.findall(piece.lower())
+        for k in range(1, len(pieces), 2):
+            coord, piece = pieces[k], pieces[k + 1]
+            toks = tokenize(piece)
             has_subject = bool(
-                set(toks) & (FIRST_PERSON | THIRD_PERSON)
+                set(toks) & (FIRST_PERSON | OTHER_EXPERIENCER | EXPLETIVE_SUBJECTS)
             )
-            has_verb = bool(set(toks) & StructuralAffectAnalyzer._COPULA)
+            has_verb = bool(set(toks) & StructuralAffectAnalyzer._CLAUSE_VERBS)
             if has_subject and has_verb:
                 out.append(piece)          # independent clause — stands alone
             else:
-                out[-1] = out[-1] + " and " + piece   # continuation — keep joined
+                # Continuation — keep joined, with the word that was there.
+                # 2026-10-29: this used to rejoin with " and " whatever the
+                # word was, so "I'm so scared" became "I'm and scared" and
+                # the intensifier was lost.
+                out[-1] = out[-1] + f" {coord} " + piece
         return [seg for seg in out if seg.strip()]
 
     # -- Pass 3 ---------------------------------------------------------------
@@ -670,6 +1154,11 @@ class StructuralAffectAnalyzer:
         verb. Named rather than left to be discovered.
         """
         subject = StructuralAffectAnalyzer._subject_region(tokens)
+        if subject and set(subject) <= {"why", "what", "how", "when", "where"}:
+            # A question puts the subject after the verb: "why am I so sad".
+            # Measured 2026-10-29: read impersonal, cancelled to 0.0.
+            k = len(subject)
+            subject = tokens[k + 1:k + 2]
         elliptical = not subject
         if elliptical:
             subject = tokens
@@ -678,9 +1167,9 @@ class StructuralAffectAnalyzer:
 
         # A possessive with a person noun points at that person.
         for i, tok in enumerate(subject):
-            if tok in {"my", "our", "your", "his", "her", "their"}:
+            if tok in POSSESSIVES:
                 nxt = subject[i + 1] if i + 1 < len(subject) else ""
-                if nxt in THIRD_PERSON:
+                if is_person(nxt):
                     return Attribution.OTHER
 
         # A bare first-person subject is the speaker.
@@ -688,10 +1177,19 @@ class StructuralAffectAnalyzer:
         if bare_first:
             return Attribution.SELF
 
-        if subj & THIRD_PERSON:
+        if any(is_person(t) for t in subj):
             return Attribution.OTHER
 
         if subj & FIRST_PERSON:
+            return Attribution.SELF
+
+        # A subject that names no one — "it is scary", "this is too much",
+        # "everything hurts". Whose experience it is comes from the rest of
+        # the clause: "it is hard for HER" is hers; otherwise it is the
+        # speaker's, by the same ruling as a subjectless utterance.
+        if not elliptical and subj <= (EXPLETIVE_SUBJECTS | {"the", "of", "about"}):
+            if any(is_person(t) for t in tokens[len(subject):]):
+                return Attribution.OTHER
             return Attribution.SELF
 
         if elliptical:
@@ -742,10 +1240,27 @@ class StructuralAffectAnalyzer:
         idiom_map = idiom_map or {}
 
         has_past = bool(set(tokens) & PAST_MARKERS)
-        resolved_later = any(
-            set(c.tokens) & RESOLUTION_MARKERS and c.index > clause.index
-            for c in all_clauses
-        ) or bool(set(tokens) & RESOLUTION_MARKERS)
+        time_word = past_time_word(tokens)
+        if not time_word and not set(tokens) & ONGOING_MARKERS:
+            # "a week ago i was terrified" splits at the new subject; the
+            # time phrase in front still belongs to this clause.
+            before = next((c for c in all_clauses if c.index == clause.index - 1), None)
+            if before is not None and set(before.tokens) <= TIME_PHRASE_WORDS:
+                time_word = past_time_word(before.tokens)
+        # A later "now" resolves the past only when what it lands on is not
+        # itself distress. Measured 2026-10-29: "I was scared and now I'm
+        # terrified" read weak — "now" discounted the past fear to a fifth,
+        # though the speaker said it got worse. Was X, now worse X is
+        # escalation, not resolution.
+        later_now = [
+            c for c in all_clauses
+            if c.index > clause.index and set(c.tokens) & RESOLUTION_MARKERS
+        ]
+        escalated = any(self._raw_polarity(c.tokens, idiom_map) < 0 for c in later_now)
+        resolved_later = (
+            any(self._raw_polarity(c.tokens, idiom_map) >= 0 for c in later_now)
+            or bool(set(tokens) & RESOLUTION_MARKERS)
+        ) and not escalated
 
         for i, tok in enumerate(tokens):
             if tok in PROFANITY:
@@ -753,6 +1268,8 @@ class StructuralAffectAnalyzer:
                 continue
             if tok in REQUEST_WORDS:
                 requests.append(tok)
+                continue
+            if tok in COURTESY:
                 continue
             note_parts: List[str] = []
             if tok in idiom_map:
@@ -791,8 +1308,16 @@ class StructuralAffectAnalyzer:
             weight *= modifier
 
             # -- PASS 4: negation scope, backward, stopped by a scope breaker
-            negated = self._negated(tokens, i)
-            if negated:
+            negator = self._negator(tokens, i)
+            negated = negator is not None
+            if negated and negator in ABILITY_NEGATORS and base > 0:
+                # "I can't be happy": not neutral. The good state is out of
+                # reach, read at half its strength as the lack of it.
+                weight = -abs(weight) * self.INABILITY_WEIGHT
+                note_parts.append(
+                    f"'{negator}' over a good state — read as the lack of it"
+                )
+            elif negated:
                 # Cancel, do not invert. "not scared" is not "happy".
                 weight = 0.0
                 note_parts.append("negated — cancelled, not inverted")
@@ -808,6 +1333,13 @@ class StructuralAffectAnalyzer:
             if past and resolved_later and weight != 0.0:
                 weight *= self.PAST_RESOLVED_WEIGHT
                 note_parts.append("past tense with present resolution")
+            elif past and escalated and weight != 0.0:
+                note_parts.append("was, and now worse — escalation, not resolution")
+
+            # -- The time word. Kept on the hit; not counted as now.
+            if time_word and weight != 0.0:
+                weight = 0.0
+                note_parts.append(f"time word {time_word!r} — past, not now")
 
             # -- PASS 3 applied: concession carries less than resolution
             conceded = not clause.is_resolution
@@ -836,15 +1368,32 @@ class StructuralAffectAnalyzer:
                     attribution=clause.attribution,
                     modifier=modifier,
                     note="; ".join(note_parts),
+                    when="past" if time_word else "now",
+                    time_word=time_word or "",
                 )
             )
 
         return hits, requests, profanity
 
     @staticmethod
-    def _negated(tokens: List[str], index: int) -> bool:
+    def _so_intensifies(tokens: List[str], j: int) -> bool:
         """
-        Is the token at `index` inside a negation's scope?
+        Is the "so" at `j` a degree word ("so scared") rather than a
+        conjunction ("so I left")? Measured 2026-10-29: "I'm not so scared"
+        read as distress — "so" stopped the negation's reach as if it began
+        a new clause.
+        """
+        nxt = tokens[j + 1] if j + 1 < len(tokens) else ""
+        return bool(nxt) and (
+            nxt in LEXICON or nxt in INTENSIFIERS or nxt in DOWNTONERS
+            or nxt.startswith("__idiom_") or nxt in {"much", "many"}
+            or (nxt.endswith("s") and nxt[:-1] in LEXICON)
+        )
+
+    @staticmethod
+    def _negator(tokens: List[str], index: int) -> Optional[str]:
+        """
+        The negator whose scope holds the token at `index`, or None.
 
         Looks back up to 4 tokens, stopping at a scope breaker. Bounded because
         an unbounded search lets a negation at the start of a paragraph cancel
@@ -853,13 +1402,28 @@ class StructuralAffectAnalyzer:
         for back in range(1, 5):
             j = index - back
             if j < 0:
-                return False
+                return None
             tok = tokens[j]
-            if tok in NEGATORS:
-                return True
+            if tok in AFFECT_NEGATORS:
+                return tok
             if tok in SCOPE_BREAKERS:
-                return False
-        return False
+                if tok == "so" and StructuralAffectAnalyzer._so_intensifies(tokens, j):
+                    continue
+                return None
+            if tok in StructuralAffectAnalyzer._SUBJECT_STARTS:
+                # A subject between the negator and the word means the
+                # negator belongs to the clause above: "I'm NOT happy | I'm
+                # alone". Except after a neg-raising verb: "I DON'T think
+                # I'm scared" means not scared.
+                before = tokens[j - 1] if j > 0 else ""
+                if before not in StructuralAffectAnalyzer._NEG_RAISING:
+                    return None
+        return None
+
+    @staticmethod
+    def _negated(tokens: List[str], index: int) -> bool:
+        """Is the token at `index` inside a negation's scope?"""
+        return StructuralAffectAnalyzer._negator(tokens, index) is not None
 
     @staticmethod
     def _volitional(tokens: List[str], index: int) -> bool:
@@ -867,7 +1431,9 @@ class StructuralAffectAnalyzer:
         Is this affect word inside a chosen or evaluated frame?
 
         "I WANT to be alone" / "I'm GLAD to be alone" / "I LIKE being alone".
-        Looks back up to 5 tokens, stopping at a scope breaker.
+        Looks back up to 5 tokens, stopping at a scope breaker. A frame that is
+        itself negated chooses nothing: "I'm NOT happy I'm alone" is suffered.
+        "feel like" is not volition: "like" after a seeming verb means "as if".
         """
         for back in range(1, 6):
             j = index - back
@@ -875,10 +1441,31 @@ class StructuralAffectAnalyzer:
                 return False
             tok = tokens[j]
             if tok in VOLITION_MARKERS:
-                return True
-            if tok in SCOPE_BREAKERS or tok in NEGATORS:
+                if tok == "like" and j > 0 and tokens[j - 1] in StructuralAffectAnalyzer._SEEM_VERBS:
+                    continue
+                return not StructuralAffectAnalyzer._negated(tokens, j)
+            if tok in SCOPE_BREAKERS or tok in AFFECT_NEGATORS:
                 return False
         return False
+
+    def _raw_polarity(
+        self, tokens: List[str], idiom_map: Optional[Dict[str, Tuple[str, float]]]
+    ) -> float:
+        """Sum of un-negated lexicon weights in a clause. Used only to tell a
+        later "now" that resolves from one that escalates."""
+        idiom_map = idiom_map or {}
+        total = 0.0
+        for i, t in enumerate(tokens):
+            if t in idiom_map:
+                base: Optional[float] = idiom_map[t][1]
+            else:
+                base = LEXICON.get(t)
+                if base is None and t.endswith("s"):
+                    base = LEXICON.get(t[:-1])
+            if base is None or self._negated(tokens, i):
+                continue
+            total += base
+        return total
 
     # -- Combine --------------------------------------------------------------
 
@@ -1023,7 +1610,14 @@ __all__ = [
     "IDIOM_PATTERNS",
     "PROFANITY",
     "REQUEST_WORDS",
+    "COURTESY",
+    "PERSON_NOUNS",
+    "OTHER_EXPERIENCER",
+    "AFFECT_NEGATORS",
+    "ABILITY_NEGATORS",
     "normalize_apostrophes",
+    "tokenize",
+    "is_person",
 ]
 
 # ==============================================================================
