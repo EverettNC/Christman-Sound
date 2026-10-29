@@ -128,7 +128,7 @@ class FaceVector:
     reason: str
     notes: List[str] = field(default_factory=list)
     #: The clauses the reading came from, each with whose state it is.
-    #: 2026-10-29 (Everett: "who did what to whom"): the face is told which
+    #: 2026-10-29 (Everett: "who did what to whom"): the face is shown which
     #: clause moved it, so "my mom's in pain" never moves the speaker's face.
     #: Each carries `said`: the person's own words for that clause, exactly.
     clauses: Tuple[Dict[str, Any], ...] = ()

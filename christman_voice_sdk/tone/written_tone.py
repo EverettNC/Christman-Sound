@@ -51,7 +51,7 @@ class ToneCategory(Enum):
     INCISIVE = "incisive"        # firm, direct, on-target — keep as-is
     AGGRESSIVE = "aggressive"    # ad-hominem, inflammatory — flagged; the words are kept
     NEUTRAL = "neutral"          # neither sharp nor hot
-    PASSIVE = "passive"          # hedged / softened — flag if user wanted firm
+    PASSIVE = "passive"          # hedged / softened — flag if the client wanted firm
 
 
 # --- lexicons -------------------------------------------------------------
