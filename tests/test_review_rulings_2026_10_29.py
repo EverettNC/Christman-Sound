@@ -469,3 +469,30 @@ def test_8_a_clients_negator_correction_reaches_harm_frame_and_the_reader():
 def test_8_reading_words_must_be_reading_words():
     with pytest.raises(TypeError):
         harm_frame_safety("hello", {"reading_words": {"body_parts": ["tummy"]}})
+
+
+# -- "kill time" is an idiom, not harm; the idioms are shared reading words (AE) -----
+
+@pytest.mark.parametrize("text", ["I'm going to kill time", "I'm just killing time",
+                                  "I'm going to kill some time", "let's kill a little time"])
+def test_kill_time_is_an_idiom_and_pages_nothing(text):
+    turn, pager = _hear(text)
+    assert pager.calls == []
+
+
+@pytest.mark.parametrize("text", ["I'm gonna kill you", "he is going to kill mom",
+                                  "I'm gonna kill you, it's time"])
+def test_a_threat_still_pages_beside_the_idiom(text):
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1
+    assert "threat_to_life" in turn.decision.safety.flags
+
+
+def test_a_clients_layer_adds_its_own_idiom_not_harm():
+    from christman_voice_sdk.audio.structural_affect import SHARED_READING_WORDS
+    assert "kill time" in SHARED_READING_WORDS.idioms_not_harm
+    text = "he is going to beat the traffic"
+    assert harm_frame_safety(text).status == "hard_block"           # shared words: a threat
+    words = SHARED_READING_WORDS.for_client({"idioms_not_harm": {"add": ["beat traffic"]}})
+    assert harm_frame_safety(text, {"reading_words": words}).status != "hard_block"
+    assert harm_frame_safety("he is going to beat her", {"reading_words": words}).status == "hard_block"

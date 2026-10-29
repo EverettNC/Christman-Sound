@@ -359,14 +359,21 @@ class ReadingWords:
     #: client, "my arm hurts" is the client's own pain. A client's layer can
     #: add the words that client uses for their body.
     body_parts: frozenset = BODY_PARTS
+    #: Idioms where a harm word is not harm: "kill time" ("I'm going to kill
+    #: some time"). Written "<verb> <object>"; the crisis gate (harm_frame)
+    #: reads the verb in any form and the object after it, with up to two
+    #: words between ("kill a little time"), never past a person ("kill you,
+    #: it's time" is still read). A client's layer adds their own ("beat
+    #: traffic"). Starting set: the one idiom Everett's review named.
+    idioms_not_harm: frozenset = frozenset({"kill time"})
 
-    _FIELDS = ("negators", "scope_breakers", "body_parts")
+    _FIELDS = ("negators", "scope_breakers", "body_parts", "idioms_not_harm")
 
     def for_client(self, learned: Optional[Dict[str, Dict[str, Any]]] = None) -> "ReadingWords":
         """
         This set, extended or overridden by one client's learned words:
         {"negators": {"add": [...], "remove": [...]}, "scope_breakers": {...},
-        "body_parts": {...}}.
+        "body_parts": {...}, "idioms_not_harm": {...}}.
         None or {} returns the shared set unchanged. An unknown key raises:
         a misspelled layer must not be silently ignored.
         """

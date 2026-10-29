@@ -544,6 +544,30 @@ def _negators() -> frozenset:
     return (NEGATORS | added) - removed
 
 
+def _idiom_not_harm(tokens: List[str], index: int, stem: str) -> bool:
+    """
+    The harm word at `index` is part of an idiom that is not harm, read from
+    the reading words in force (ruling AE: the shared set, or one client's
+    layer over it). "kill time", "killing time", "kill some time". Walks at
+    most three words ahead and stops at a person, so "kill you, it's time"
+    is still read as a threat.
+    """
+    for phrase in current_words().idioms_not_harm:
+        words = phrase.lower().split()
+        if len(words) < 2 or _stem(words[0]) != stem:
+            continue
+        for ahead in range(1, 4):
+            k = index + ahead
+            if k >= len(tokens):
+                break
+            tok = tokens[k]
+            if tok == words[-1]:
+                return True
+            if tok in _OTHER_PATIENT or tok in _SELF_PATIENT or tok in FIRST_PERSON:
+                break
+    return False
+
+
 def _party(token: str) -> Tuple[Party, str]:
     t = token.lower().strip(".,!?;:")
     if t in _SELF_PATIENT or t in FIRST_PERSON:
@@ -763,6 +787,8 @@ def extract_frames(text: str) -> List[HarmFrame]:
         stem = _stem(tok)
         if stem is None:
             continue
+        if stem in HARM_PREDICATES and _idiom_not_harm(tokens, i, stem):
+            continue        # "kill time": an idiom, not harm (ruling AE words)
         if stem in HARM_PREDICATES:
             polarity, severity = Polarity.HARM, HARM_PREDICATES[stem]
         else:
