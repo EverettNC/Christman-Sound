@@ -122,7 +122,9 @@ def test_someone_else_at_risk_pages_when_asked_and_keeps_every_word():
     for text in ("she wants to die", "my mom is not okay"):
         assert eng.fuse(text).safety.status == "soft_redirect"
     assert paged == []
-    said = ["she wants to die can you get someone", "he is going to kill her call someone",
+    # "he is going to kill her call someone" was here; a threat against
+    # anyone now pages at once, silently (Everett, 2026-10-29).
+    said = ["she wants to die can you get someone", "he hurt her yesterday call someone",
             "my mom is not okay help her", "my moms not safe I need help"]
     for text in said:
         d = eng.fuse(text)

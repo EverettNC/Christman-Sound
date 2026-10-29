@@ -34,6 +34,14 @@ MUST_CALL = [
     "I don’t want to be here anymore",   # curly apostrophe (U+2019)
     "he is choking me",
     "he is hitting me",
+    # Everett, 2026-10-29: a threat of harm against anyone is an absolute
+    # threat; harm happening now to anyone pages.
+    "he is going to kill her",
+    "he is going to kill mom",
+    "she's going to hurt my sister",
+    "he's about to stab him",
+    "he is hurting her",
+    "she's choking",
     "he is strangling me",
     "he is beating me",
     "I wish I was dead",
@@ -98,7 +106,9 @@ MUST_NOT_CALL = [
     # assistance, because we don't want to step in the middle of a situation
     # where we don't belong." Recorded and flagged for the being to follow up.
     "she wants to die",
-    "he is going to kill her",
+    "mom wants to die",
+    "he killed my dog last year",
+    "he hurt my mom yesterday",
     "my mom is not okay",
     "my moms not okay",
     "my mom's not safe",

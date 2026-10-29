@@ -124,7 +124,9 @@ def test_2_wont_stop_is_harm_now_not_harm_denied(text):
 def test_2_a_threat_still_pages_at_once(text):
     turn, pager = _hear(text)
     assert len(pager.calls) == 1
-    assert turn.decision.safety.reason == "harm_frame_speaker_at_risk"
+    assert turn.decision.safety.reason == "harm_threat_to_client"
+    assert turn.decision.safety.silent_alarm is True
+    assert {"threat_to_life", "emergency"} <= set(turn.decision.safety.flags)
 
 
 @pytest.mark.parametrize("text", ["he didn't hurt me", "I hit me"])
@@ -135,7 +137,7 @@ def test_2_a_negated_or_own_verb_plus_me_is_not_moved(text):
 
 # -- 3. ruling F: two beings talking page nothing --------------------------------------
 
-@pytest.mark.parametrize("text", ["I want to kill myself", "he is hurting me", "he is choking me",
+@pytest.mark.parametrize("text", ["I want to kill myself", "he choked me", "he hurt her yesterday",
                                   "I'm not okay", "I'm scared for my safety", "help me",
                                   "my mom's not okay can you get someone",
                                   "I used to want to kill myself"])
@@ -267,3 +269,86 @@ def test_9_presence_guide_has_no_person_list_and_asks_who():
         assert a.to_dict()["follow_up"] == H.ASK_WHO
     assert pg.PresenceGuide().assess("I feel lost").state is pg.HumanState.CONFUSED
     assert pg.PresenceGuide().assess("she passed away").state is pg.HumanState.GRIEVING
+
+
+# -- 3, refined (Everett, 2026-10-29): two beings talking about something
+#    happening now or about to happen still page ----------------------------------
+
+@pytest.mark.parametrize("text,reason", [
+    ("he is hurting her", "harm_now_to_other"), ("she's choking", "harm_now_to_other"),
+    ("he is choking me", "harm_now_to_client"), ("he is going to kill mom", "harm_threat_to_other"),
+])
+def test_3_between_beings_harm_now_or_imminent_still_pages(text, reason):
+    turn, pager = _hear(text, between_beings=True)
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == reason
+    assert turn.decision.safety.silent_alarm is True
+
+
+# -- a. no person list; a threat against anyone is an absolute threat ---------------
+
+THREATS = ["he is going to kill mom", "she's going to hurt my sister", "he'll kill her",
+           "he's about to stab him", "they're going to shoot us", "he is going to kill whoever",
+           "he is going to kill the dog", "I'm going to kill him"]
+
+
+@pytest.mark.parametrize("text", THREATS)
+def test_a_a_threat_against_anyone_pages_at_once_silently(text):
+    turn, pager = _hear(text)
+    s = turn.decision.safety
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == text
+    assert s.reason in ("harm_threat_to_other", "harm_threat_to_client")
+    assert {"threat_to_life", "emergency"} <= set(s.flags)
+    assert s.silent_alarm is True and s.voice_aloud is False
+    assert s.hold_marker == "" and s.follow_up == ""       # the being does the follow-up
+
+
+@pytest.mark.parametrize("text", ["he is hurting her", "he is hurting mom", "she's choking"])
+def test_a_harm_happening_now_to_anyone_pages_at_once(text):
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == "harm_now_to_other"
+    assert "emergency" in turn.decision.safety.flags
+
+
+@pytest.mark.parametrize("text", ["he killed my dog last year", "he hurt my mom yesterday",
+                                  "he was hitting her"])
+def test_a_past_harm_to_someone_else_is_ruling_d(text):
+    turn, pager = _hear(text)
+    s = turn.decision.safety
+    assert pager.calls == []
+    assert s.reason == "harm_frame_third_party_at_risk" and s.follow_up == H.ASK_IF_HELP_NEEDED
+    turn, pager = _hear(text + ", can you get someone")
+    assert len(pager.calls) == 1
+
+
+@pytest.mark.parametrize("text", ["mom wants to die", "the patient wants to die", "mom is suicidal"])
+def test_a_a_subject_the_grammar_cannot_place_is_not_the_clients_risk(text):
+    turn, pager = _hear(text)
+    s = turn.decision.safety
+    assert pager.calls == []
+    assert s.reason == "harm_frame_subject_unclear" and s.follow_up == H.ASK_WHO
+    turn, pager = _hear(text + ", can you get someone")
+    assert len(pager.calls) == 1
+
+
+@pytest.mark.parametrize("text", ["I want to die", "I am suicidal", "want to die"])
+def test_a_the_clients_own_words_are_still_the_clients(text):
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == "harm_frame_speaker_at_risk"
+
+
+@pytest.mark.parametrize("text", ["I want to kill the movie", "I'm going to kill it at the meeting",
+                                  "I'm going to kill this book report", "he hurt my feelings",
+                                  "the hitting stopped years ago"])
+def test_a_no_target_by_grammar_no_threat(text):
+    turn, pager = _hear(text)
+    assert pager.calls == []
+
+
+def test_a_no_person_list_in_the_package():
+    from christman_voice_sdk.audio import harm_frame as HF
+    assert not hasattr(HF, "CRISIS_GATE_THIRD_PARTY_WORDS")
+    assert not ({"mom", "dad", "mother", "father", "sister", "brother", "friend", "patient"}
+                & HF._OTHER_PATIENT)

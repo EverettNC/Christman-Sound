@@ -361,29 +361,39 @@ def _stem(tok: str) -> Optional[str]:
 
 _SELF_PATIENT = frozenset({"me", "myself", "my", "mine", "us", "ourselves", "our"})
 
-#: HELD FOR EVERETT (2026-10-29 review, ruling AA). The crisis gate read its
-#: third parties off structural_affect.THIRD_PERSON. Ruling AA removed that
-#: fixed person list from the affect reader. Taking the same words out of the
-#: crisis gate changes who gets paged, measured on this branch before this
-#: copy was put back:
-#:   "mom wants to die", "the patient wants to die"  -> paged as the CLIENT's
-#:       own risk (subject no longer known to be someone else)
-#:   "he is going to kill mom", "she hit mom", "he is hurting mom"
-#:       -> no longer seen at all (was: someone else at risk, followed up,
-#:       and paged when the client asks for help)
-#: Who the gate pages is Everett's to decide, so the gate keeps exactly the
-#: words it had, here, by name, until he rules. Nothing else in the package
-#: reads this set.
-CRISIS_GATE_THIRD_PARTY_WORDS = frozenset({
+#: Everett's ruling (2026-10-29): the package carries no person list. The
+#: held copy of the old person words (mother, dad, friend, patient, movie
+#: ...) that was kept here for him is removed. Who a word names is found by
+#: grammar: the personal and indefinite pronouns below, a first-person
+#: possessive with its noun ("my sister"), and a bare noun with no article
+#: right after a harm verb ("kill mom", "hurt Sarah"). Reading "mom wants to
+#: die" correctly is the being's job, with context and its own client's
+#: people; here a subject the grammar cannot place gets the ask-who mark.
+_OTHER_PATIENT = frozenset({
     "he", "she", "they", "him", "her", "them", "his", "their", "theirs",
-    "it", "its", "someone", "somebody", "everyone", "nobody", "people",
-    "mother", "father", "mom", "dad", "sister", "brother", "friend",
-    "patient", "character", "author", "article", "film", "movie", "book",
-    "story", "topic", "subject",
+    "himself", "herself", "themselves", "yourself", "you",
+    "someone", "somebody", "everyone", "everybody", "nobody", "anyone",
+    "anybody", "whoever",
 })
-_OTHER_PATIENT = CRISIS_GATE_THIRD_PARTY_WORDS | {"him", "her", "them", "himself",
-                                                  "herself", "themselves", "yourself",
-                                                  "you"}
+#: A word after a verb that is not its object: articles and determiners make
+#: the object a thing ("kill THE process"); prepositions, particles and time
+#: words are not an object at all. Grammar words, not people.
+_NOT_A_BARE_OBJECT = frozenset({
+    "the", "a", "an", "this", "that", "these", "those", "some", "any", "every",
+    "each", "no", "all", "both", "either", "neither", "one", "it", "its",
+    "at", "in", "on", "for", "with", "to", "from", "by", "of", "about", "into",
+    "onto", "over", "under", "up", "down", "off", "out", "back", "away",
+    "again", "now", "then", "so", "too", "very", "really", "badly", "bad",
+    "hard", "today", "tonight", "yesterday", "tomorrow", "last", "earlier",
+    "and", "but", "or", "because", "if", "when", "while", "just", "even",
+})
+_ARTICLES = frozenset({"the", "a", "an", "this", "that", "these", "those"})
+#: A reflexive object other than the speaker's: "she wants to kill herself"
+#: is someone else's own risk (ruling D), not a threat by one person to another.
+OTHER_REFLEXIVE = frozenset({"himself", "herself", "themselves", "themself"})
+#: Third-person agreement before or in an ideation phrase: "mom WANTS to
+#: die", "mom IS suicidal". The subject is not the client, whatever word it is.
+_THIRD_PERSON_AGREEMENT = frozenset({"wants", "is", "was", "has", "does", "feels", "seems"})
 _WORD = re.compile(r"[a-z']+")
 
 
@@ -415,6 +425,10 @@ class HarmFrame:
     #: different things for "kill the process" (verb) and a bare "suicidal"
     #: typed on an AAC board (ideation).
     shape: str = "verb"
+    #: True when the grammar says the subject is not the client ("mom WANTS
+    #: to die") but cannot say who it is. The being asks who (ruling AA);
+    #: it is never read as the client's own risk.
+    subject_unresolved: bool = False
 
     @property
     def identified(self) -> Dict[str, bool]:
@@ -486,6 +500,7 @@ class HarmFrame:
         return (
             self.patient is Party.UNKNOWN
             and self.shape in {"self_harm_phrase", "ideation"}
+            and not self.subject_unresolved
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -498,6 +513,7 @@ class HarmFrame:
             "negated": self.negated, "past_tense": self.past_tense,
             "post": self.post,
             "shape": self.shape,
+            "subject_unresolved": self.subject_unresolved,
             "speaker_is_patient": self.speaker_is_patient,
             "speaker_may_be_patient": self.speaker_may_be_patient,
             "speaker_is_agent": self.speaker_is_agent,
@@ -578,8 +594,16 @@ def _patient_after(tokens: List[str], index: int, reach: int = 3) -> Tuple[Party
         if p is not Party.UNKNOWN:
             return p, ptext
     if index + 1 < len(tokens):
+        nxt = tokens[index + 1]
+        if nxt not in _NOT_A_BARE_OBJECT and nxt not in NEGATORS:
+            # A bare noun straight after the verb, with no article: a name or
+            # a word used as one ("kill mom", "hurt sarah", "kill whoever").
+            # Grammar, not a list: "kill THE process" has an article.
+            return Party.THIRD_PARTY, nxt
         # a following noun that is not a person -> impersonal object
-        return Party.IMPERSONAL, tokens[index + 1]
+        if nxt in _ARTICLES and index + 2 < len(tokens):
+            return Party.IMPERSONAL, f"{nxt} {tokens[index + 2]}"
+        return Party.IMPERSONAL, nxt
     return Party.UNKNOWN, ""
 
 
@@ -649,6 +673,17 @@ def extract_frames(text: str) -> List[HarmFrame]:
             continue
         tokens_before = _WORD.findall(before)
         subj, subj_text = _subject_before(tokens_before)
+        # "mom wants to die": the verb agrees in the third person, so the
+        # subject is someone other than the client even when the grammar
+        # cannot say who. No list decides it; the being asks who.
+        unresolved = subj is Party.UNKNOWN and (
+            phrase.split()[0] in _THIRD_PERSON_AGREEMENT
+            or (bool(tokens_before) and tokens_before[-1] in _THIRD_PERSON_AGREEMENT
+                and not (len(tokens_before) >= 2 and tokens_before[-2] in FIRST_PERSON)))
+        if unresolved:
+            subj_text = next((t for t in reversed(tokens_before)
+                              if t not in _THIRD_PERSON_AGREEMENT
+                              and t not in _NOT_A_BARE_OBJECT), "")
         past = (
             phrase in PAST_IDEATION_PHRASES
             or _distanced_at(masked, m.start(), m.end())
@@ -670,6 +705,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
             negated=negated, past_tense=past,
             post=post, clause=raw,
             shape="ideation",
+            subject_unresolved=unresolved,
         ))
         masked = masked[:m.start()] + (" " * (m.end() - m.start())) + masked[m.end():]
 
@@ -713,6 +749,10 @@ def extract_frames(text: str) -> List[HarmFrame]:
             polarity, severity = Polarity.HELP, HELP_PREDICATES[stem]
 
         patient, patient_text = _patient_after(tokens, i)
+        if i > 0 and tokens[i - 1] in _ARTICLES:
+            # "THE hitting stopped": the harm word is a noun here, with no
+            # one it is aimed at.
+            patient, patient_text = Party.IMPERSONAL, ""
         subject, subject_text = _subject_before(tokens[:i], reach=5)
 
         seg = " ".join(tokens[max(0, i - 6):i + 1])

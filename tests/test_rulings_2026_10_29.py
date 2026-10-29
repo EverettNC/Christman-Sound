@@ -141,7 +141,10 @@ def test_A_no_human_reachable_is_loud():
 # (UNCLEAR_PERSON below). They still never page unless the client asks.
 OBSERVATIONS = [
     ("she wants to die", "harm_frame_third_party_at_risk"),
-    ("he is going to kill her", "harm_frame_third_party_at_risk"),
+    # "he is going to kill her" was here. Everett, 2026-10-29: a threat of
+    # harm against anyone is an absolute threat and pages at once, silently
+    # (tests/test_review_rulings_2026_10_29.py, section a).
+    ("he hurt her yesterday", "harm_frame_third_party_at_risk"),
     ("my brother wants to kill himself", "harm_frame_third_party_at_risk"),
     ("my mom's not okay", "other_person_not_okay"),
     ("My mom's not okay.", "other_person_not_okay"),
@@ -1789,18 +1792,20 @@ def test_AA_every_help_request_that_paged_with_the_list_still_pages(text):
     assert turn.decision.safety.status == "hard_block"
 
 
-@pytest.mark.parametrize("text,reason", [
-    ("mom wants to die", "harm_frame_third_party_at_risk"),
-    ("the patient wants to die", "harm_frame_third_party_at_risk"),
-    ("he is going to kill mom", "harm_frame_third_party_at_risk"),
-    ("he is hurting mom", "harm_frame_third_party_at_risk"),
+@pytest.mark.parametrize("text,status,reason", [
+    ("mom wants to die", "soft_redirect", "harm_frame_subject_unclear"),
+    ("the patient wants to die", "soft_redirect", "harm_frame_subject_unclear"),
+    ("he is going to kill mom", "hard_block", "harm_threat_to_other"),
+    ("he is hurting mom", "hard_block", "harm_now_to_other"),
 ])
-def test_AA_the_crisis_gate_is_held_as_it_was_for_everett(text, reason):
-    # The crisis gate keeps its own words (harm_frame.CRISIS_GATE_THIRD_PARTY_WORDS)
-    # until Everett rules: taking them out made "mom wants to die" page as the
-    # client's own risk and made "he is going to kill mom" unseen.
+def test_AA_the_crisis_gate_reads_people_by_grammar_not_a_list(text, status, reason):
+    # Everett, 2026-10-29: the held copy of the person words is removed. The
+    # grammar finds the target ("kill mom"); a subject it cannot place ("mom
+    # WANTS to die") is never the client's own risk, and the being asks who.
+    from christman_voice_sdk.audio import harm_frame as HF
+    assert not hasattr(HF, "CRISIS_GATE_THIRD_PARTY_WORDS")
     r = harm_frame_safety(text)
-    assert r.status == "soft_redirect" and r.reason == reason, r
+    assert r.status == status and r.reason == reason, r
 
 
 def test_AA_the_clients_own_plural_stays_the_clients():
