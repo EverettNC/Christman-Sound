@@ -427,3 +427,45 @@ def test_other_needs_are_spoken_only_unless_help_is_asked_for(text, symbol):
     assert _pages(None, nonverbal={"symbol": symbol})[0] == 0
     assert _pages(text + ", can you get someone")[0] == 1
     assert _pages("can you get someone", nonverbal={"symbol": symbol})[0] == 1
+
+
+# -- 8. ruling AE: body parts are shared reading words; one client's layer reaches
+#    the clause reader and the crisis gate together ---------------------------------
+
+def test_8_body_parts_live_in_the_shared_reading_words_with_their_words_kept():
+    from christman_voice_sdk.audio import structural_affect as SA
+    assert SA.SHARED_READING_WORDS.body_parts == SA.BODY_PARTS
+    assert {"arm", "neck", "knee", "leg", "back", "face"} <= SA.SHARED_READING_WORDS.body_parts
+
+
+def test_8_a_clients_body_word_reaches_the_gate_and_the_clause_reader():
+    from christman_voice_sdk.audio.structural_affect import SHARED_READING_WORDS
+    assert "tummy" not in SHARED_READING_WORDS.body_parts
+    words = SHARED_READING_WORDS.for_client({"body_parts": {"add": ["tummy"]}})
+    # Shared words: "my tummy" is not known as the client's body.
+    shared = harm_frame_safety("he hurt my tummy")
+    assert shared.reason != "harm_reported_to_client"
+    # This client's words: it is, everywhere at once (ruling H: ask if safe).
+    learned = harm_frame_safety("he hurt my tummy", {"reading_words": words})
+    assert learned.reason == "harm_reported_to_client" and learned.follow_up == H.ASK_IF_SAFE
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager, reading_words=words)
+    turn = hearing.hear(text="my tummy hurts")
+    assert len(pager.calls) == 1 and "pain_where:tummy" in turn.decision.safety.flags
+    turn = hearing.hear(text="yeah it hurts", previous_turn="is something wrong with your tummy?")
+    assert turn.decision.safety.reason == "answer_about_own_body"
+
+
+def test_8_a_clients_negator_correction_reaches_harm_frame_and_the_reader():
+    from christman_voice_sdk.audio.structural_affect import SHARED_READING_WORDS
+    words = SHARED_READING_WORDS.for_client({"negators": {"remove": ["never"]}})
+    assert harm_frame_safety("he never hurt me").reason == "harm_frame_negated"
+    learned = harm_frame_safety("he never hurt me", {"reading_words": words})
+    assert learned.reason != "harm_frame_negated"
+    # Outside the block the shared set is back.
+    assert harm_frame_safety("he never hurt me").reason == "harm_frame_negated"
+
+
+def test_8_reading_words_must_be_reading_words():
+    with pytest.raises(TypeError):
+        harm_frame_safety("hello", {"reading_words": {"body_parts": ["tummy"]}})

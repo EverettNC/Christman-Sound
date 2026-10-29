@@ -82,7 +82,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 # -----------------------------------------------------------------------------
 # Vocabulary
@@ -323,6 +325,20 @@ SCOPE_BREAKERS = frozenset({
 })
 
 
+#: Body parts. "he hurt my ARM" is the client's body, not someone else
+#: (hearing.py), and "Is there something wrong with your LEG?" / "Yeah, it
+#: hurts" is the client's own leg (ruling X).
+BODY_PARTS = frozenset({
+    "arm", "arms", "neck", "head", "face", "back", "leg", "legs", "hand",
+    "hands", "wrist", "wrists", "finger", "fingers", "rib", "ribs", "chest",
+    "stomach", "belly", "eye", "eyes", "nose", "mouth", "jaw", "throat",
+    "shoulder", "shoulders", "knee", "knees", "foot", "feet", "ankle",
+    "ankles", "hip", "hips", "side", "ear", "ears", "lip", "lips", "tooth",
+    "teeth", "body", "skin", "hair", "cheek", "chin", "spine", "elbow",
+    "elbows", "thumb", "toes",
+})
+
+
 @dataclass(frozen=True)
 class ReadingWords:
     """
@@ -339,13 +355,18 @@ class ReadingWords:
 
     negators: frozenset
     scope_breakers: frozenset
+    #: The client's own body (ruling AE, 2026-10-29): "he hurt my ARM" is the
+    #: client, "my arm hurts" is the client's own pain. A client's layer can
+    #: add the words that client uses for their body.
+    body_parts: frozenset = BODY_PARTS
 
-    _FIELDS = ("negators", "scope_breakers")
+    _FIELDS = ("negators", "scope_breakers", "body_parts")
 
     def for_client(self, learned: Optional[Dict[str, Dict[str, Any]]] = None) -> "ReadingWords":
         """
         This set, extended or overridden by one client's learned words:
-        {"negators": {"add": [...], "remove": [...]}, "scope_breakers": {...}}.
+        {"negators": {"add": [...], "remove": [...]}, "scope_breakers": {...},
+        "body_parts": {...}}.
         None or {} returns the shared set unchanged. An unknown key raises:
         a misspelled layer must not be silently ignored.
         """
@@ -369,7 +390,35 @@ class ReadingWords:
 #: The shared set: the affect reader's own negators (ability and
 #: time-bounded included, judging modals not: rulings R and T) and scope
 #: breakers.
-SHARED_READING_WORDS = ReadingWords(negators=AFFECT_NEGATORS, scope_breakers=SCOPE_BREAKERS)
+SHARED_READING_WORDS = ReadingWords(negators=AFFECT_NEGATORS, scope_breakers=SCOPE_BREAKERS,
+                                    body_parts=BODY_PARTS)
+
+#: The words in force for the reading under way. Every reader (the clause
+#: reader, the crisis gate, harm_frame's negation) reads them here, so one
+#: client's learned layer reaches all of them at once (ruling AE). Outside
+#: `using_reading_words` it is the shared set.
+_ACTIVE_WORDS: ContextVar[ReadingWords] = ContextVar("reading_words", default=SHARED_READING_WORDS)
+
+
+def current_words() -> ReadingWords:
+    """The reading words in force now: a client's layer, or the shared set."""
+    return _ACTIVE_WORDS.get()
+
+
+@contextmanager
+def using_reading_words(words: Optional[ReadingWords]) -> Iterator[ReadingWords]:
+    """Read with `words` (one client's layer) inside this block; None keeps
+    whatever is in force."""
+    if words is None:
+        yield current_words()
+        return
+    if not isinstance(words, ReadingWords):
+        raise TypeError(f"reading words must be ReadingWords, got {type(words).__name__}")
+    token = _ACTIVE_WORDS.set(words)
+    try:
+        yield words
+    finally:
+        _ACTIVE_WORDS.reset(token)
 
 #: Contrast markers. The clause AFTER one of these is the resolution — the
 #: thing the speaker actually landed on. "I'm overwhelmed BUT I'm glad."
@@ -458,18 +507,6 @@ EXPLETIVE_SUBJECTS = frozenset({
 #: Possessives. "my MOM", "her BROTHER".
 POSSESSIVES = frozenset({"my", "our", "your", "his", "her", "their"})
 
-#: Body parts. "he hurt my ARM" is the client's body, not someone else
-#: (hearing.py), and "Is there something wrong with your LEG?" / "Yeah, it
-#: hurts" is the client's own leg (ruling X).
-BODY_PARTS = frozenset({
-    "arm", "arms", "neck", "head", "face", "back", "leg", "legs", "hand",
-    "hands", "wrist", "wrists", "finger", "fingers", "rib", "ribs", "chest",
-    "stomach", "belly", "eye", "eyes", "nose", "mouth", "jaw", "throat",
-    "shoulder", "shoulders", "knee", "knees", "foot", "feet", "ankle",
-    "ankles", "hip", "hips", "side", "ear", "ears", "lip", "lips", "tooth",
-    "teeth", "body", "skin", "hair", "cheek", "chin", "spine", "elbow",
-    "elbows", "thumb", "toes",
-})
 
 #: Words that may open a fragment before its subject: "YEAH, it hurts".
 _FRAGMENT_OPENERS = frozenset({
@@ -490,7 +527,7 @@ def anchor_from(previous_turn: str) -> Optional[Tuple[str, str]]:
     if not lowered.strip():
         return None
     m = re.search(r"\byour\s+([a-z]+)", lowered)
-    if m and m.group(1) in BODY_PARTS:
+    if m and m.group(1) in current_words().body_parts:
         return ("self", f"your {m.group(1)}")
     m = re.search(r"\b(that|this|the|those|these|your)\s+([a-z]+(?:\s+[a-z]+){0,2})", lowered)
     if m:
@@ -641,7 +678,7 @@ _PREDICATE_START = frozenset({
 def _opens_predicate(tok: str) -> bool:
     return bool(tok) and (
         tok in _PREDICATE_START or tok in LEXICON or tok in INTENSIFIERS
-        or tok in DOWNTONERS or tok in AFFECT_NEGATORS
+        or tok in DOWNTONERS or tok in current_words().negators
         or tok.startswith("__idiom_") or tok.endswith("ing")
     )
 
@@ -663,7 +700,7 @@ _EAR_IS_OPENERS = frozenset({
 def _ear_is(tok: str, nxt: str) -> bool:
     """`tok` + `nxt` is the ear's "<word>s <predicate>" for "<word>'s <predicate>"."""
     return (len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss")
-            and "'" not in tok and tok not in BODY_PARTS and tok[:-1] not in BODY_PARTS
+            and "'" not in tok and tok not in current_words().body_parts and tok[:-1] not in current_words().body_parts
             and (nxt in _EAR_IS_OPENERS or nxt.startswith("__idiom_")))
 
 
@@ -684,7 +721,7 @@ def contracted_subjects(raw: str) -> frozenset:
         if prev not in POSSESSIVES:
             continue
         if tok.endswith("'s") and len(tok) > 2 and _opens_predicate(nxt):
-            if tok[:-2] not in BODY_PARTS:
+            if tok[:-2] not in current_words().body_parts:
                 out.add(tok[:-2])
         elif _ear_is(tok, nxt):
             out.add(tok[:-1])
@@ -891,7 +928,7 @@ def _idiom_subject(before: str, names: frozenset = frozenset()) -> str:
         if tok in _OTHER_PRONOUNS or is_person(tok) or tok in names:
             return "other"
         prev = toks[k - 1] if k > 0 else ""
-        if prev in POSSESSIVES and tok not in BODY_PARTS:
+        if prev in POSSESSIVES and tok not in current_words().body_parts:
             if prev in {"his", "her", "their"}:
                 return "other"
             return "unclear"
@@ -1248,7 +1285,19 @@ class StructuralAffectAnalyzer:
     #: Reason: "a little", the same downtoner, is 0.6 in DOWNTONERS.
     NOT_SO_WEIGHT = 0.6
 
+    def __init__(self, reading_words: Optional[ReadingWords] = None) -> None:
+        #: One client's reading words (ReadingWords.for_client), or None to
+        #: read with whatever is in force (the shared set by default).
+        self.reading_words = reading_words
+
     def analyze(
+        self, text: str, prosody: Optional[ProsodyFeatures] = None,
+        previous_turn: str = "",
+    ) -> AffectReading:
+        with using_reading_words(self.reading_words):
+            return self._analyze(text, prosody=prosody, previous_turn=previous_turn)
+
+    def _analyze(
         self, text: str, prosody: Optional[ProsodyFeatures] = None,
         previous_turn: str = "",
     ) -> AffectReading:
@@ -1564,7 +1613,7 @@ class StructuralAffectAnalyzer:
         # Not before a modal that opens a question ("he hurt my feelings
         # CAN you get someone"): that "my ___" is the object of the verb
         # before it, not a new subject.
-        if (tok in POSSESSIVES and nxt and nxt not in BODY_PARTS
+        if (tok in POSSESSIVES and nxt and nxt not in current_words().body_parts
                 and nxt not in cls._NOT_A_SUBJECT and nxt2 in cls._CLAUSE_VERBS
                 and nxt2 not in cls._QUESTION_MODALS):
             return True
@@ -1762,7 +1811,7 @@ class StructuralAffectAnalyzer:
                 # client's; any other "my ___" cannot be told: UNKNOWN, and
                 # the being asks who.
                 if ((not elliptical or i == 0) and tok in {"my", "our"} and nxt
-                        and nxt not in BODY_PARTS
+                        and nxt not in current_words().body_parts
                         and nxt not in LEXICON and not nxt.startswith("__")):
                     return Attribution.UNKNOWN
 
@@ -2101,7 +2150,7 @@ class StructuralAffectAnalyzer:
         about_idx: Optional[int] = None
         for j in range(index - 1, -1, -1):
             tok = tokens[j]
-            if tok in SCOPE_BREAKERS and not (tok == "so" and cls._so_intensifies(tokens, j)):
+            if tok in current_words().scope_breakers and not (tok == "so" and cls._so_intensifies(tokens, j)):
                 return None
             if tok in cls._BELIEF_VERBS:
                 if about_idx is None:
@@ -2112,7 +2161,7 @@ class StructuralAffectAnalyzer:
                 if k != about_idx:
                     return None
                 neg_idx = next((n for n in range(j - 1, max(-1, j - 4), -1)
-                                if tokens[n] in AFFECT_NEGATORS), None)
+                                if tokens[n] in current_words().negators), None)
                 verb_neg = tokens[neg_idx] if neg_idx is not None else ""
                 verb_words = " ".join(tokens[neg_idx:j + 1]) if neg_idx is not None else tok
                 holder = next((t for t in reversed(tokens[:j])
@@ -2127,7 +2176,7 @@ class StructuralAffectAnalyzer:
             if about_idx is None and (
                     tok in cls._SUBJECT_STARTS or is_person(tok)
                     or (j > 0 and tokens[j - 1] in cls._POSSESSIVES
-                        and tok not in BODY_PARTS and tok not in cls._NOT_A_SUBJECT)):
+                        and tok not in current_words().body_parts and tok not in cls._NOT_A_SUBJECT)):
                 about_idx = j
         return None
 
@@ -2166,7 +2215,7 @@ class StructuralAffectAnalyzer:
             if tokens[j] in {"since", "until", "till", "for"}:
                 tail: List[str] = []
                 for t in tokens[j + 1:j + 4]:
-                    if t in SCOPE_BREAKERS or t in StructuralAffectAnalyzer._SUBJECT_STARTS:
+                    if t in current_words().scope_breakers or t in StructuralAffectAnalyzer._SUBJECT_STARTS:
                         break
                     tail.append(t)
                 return " ".join([tokens[j]] + tail) if tail else ""
@@ -2223,7 +2272,7 @@ class StructuralAffectAnalyzer:
             if j < 0:
                 return None
             tok = tokens[j]
-            if tok in AFFECT_NEGATORS:
+            if tok in current_words().negators:
                 return degree
             if tok not in StructuralAffectAnalyzer._NOT_SO_WORDS and tok not in {
                     "feel", "feeling", "be", "being", "really", "even"}:
@@ -2259,9 +2308,9 @@ class StructuralAffectAnalyzer:
             if j < 0:
                 return None
             tok = tokens[j]
-            if tok in AFFECT_NEGATORS:
+            if tok in current_words().negators:
                 return tok
-            if tok in SCOPE_BREAKERS:
+            if tok in current_words().scope_breakers:
                 if tok == "so" and StructuralAffectAnalyzer._so_intensifies(tokens, j):
                     continue
                 return None
@@ -2306,7 +2355,7 @@ class StructuralAffectAnalyzer:
                 if tok == "like" and nxt in StructuralAffectAnalyzer._SUBJECT_STARTS:
                     return False
                 return True
-            if tok in SCOPE_BREAKERS or tok in AFFECT_NEGATORS:
+            if tok in current_words().scope_breakers or tok in current_words().negators:
                 return False
         return False
 
@@ -2502,6 +2551,8 @@ __all__ = [
     "THANKS",
     "THIRD_PERSON_PRONOUNS",
     "AFFECT_NEGATORS",
+    "current_words",
+    "using_reading_words",
     "ABILITY_NEGATORS",
     "normalize_apostrophes",
     "tokenize",

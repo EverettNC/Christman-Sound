@@ -88,7 +88,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from .structural_affect import FIRST_PERSON, NEGATORS, normalize_apostrophes
+from .structural_affect import (
+    FIRST_PERSON,
+    NEGATORS,
+    SHARED_READING_WORDS,
+    current_words,
+    normalize_apostrophes,
+)
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -524,6 +530,20 @@ class HarmFrame:
         }
 
 
+def _negators() -> frozenset:
+    """
+    This module's own negators (pinned to Everett's crisis table), with the
+    client's learned corrections laid over them (ruling AE): a negator the
+    being learned for this client is added, one it removed is removed.
+    """
+    active = current_words()
+    if active is SHARED_READING_WORDS:
+        return NEGATORS
+    added = active.negators - SHARED_READING_WORDS.negators
+    removed = SHARED_READING_WORDS.negators - active.negators
+    return (NEGATORS | added) - removed
+
+
 def _party(token: str) -> Tuple[Party, str]:
     t = token.lower().strip(".,!?;:")
     if t in _SELF_PATIENT or t in FIRST_PERSON:
@@ -548,7 +568,7 @@ def _negated_before(tokens: List[str], index: int, reach: int = 4) -> bool:
         j = index - back
         if j < 0:
             return False
-        if tokens[j] in NEGATORS:
+        if tokens[j] in _negators():
             return True
     return False
 
@@ -595,7 +615,7 @@ def _patient_after(tokens: List[str], index: int, reach: int = 3) -> Tuple[Party
             return p, ptext
     if index + 1 < len(tokens):
         nxt = tokens[index + 1]
-        if nxt not in _NOT_A_BARE_OBJECT and nxt not in NEGATORS:
+        if nxt not in _NOT_A_BARE_OBJECT and nxt not in _negators():
             # A bare noun straight after the verb, with no article: a name or
             # a word used as one ("kill mom", "hurt sarah", "kill whoever").
             # Grammar, not a list: "kill THE process" has an article.
@@ -633,7 +653,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
             # "she wants me to kill myself" is not a shape this handles;
             # the reflexive says the speaker, and the speaker wins.
             subj, subj_text = Party.SPEAKER, "i"
-        negated = bool(tokens_before) and tokens_before[-1] in NEGATORS or bool(
+        negated = bool(tokens_before) and tokens_before[-1] in _negators() or bool(
             re.search(r"\b(?:never|not|don't|dont|won't|wont|wouldn't|wouldnt)\s+"
                       r"(?:want|going|gonna|plan|intend|need|have|got)?\s*(?:to\s+)?$", before)
         )
@@ -689,7 +709,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
             or _distanced_at(masked, m.start(), m.end())
             or bool(_PAST_BEFORE.search(before))
         )
-        negated = bool(tokens_before) and tokens_before[-1] in NEGATORS and not (
+        negated = bool(tokens_before) and tokens_before[-1] in _negators() and not (
             # "don't want to live" carries its own negator; it is not a
             # negated wish, it IS the wish.
             phrase.startswith(_SELF_NEGATED_PREFIXES)

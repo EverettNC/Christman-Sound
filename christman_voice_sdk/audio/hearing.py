@@ -45,6 +45,7 @@ are not edited from here.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from dataclasses import dataclass, field, replace
@@ -102,6 +103,9 @@ from .structural_affect import (
     normalize_apostrophes,
     tokenize,
     SHARED_READING_WORDS,
+    ReadingWords,
+    current_words,
+    using_reading_words,
 )
 
 logger = logging.getLogger(__name__)
@@ -264,7 +268,7 @@ def body_harm(text: str) -> List[BodyHarm]:
     out: List[BodyHarm] = []
     for m in _BODY_HARM.finditer(lowered):
         part = m.groupdict().get("part") or ""
-        if part and part not in BODY_PARTS:
+        if part and part not in current_words().body_parts:
             continue
         clause_start = max(lowered.rfind(p, 0, m.start()) for p in ".!?;,") + 1
         before = tokenize(lowered[clause_start:m.start()])
@@ -324,7 +328,7 @@ _PAST_BEFORE_VERB = frozenset({"was", "were", "had", "did", "used"})
 def _negated_need(text: str, start: int) -> bool:
     """ "I don't need my medicine": a negator in the few words before."""
     before = tokenize(normalize_apostrophes(text).lower()[:start])[-3:]
-    return bool(set(before) & SHARED_READING_WORDS.negators)
+    return bool(set(before) & current_words().negators)
 
 
 def harm_time(text: str, frame: HarmFrame) -> Tuple[str, str]:
@@ -389,7 +393,7 @@ def harm_target(frame: HarmFrame, subject_is_client: bool) -> Optional[str]:
         if text in OTHER_REFLEXIVE:
             return None             # "she wants to kill herself": ruling D
         if len(words) == 2 and words[0] in ("my", "our", "mine"):
-            if words[1] in BODY_PARTS:
+            if words[1] in current_words().body_parts:
                 return "client"
             if words[1] in _NOT_A_PERSON:
                 return None
@@ -694,6 +698,13 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
     tests/test_harm_frame_gate.py and this function is written to it.
     """
     context = context or {}
+    # Ruling AE: one client's reading words (ReadingWords.for_client) reach
+    # the gate, the clause reader and harm_frame together.
+    with using_reading_words(context.get("reading_words")):
+        return _harm_frame_safety(text, context)
+
+
+def _harm_frame_safety(text: str, context: Dict[str, Any]) -> SafetyResult:
     original = text or ""
     words = _words_gate(original, context.get("between_beings") is True,
                         str(context.get("answering_follow_up") or ""),
@@ -881,7 +892,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             first = post[0].strip(",.;:!?") if post else ""
             if first in _NOT_A_PERSON:
                 other_not_person.append(frame)
-            elif first in BODY_PARTS:
+            elif first in current_words().body_parts:
                 # "he hurt my ARM" is the client's own body, read by
                 # body_harm above, not someone else at risk.
                 continue
@@ -1005,7 +1016,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
         for h in own_pain:
             if clause_reading is not None and h.clause_index < len(clause_reading.clauses):
                 where += [t for t in clause_reading.clauses[h.clause_index].tokens
-                          if t in BODY_PARTS and t not in where]
+                          if t in current_words().body_parts and t not in where]
         return SafetyResult(
             status="hard_block",
             reason="client_pain",
@@ -1466,6 +1477,16 @@ class HearingTurn:
 NONVERBAL_INPUTS = ("gesture", "symbol", "eye_data", "sound")
 
 
+def _with_client_words(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Run a Hearing method with that client's reading words in force (ruling
+    AE), keeping the method's own signature."""
+    @functools.wraps(method)
+    def wrapper(self: "Hearing", *args: Any, **kwargs: Any) -> Any:
+        with using_reading_words(self.reading_words):
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class Hearing:
     """
     Corti in, Decision out.
@@ -1480,6 +1501,7 @@ class Hearing:
         nonverbal_engine: Optional[NonverbalEngine] = None,
         temporal_engine: Optional[TemporalNonverbalEngine] = None,
         baseline: Optional[SpeakerBaseline] = None,
+        reading_words: Optional[ReadingWords] = None,
     ) -> None:
         """
         Args:
@@ -1492,9 +1514,15 @@ class Hearing:
             baseline: this speaker's measured baseline (see
                 `prosody.build_speaker_baseline`). Without one, prosody is
                 read against the recent window and says so.
+            reading_words: this client's reading words
+                (SHARED_READING_WORDS.for_client(learned)): negators, scope
+                breakers and body parts the being has learned for this
+                client. Every reader on the turn uses them (ruling AE).
+                Default: the shared set.
         """
+        self.reading_words = reading_words
         self.prosody = ProsodyAnalyzer(baseline=baseline)
-        self.affect = StructuralAffectAnalyzer()
+        self.affect = StructuralAffectAnalyzer(reading_words=reading_words)
         self.nonverbal = nonverbal_engine or NonverbalEngine(data_dir=None)
         self.temporal = temporal_engine or TemporalNonverbalEngine()
         self.fusion = FusionEngine(
@@ -1511,6 +1539,7 @@ class Hearing:
         #: (ruling K). Held for one turn only.
         self.held_words: Optional[str] = None
 
+    @_with_client_words
     def hear(
         self,
         corti_event: Optional[Any] = None,
