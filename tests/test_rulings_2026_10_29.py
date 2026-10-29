@@ -133,18 +133,31 @@ def test_A_no_human_reachable_is_loud():
 
 # -- D. an observation about another carbon is followed up, not paged ------------
 
+# Ruling AA (2026-10-29 review): no fixed person list. These are someone
+# else by GRAMMAR: a pronoun, a typed name, a contraction after a possessive.
+# "my mom is not okay", "My mom is not okay." and "my dad isn't safe" were
+# here because "mom" and "dad" were on THIRD_PERSON; with the list gone the
+# grammar cannot tell whether "mom" names a person, so the being asks who
+# (UNCLEAR_PERSON below). They still never page unless the client asks.
 OBSERVATIONS = [
     ("she wants to die", "harm_frame_third_party_at_risk"),
     ("he is going to kill her", "harm_frame_third_party_at_risk"),
     ("my brother wants to kill himself", "harm_frame_third_party_at_risk"),
-    ("my mom is not okay", "other_person_not_okay"),
-    ("My mom is not okay.", "other_person_not_okay"),
+    ("my mom's not okay", "other_person_not_okay"),
+    ("My mom's not okay.", "other_person_not_okay"),
     ("my moms not okay", "other_person_not_okay"),
     ("Mary is not okay", "other_person_not_okay"),
-    ("my dad isn't safe", "other_person_not_okay"),
+    ("my dad's not safe", "other_person_not_okay"),
     ("my mom's not safe", "other_person_not_okay"),
     ("she doesn't feel safe", "other_person_not_okay"),
     ("she doesn’t feel safe", "other_person_not_okay"),   # a phone's curly apostrophe
+]
+
+#: "my ___ is ..." with no contraction: not plain from the grammar (ruling AA).
+UNCLEAR_PERSON = [
+    ("my mom is not okay", "my mom"),
+    ("My mom is not okay.", "my mom"),
+    ("my dad isn't safe", "my dad"),
 ]
 
 
@@ -180,6 +193,29 @@ def test_D_it_pages_when_the_client_asks_for_help(text, reason, ask):
     assert len(pager.calls) == 1 and pager.calls[0][0].said == said
 
 
+@pytest.mark.parametrize("text,about", UNCLEAR_PERSON)
+def test_D_and_AA_an_unclear_person_is_asked_about_not_paged(text, about):
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == [], d.to_dict()
+    assert d.safety.status == "soft_redirect" and d.safety.reason == "person_unclear"
+    assert d.safety.follow_up == H.ASK_WHO and d.safety.follow_up_about == about
+    assert d.affect.is_self_distress is False                  # never the client's
+    assert d.safety.said == text
+
+
+@pytest.mark.parametrize("text,about", UNCLEAR_PERSON)
+@pytest.mark.parametrize("ask", ASKS)
+def test_D_and_AA_an_unclear_person_pages_when_the_client_asks_for_help(text, about, ask):
+    said = f"{text} {ask}"
+    turn, pager = _hear(said)
+    d = turn.decision
+    assert d.mode == MODE_SAFETY_HOLD, d.to_dict()
+    assert d.safety.status == "hard_block" and d.safety.reason == "person_unclear"
+    assert any(f.startswith("asked_for_help:") for f in d.safety.flags)
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == said
+
+
 @pytest.mark.parametrize("said", [
     "my mom is not okay please don't call anyone",
     "she wants to die, don't call someone",
@@ -196,7 +232,7 @@ def test_D_a_request_taken_back_is_not_a_request(said):
     "it's not okay to hit",
     "The car is not okay",
     "yesterday my mom was not okay",    # the past (ruling 3)
-    "my mom is okay",
+    "my mom's okay",                    # hers by grammar, and okay ("my mom is okay": AA asks who)
     "she is safe now",
 ])
 def test_D_not_a_person_now_is_not_even_flagged(text):
@@ -349,7 +385,7 @@ def test_G_the_key_never_changes_the_reading_of_the_words(text, key):
 
 
 def test_G_when_the_key_adds_the_page_the_words_reading_is_kept_beside_it():
-    keyed, pager = _hear("my mom is not okay", acoustic_key="grunt_distress")
+    keyed, pager = _hear("my mom's not okay", acoustic_key="grunt_distress")
     s = keyed.decision.safety
     assert s.reason == "nonverbal_distress"
     assert "words:soft_redirect:other_person_not_okay" in s.flags
@@ -794,7 +830,9 @@ def test_H_the_clients_own_accident_is_not_someone_hurting_them(text):
 def test_D_the_being_asks_and_a_yes_pages(answer, pages):
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
-    first = hearing.hear(text="my mom is not okay")
+    # A contraction after a possessive: "mom" is someone else by grammar
+    # (ruling AA; the uncontracted form asks who first).
+    first = hearing.hear(text="my mom's not okay")
     assert first.decision.safety.follow_up == "ask_if_help_needed"   # the being asks
     assert first.decision.safety.follow_up_about == "not okay"
     assert pager.calls == []
@@ -1292,8 +1330,11 @@ def test_O_a_no_to_the_question_pages():
 # -- P. whose feeling it is ----------------------------------------------------------
 # Everett, 2026-10-29: "you can't take possession of your mother's pain."
 
+# "my dad is sad" (no contraction) was here while "dad" was on the fixed
+# person list; by ruling AA it asks who (see the AA tests). "my dad's sad"
+# is his, by grammar.
 @pytest.mark.parametrize("text", ["My mom's in pain", "my moms in pain", "She's scared", "shes scared",
-                                  "Mary is scared", "my dad is sad"])
+                                  "Mary is scared", "my dad's sad", "my mom's scared"])
 def test_P_someone_elses_feeling_is_theirs_never_the_clients(text):
     r = A.analyze(text)
     assert r.attribution.value == "other", r.to_dict()
@@ -1659,9 +1700,32 @@ def test_AA_the_handoffs_person_list_is_gone():
         assert not sa.is_person(word)
 
 
+def test_AA_mains_fixed_person_lists_are_gone_too():
+    # 2026-10-29 review: THIRD_PERSON and OTHER_EXPERIENCER still held mom,
+    # dad, friend, brother, sister and the rest. Ruling AA: no fixed person list.
+    import christman_voice_sdk.audio.harm_frame as hf
+    import christman_voice_sdk.audio.structural_affect as sa
+    assert not hasattr(sa, "THIRD_PERSON") and not hasattr(sa, "OTHER_EXPERIENCER")
+    assert not hasattr(hf, "THIRD_PERSON")
+    for word in ("mom", "mother", "dad", "father", "friend", "brother", "sister", "patient",
+                 "people", "moms", "friends"):
+        assert not sa.is_person(word), word
+    # Grammar still decides: pronouns, a typed name, a contraction after a possessive.
+    assert sa.is_person("she") and sa.is_person("they")
+    assert sa.named_by_grammar("my mom's in pain") >= {"mom"}
+    assert sa.named_by_grammar("my moms in pain") >= {"mom"}
+    assert sa.named_by_grammar("Mary is scared") >= {"mary"}
+    assert "feeling" not in sa.named_by_grammar("my feelings hurt")    # a plural, not "feeling is"
+    assert sa.named_by_grammar("sam's scared") == frozenset()          # no possessive: whose? (P)
+
+
 @pytest.mark.parametrize("text,about", [("my teacher is sad", "my teacher"),
                                         ("my dog is sad", "my dog"),
-                                        ("my teacher is not okay", "my teacher")])
+                                        ("my teacher is not okay", "my teacher"),
+                                        ("my mom is sad", "my mom"),
+                                        ("my dad is sad", "my dad"),
+                                        ("my friend is scared", "my friend"),
+                                        ("my mom is okay", "my mom")])
 def test_AA_when_it_cannot_tell_a_person_nothing_is_concluded_and_the_being_asks(text, about):
     r = A.analyze(text)
     assert r.is_self_distress is False                          # never the client's
@@ -1671,6 +1735,50 @@ def test_AA_when_it_cannot_tell_a_person_nothing_is_concluded_and_the_being_asks
     assert d.safety.reason == "person_unclear" and d.mode == MODE_UNKNOWN
     assert d.safety.follow_up == H.ASK_WHO and d.safety.follow_up_about == about
     _no_canned_question(d.safety)
+
+
+@pytest.mark.parametrize("text", ["mom is not okay", "moms not okay", "mom's not okay",
+                                  "dad isn't safe", "mary is not okay"])
+def test_AA_a_bare_lower_case_word_is_asked_whose_not_dropped(text):
+    # From the ear a name or a family word comes in lower case with nothing
+    # in front of it. With the person list gone it is not dropped: the being
+    # asks whose (ruling P), and it is never the client's.
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.reason == "whose_feeling_unclear" and d.safety.follow_up == H.ASK_WHOSE
+    assert d.affect.is_self_distress is False
+
+
+@pytest.mark.parametrize("text", ["mom is not okay can you get someone",
+                                  "dad isn't safe, help him",
+                                  "my mom is not okay can you get someone",
+                                  "her mom is not okay can you get someone"])
+def test_AA_every_help_request_that_paged_with_the_list_still_pages(text):
+    # Measured on main (7891bf6) with the list: each of these paged. Without
+    # the list, each still reaches a human, because the client asked.
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == text
+    assert turn.decision.safety.status == "hard_block"
+
+
+@pytest.mark.parametrize("text,reason", [
+    ("mom wants to die", "harm_frame_third_party_at_risk"),
+    ("the patient wants to die", "harm_frame_third_party_at_risk"),
+    ("he is going to kill mom", "harm_frame_third_party_at_risk"),
+    ("he is hurting mom", "harm_frame_third_party_at_risk"),
+])
+def test_AA_the_crisis_gate_is_held_as_it_was_for_everett(text, reason):
+    # The crisis gate keeps its own words (harm_frame.CRISIS_GATE_THIRD_PARTY_WORDS)
+    # until Everett rules: taking them out made "mom wants to die" page as the
+    # client's own risk and made "he is going to kill mom" unseen.
+    r = harm_frame_safety(text)
+    assert r.status == "soft_redirect" and r.reason == reason, r
+
+
+def test_AA_the_clients_own_plural_stays_the_clients():
+    assert A.analyze("my feelings hurt").attribution.value != "other"
+    assert A.analyze("my legs hurt").is_self_distress is True
 
 
 def test_AA_unclear_person_and_a_help_request_still_reaches_a_human():

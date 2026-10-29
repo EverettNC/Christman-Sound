@@ -72,6 +72,7 @@ from .prosody import ProsodyAnalyzer, ProsodyReading, SpeakerBaseline
 from .structural_affect import (
     BODY_PARTS,
     FIRST_PERSON,
+    WHOSE_NOTE,
     anchor_from,
     THANKS,
     AffectCertainty,
@@ -346,6 +347,11 @@ def whose_feeling_unclear(reading: Any) -> List[str]:
             continue
         if h.negated or h.volitional:
             continue
+        if WHOSE_NOTE in (h.note or ""):
+            # "mom is not okay" from the ear: the idiom took the verb, so
+            # there is no subject region to read; the reader marked it.
+            out.append(h.term)
+            continue
         clause = reading.clauses[h.clause_index] if h.clause_index < len(reading.clauses) else None
         if clause is None:
             continue
@@ -494,8 +500,11 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
                      ("I used to want to kill myself"), reason
                      "harm_frame_history_self".
       soft_redirect  an OBSERVATION about another carbon (ruling D): "she
-                     wants to die", "my mom is not okay", "Mary is not okay",
-                     "my dad isn't safe". Recorded and flagged
+                     wants to die", "my mom's not okay", "Mary is not okay",
+                     "she doesn't feel safe". Someone else by grammar, never
+                     by a list (ruling AA): "my mom is not okay" with no
+                     contraction asks who, and a bare "mom is not okay"
+                     from the ear asks whose. Recorded and flagged
                      ("follow_up:...") for the being to follow up. Everett:
                      "those do not page unless the carbon that stated that
                      requests us to get assistance, because we don't want to
@@ -758,7 +767,24 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
     unclear = whose_feeling_unclear(reading_for_owner) if reading_for_owner else []
     if unclear and not between_beings:
         # Ruling P: whose feeling it is cannot be told from the words.
-        # Nothing is concluded; the being asks, e.g. "Who's scared?".
+        # Nothing is concluded; the being asks, e.g. "Who's scared?". If the
+        # client asked for help in the same turn, a human is reached all the
+        # same, as for an unclear person (ruling AA) and an observation
+        # (ruling D). Before the 2026-10-29 review the person list made
+        # "mom is not okay can you get someone" an observation that paged;
+        # with the list gone (ruling AA) it is whose-unclear, and it still
+        # pages.
+        request = asked_for_help(original)
+        if request is not None:
+            return SafetyResult(
+                status="hard_block",
+                reason="whose_feeling_unclear",
+                said=original,
+                flags=[f"whose:{t}" for t in unclear] + other_flags
+                + [f"asked_for_help:{request}"],
+                flagged_terms=unclear,
+                hold_marker="[SAFETY HOLD — the client asked for help]",
+            )
         return SafetyResult(
             status="soft_redirect",
             reason="whose_feeling_unclear",
@@ -770,7 +796,19 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
         )
 
     unsure = person_unclear(reading_for_owner) if reading_for_owner else []
-    if unsure and not between_beings:
+    if unsure and between_beings:
+        # Ruling F: two beings talking, nothing pages. Ruling AA left "my mom
+        # is not okay" as "who?", where the person list used to make it an
+        # observation; between beings it is recorded and flagged the same
+        # way an observation is, and nothing is asked.
+        return SafetyResult(
+            status="soft_redirect",
+            reason="person_unclear",
+            said=original,
+            flags=[f"unclear_who:{w}" for _, w in unsure] + other_flags + ["between_beings"],
+            flagged_terms=[t for t, _ in unsure],
+        )
+    if unsure:
         # Ruling AA: "my teacher is sad" — whether "teacher" is a person in
         # this client's life is learned per client, not read off a list.
         # Nothing is concluded; the being asks. If the client asked for help

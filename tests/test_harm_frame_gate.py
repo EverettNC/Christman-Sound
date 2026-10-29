@@ -172,10 +172,17 @@ def test_third_party_at_risk_is_followed_up_and_pages_only_when_asked():
 
 
 def test_someone_else_not_okay_is_followed_up():
-    r = harm_frame_safety("my mom is not okay")
+    r = harm_frame_safety("my mom's not okay")
     assert r.status == "soft_redirect", r
     assert r.reason == "other_person_not_okay"
     assert "follow_up:someone_else" in r.flags
+    assert r.said == "my mom's not okay"
+    # Ruling AA (2026-10-29 review): with no fixed person list, "my mom is
+    # not okay" cannot be told from the grammar. It still never pages on its
+    # own; the being asks who.
+    r = harm_frame_safety("my mom is not okay")
+    assert r.status == "soft_redirect" and r.reason == "person_unclear", r
+    assert r.follow_up == "ask_who" and r.follow_up_about == "my mom"
     assert r.said == "my mom is not okay"
 
 

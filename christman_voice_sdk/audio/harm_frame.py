@@ -88,7 +88,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from .structural_affect import FIRST_PERSON, THIRD_PERSON, NEGATORS, normalize_apostrophes
+from .structural_affect import FIRST_PERSON, NEGATORS, normalize_apostrophes
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -343,9 +343,30 @@ def _stem(tok: str) -> Optional[str]:
     return None
 
 _SELF_PATIENT = frozenset({"me", "myself", "my", "mine", "us", "ourselves", "our"})
-_OTHER_PATIENT = frozenset(THIRD_PERSON) | {"him", "her", "them", "himself",
-                                            "herself", "themselves", "yourself",
-                                            "you"}
+
+#: HELD FOR EVERETT (2026-10-29 review, ruling AA). The crisis gate read its
+#: third parties off structural_affect.THIRD_PERSON. Ruling AA removed that
+#: fixed person list from the affect reader. Taking the same words out of the
+#: crisis gate changes who gets paged, measured on this branch before this
+#: copy was put back:
+#:   "mom wants to die", "the patient wants to die"  -> paged as the CLIENT's
+#:       own risk (subject no longer known to be someone else)
+#:   "he is going to kill mom", "she hit mom", "he is hurting mom"
+#:       -> no longer seen at all (was: someone else at risk, followed up,
+#:       and paged when the client asks for help)
+#: Who the gate pages is Everett's to decide, so the gate keeps exactly the
+#: words it had, here, by name, until he rules. Nothing else in the package
+#: reads this set.
+CRISIS_GATE_THIRD_PARTY_WORDS = frozenset({
+    "he", "she", "they", "him", "her", "them", "his", "their", "theirs",
+    "it", "its", "someone", "somebody", "everyone", "nobody", "people",
+    "mother", "father", "mom", "dad", "sister", "brother", "friend",
+    "patient", "character", "author", "article", "film", "movie", "book",
+    "story", "topic", "subject",
+})
+_OTHER_PATIENT = CRISIS_GATE_THIRD_PARTY_WORDS | {"him", "her", "them", "himself",
+                                                  "herself", "themselves", "yourself",
+                                                  "you"}
 _WORD = re.compile(r"[a-z']+")
 
 

@@ -37,9 +37,15 @@ def test_everetts_original_sentences_still_hold():
 
 def test_idioms_obey_attribution():
     # Someone else's state is not the speaker's distress.
-    r = A.analyze("My mom is falling apart")
+    r = A.analyze("My mom's falling apart")
     assert r.is_self_distress is False, r.to_dict()
     assert r.attribution is Attribution.OTHER
+    # Ruling AA (2026-10-29 review): with no fixed person list, "my mom is"
+    # with no contraction cannot be told from the grammar: never the
+    # speaker's, and the being asks who.
+    r = A.analyze("My mom is falling apart")
+    assert r.is_self_distress is False, r.to_dict()
+    assert r.attribution is Attribution.UNKNOWN
     r = A.analyze("she is fed up with her job")
     assert r.is_self_distress is False, r.to_dict()
     # But the speaker's own is.
@@ -109,8 +115,12 @@ def test_everett_ruling_subjectless_utterance_is_the_speaker():
     assert fine.is_self_distress is False, fine.to_dict()
     assert fine.valence == 0.5 and "can't complain" in fine.idioms_matched
 
-    mother = A.analyze("my mother is scared")
+    mother = A.analyze("my mother's scared")
     assert mother.attribution is Attribution.OTHER, mother.to_dict()
+    assert mother.is_self_distress is False, mother.to_dict()
+    # Ruling AA: no contraction, no list: not the speaker's, and unknown.
+    mother = A.analyze("my mother is scared")
+    assert mother.attribution is Attribution.UNKNOWN, mother.to_dict()
     assert mother.is_self_distress is False, mother.to_dict()
 
     # A subject that is a thing still reads impersonal — the ruling is about
