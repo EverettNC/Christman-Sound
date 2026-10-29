@@ -87,7 +87,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .structural_affect import (
-    LEXICON,
     AffectCertainty,
     AffectReading,
     Attribution,
@@ -169,45 +168,6 @@ class Silicon:
     #: just above the middle of the 0..1 scale.
     GROUNDING_INTENSITY = 0.55
 
-    #: Weight of a plain domain word ("remind", "breathe", "listen") found in
-    #: the clauses. A stated choice, not a measurement.
-    #: Chosen starting value, held until client data replaces it. Reason: a
-    #: plain word counts half a voiced request, so it can steer a reply but
-    #: never outvote what the person asked for.
-    PLAIN_WORD_WEIGHT = 0.5
-
-    @classmethod
-    def _surviving_terms(cls, affect: AffectReading) -> Dict[str, float]:
-        """
-        What the domains are scored on.
-
-        Affect terms count at their surviving weight — a term structure
-        cancelled (negated, chosen, impersonal) steers nothing. Plain words
-        are read from the clauses at PLAIN_WORD_WEIGHT unless a negation
-        holds them.
-
-        2026-10-29: this read affect hits only, and the voice, memory and
-        grounding words are not affect words, so those three domains could
-        never score. "remind me to call mom" scored 0.0 everywhere.
-        """
-        terms: Dict[str, float] = {
-            h.term: abs(h.final_weight)
-            for h in affect.hits
-            if h.final_weight != 0.0
-        }
-        affect_terms = {h.term for h in affect.hits}
-        domain_words = {w for ws in cls.DOMAIN_PRIORS.values() for w in ws}
-        for clause in affect.clauses:
-            for i, tok in enumerate(clause.tokens):
-                if tok not in domain_words or tok in terms or tok in affect_terms:
-                    continue
-                if tok in LEXICON:
-                    continue    # an affect word speaks only through its hit
-                if StructuralAffectAnalyzer._negated(clause.tokens, i):
-                    continue
-                terms[tok] = cls.PLAIN_WORD_WEIGHT
-        return terms
-
     def retrieve(
         self,
         affect: AffectReading,
@@ -257,7 +217,23 @@ class Silicon:
             response_mode = MODE_STANDARD
             source = "none"
 
-        live_terms = self._surviving_terms(affect)
+        # Domain scoring runs on surviving affect terms — terms structure
+        # cancelled (negated, volitional, impersonal) must not steer the domain
+        # either. The old version scored the raw word vector.
+        #
+        # Everett, 2026-10-29 (ruling N): the handoff added a fixed list of
+        # plain words ("remind", "breathe", "read" and the rest, at half a
+        # feeling word's weight) that steered the domain. Taken out: "It ain't
+        # up to Replit how the being behaves. The being has to get to know the
+        # client first before it can even put words in that category. It's
+        # the learned everyday words that the being learns by being with the
+        # client." Everyday words steer only from what is learned for that
+        # client; until that exists, this is main's (e35fe46) scoring.
+        live_terms = {
+            h.term: abs(h.final_weight)
+            for h in affect.hits
+            if h.final_weight != 0.0
+        }
         domain_scores = {
             domain: _overlap(live_terms, words)
             for domain, words in self.DOMAIN_PRIORS.items()
@@ -345,6 +321,17 @@ class SafetyResult:
     #: help?"). It never tells, and never says "you're not okay" or "calm
     #: down". The client's answer is read on the next turn.
     follow_up: str = ""
+    #: THE SILENT ALARM (Everett, 2026-10-29, rulings I and K). A danger
+    #: signal or a danger sentence goes to a human silently: it is not voiced
+    #: and nothing announces that help is coming. Saying it out loud can get
+    #: the client hurt worse and the device taken. The words are not changed
+    #: or lost: `said` holds them, and the human gets them.
+    silent_alarm: bool = False
+    #: Ruling K: a danger sentence the client typed or said IS voiced when the
+    #: client asked for it to be said aloud, or when the being's own
+    #: perception reports a public setting (live_state["public_setting"] is
+    #: True). Absent or unknown: silent. It pages either way.
+    voice_aloud: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -483,6 +470,8 @@ class Aegis:
             degraded=result.degraded,
             degraded_reason=result.degraded_reason,
             follow_up=result.follow_up,
+            silent_alarm=result.silent_alarm,
+            voice_aloud=result.voice_aloud,
         )
 
 
@@ -526,11 +515,21 @@ class Decision:
     @property
     def speakable(self) -> bool:
         """
-        True whenever there are words. A safety hold pages a human; it never
-        withholds what the client said. 2026-10-29: this was False on every
-        safety hold, so a client who typed "I want to kill myself" on an AAC
-        board was silenced at the moment they asked for help.
+        True whenever there are words, except under the silent alarm.
+
+        A safety hold pages a human; it never withholds what the client said.
+        2026-10-29: this was False on every safety hold, so a client who typed
+        "I want to kill myself" on an AAC board was silenced at the moment
+        they asked for help.
+
+        The one exception is Everett's own (rulings I and K, 2026-10-29): a
+        danger sentence ("I'm scared for my safety", "he is hurting me") is
+        not voiced, so the client is not put in more danger, unless the client
+        asked for it aloud or the setting is public. Its words are unchanged
+        in `input_text` and `safety.said`, and they reach the human.
         """
+        if self.safety.silent_alarm and not self.safety.voice_aloud:
+            return False
         return bool(self.input_text)
 
     @property
@@ -625,8 +624,14 @@ class FusionEngine:
         live_state = live_state or {}
 
         affect = self.carbon_layer.encode(user_input)
-        constraints = self.silicon.retrieve(affect, live_state)
 
+        # THE PAGE FIRES FIRST (Everett, 2026-10-29, ruling M). "That slowing
+        # down and confirming is enough time for a veteran to shoot
+        # themselves in the head, or for an assailant to stab a victim."
+        # Aegis hands a hard block to a human here, before the domain is
+        # retrieved, before the mode, the delivery or any reply exists, and
+        # nothing after this line can delay it or take it back. Nothing in
+        # the crisis path waits on a confirmation, a reply, or a pace.
         safety = self.aegis.check(
             user_input,
             context={
@@ -636,6 +641,8 @@ class FusionEngine:
                 **live_state,
             },
         )
+
+        constraints = self.silicon.retrieve(affect, live_state)
 
         rec = reconcile(affect.valence, affect.is_self_distress, prosody)
         mode, unknown_reason = self._resolve_mode(
@@ -772,13 +779,17 @@ class FusionEngine:
                 **provenance,
             }
 
-        # HELD FOR EVERETT (2026-10-29). The Replit handoff made pace, warmth,
-        # silence and confirm-before-acting follow the mode (a safety hold
-        # and a gentle lift "slower", a safety hold "confirm"), and added a
-        # `safety_flag` field. That changes how the client's own distress is
-        # delivered, so this is main's (e35fe46) delivery, unchanged, and the
-        # question is written for Everett.
-        return {
+        # HELD FOR EVERETT (2026-10-29). The Replit handoff made pace, warmth
+        # and silence follow the mode (a safety hold and a gentle lift
+        # "slower") and added a `safety_flag` field. That changes how the
+        # client's own distress is delivered, so this is main's (e35fe46)
+        # delivery, and the question is written for Everett.
+        #
+        # Ruling M (Everett, 2026-10-29): a safety hold carries no "confirm
+        # before acting" at all. The page has already gone (see fuse); this
+        # is only how the being speaks afterward, and it never sits in front
+        # of the page.
+        delivery = {
             "pace": constraints.get("pace", "normal"),
             "warmth": constraints.get("warmth", "balanced"),
             "allow_silence": constraints.get("allow_silence", True),
@@ -788,6 +799,10 @@ class FusionEngine:
             "assert_nothing": False,
             **provenance,
         }
+        if mode == MODE_SAFETY_HOLD:
+            del delivery["confirm_before_acting"]
+            delivery["page_sent_first"] = bool(safety is not None and safety.delivered_to_human)
+        return delivery
 
     def _update_shared_state(self, update: Dict[str, Any]) -> None:
         self.shared_state.update(update)
