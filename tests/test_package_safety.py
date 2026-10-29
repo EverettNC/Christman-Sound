@@ -338,6 +338,19 @@ def test_the_people_served_are_clients_in_the_whole_package():
         assert not pattern.search(said), said
 
 
+def test_not_run_is_read_whatever_its_case():
+    # 2026-10-29 review: "NOT RUN: ..." in capitals was left out of the list.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_cs_conftest", ROOT / "tests" / "conftest.py")
+    conftest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(conftest)
+    for message in ("not run: git is missing", "NOT RUN: git is missing",
+                    "Not Run: git is missing", "Skipped: NOT RUN: git is missing"):
+        assert conftest._not_run_reason(message) == "git is missing", message
+    assert conftest._not_run_reason("skipped for no reason") is None
+
+
 def test_no_avatar_flag_is_left_on():
     # Ruling AC (2026-10-29 review): no avatar work is done in this package,
     # so no flag says it is on.

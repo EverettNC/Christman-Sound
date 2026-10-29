@@ -5,7 +5,7 @@
 """
 No outside voice anywhere in the package.
 
-Ruling these tests are written to (Everett, 2026-10-17): the AlphaVox rebuild
+Ruling these tests are written to (Everett, 2026-10-17): the rebuild
 cuts every outside speech engine — no Coqui TTS / XTTS, no GPT-SoVITS, no
 Apple `say`, no espeak, no pyttsx3, no gTTS, no pygame playback. A being
 speaks in its own voice through Christman-Sound, or it does not speak and

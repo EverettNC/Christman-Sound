@@ -404,6 +404,7 @@ def test_engine_refusals_carry_their_reason(dsp, lexicon_file):
 
 # ------------------------------------------------------------ sovereignty
 
+@pytest.mark.needs_dsp
 def test_synth_path_imports_no_outside_audio_or_numeric_package(tmp_path):
     """Run the whole text-to-samples path with numpy, scipy, soundfile,
     sounddevice, pygame and librosa made unimportable."""

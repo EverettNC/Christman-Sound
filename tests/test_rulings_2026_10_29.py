@@ -288,6 +288,7 @@ LEXICON = Path(os.environ.get("CHRISTMAN_LEXICON_PATH")
                or Path.home() / "models" / "vosk-model-en-us-0.22" / "graph" / "phones" / "align_lexicon.txt")
 
 
+@pytest.mark.needs_dsp
 def test_E_both_directions_through_the_mouth(tmp_path):
     """The client's "calm down" is spoken as typed; the being's is refused
     with nothing written. Rendered to a file, never played."""

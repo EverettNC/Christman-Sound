@@ -121,6 +121,7 @@ def _vowel_medians(dsp, voice):
     return tuple(statistics.median(getattr(f, k) for f in fr) for k in ("f1_hz", "f2_hz", "f3_hz"))
 
 
+@pytest.mark.needs_dsp
 def test_measured_vowel_reaches_the_output_and_codec_wars_does_not(dsp, voice):
     """
     UW is the vowel the measurement moved most from Codec War's table (F2
@@ -297,7 +298,11 @@ def test_measurement_from_a_beings_recordings(tmp_path):
     load_voice_profile(out)
     ref_path = os.environ.get("CHRISTMAN_VOICE_REFERENCE_PROFILE")
     if not ref_path:
-        return
+        # 2026-10-29 review: this returned here and the test PASSED, though
+        # the comparison with the reference profile below never ran.
+        pytest.skip("not run: the comparison with the earlier measured profile needs "
+                    "CHRISTMAN_VOICE_REFERENCE_PROFILE (the measurement above ran and "
+                    "passed its checks); runs on Everett's Mac")
     ref = json.loads(Path(ref_path).expanduser().read_text(encoding="utf-8"))
     # The old recognizer's word times on the same file moved by up to one
     # 30 ms frame from run to run (measured 2026-10-28: 3 to 4 of 26

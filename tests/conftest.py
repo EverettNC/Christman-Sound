@@ -24,6 +24,14 @@ christman_play (the C entry that drives the speakers), it fails at once,
 before any sample is played, naming the marker it needs. A test that swaps
 in its own christman_play (tests/test_playback_honest.py) is not stopped,
 because nothing it plays reaches a speaker.
+
+2026-10-29 REVIEW
+-----------------
+"not run:" is read whatever its case ("NOT RUN:" was missed). A test that
+renders or measures through the compiled christman_dsp library carries
+`@pytest.mark.needs_dsp`; where the library is not built it is NOT RUN with
+the loader's own reason, instead of failing (test_formants already did this
+for its whole module).
 """
 
 from __future__ import annotations
@@ -38,14 +46,44 @@ PLAY_ALOUD_ENV = "CHRISTMAN_SOUND_PLAY_ALOUD"
 PLAY_ALOUD_MARK = "plays_aloud"
 
 
+NEEDS_DSP_MARK = "needs_dsp"
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         f"{PLAY_ALOUD_MARK}: plays sound through the speakers; runs only when {PLAY_ALOUD_ENV}=1",
     )
+    config.addinivalue_line(
+        "markers",
+        f"{NEEDS_DSP_MARK}: renders or measures through the compiled christman_dsp library; "
+        "NOT RUN, with the reason, where it is not built",
+    )
+
+
+def _dsp_missing():
+    """Why christman_dsp cannot be used here, or None when it can."""
+    try:
+        from christman_sound.dsp import get_dsp
+    except ImportError as exc:
+        return f"christman_sound.dsp could not be imported ({exc})"
+    dsp = get_dsp()
+    return None if dsp.available else dsp.error
 
 
 def pytest_collection_modifyitems(config, items):  # noqa: ARG001
+    # 2026-10-29 review: with christman_dsp not built, eleven tests FAILED
+    # instead of saying they could not run. test_formants already reported
+    # NOT RUN for this; every test that needs the library now does the same.
+    if any(item.get_closest_marker(NEEDS_DSP_MARK) for item in items):
+        missing = _dsp_missing()
+        if missing is not None:
+            skip_dsp = pytest.mark.skip(
+                reason=(f"{NOT_RUN_PREFIX} christman_dsp is not built here ({missing}). "
+                        "Build it with python3 scripts/build_dsp.py and run again."))
+            for item in items:
+                if item.get_closest_marker(NEEDS_DSP_MARK):
+                    item.add_marker(skip_dsp)
     if os.environ.get(PLAY_ALOUD_ENV) == "1":
         return
     skip = pytest.mark.skip(
@@ -96,12 +134,23 @@ def _skip_message(report) -> str:
     return str(longrepr)
 
 
+def _not_run_reason(message: str):
+    """
+    The reason after "not run:", whatever its case ("NOT RUN:", "Not run:"),
+    or None. 2026-10-29 review: this matched lower case only, so a test that
+    skipped with "NOT RUN: ..." was left out of the NOT RUN list.
+    """
+    at = message.lower().find(NOT_RUN_PREFIX)
+    if at < 0:
+        return None
+    return message[at + len(NOT_RUN_PREFIX):].strip()
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: ARG001
     not_run = []
     for report in terminalreporter.stats.get("skipped", []):
-        message = _skip_message(report)
-        if NOT_RUN_PREFIX in message:
-            reason = message.split(NOT_RUN_PREFIX, 1)[1].strip()
+        reason = _not_run_reason(_skip_message(report))
+        if reason is not None:
             not_run.append((report.nodeid, reason))
     if not not_run:
         return

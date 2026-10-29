@@ -52,6 +52,7 @@ def _tone(freq: float, seconds: float = 1.0) -> np.ndarray:
 # quarantine/2026-10_outside_voices/tests/test_synthesis_outside_engines.py.
 # -----------------------------------------------------------------------------
 
+@pytest.mark.needs_dsp
 def test_mouth_without_a_lexicon_raises_the_lexicon_failure_and_writes_nothing(tmp_path, monkeypatch):
     """No lexicon configured: the lexicon's own typed failure, unchanged, and no file."""
     from christman_sound.lexicon import LexiconUnavailable
@@ -94,6 +95,7 @@ def test_mouth_without_the_engine_raises_nothing_voiced_with_the_loaders_reason(
     assert not cache.exists() or list(cache.iterdir()) == []
 
 
+@pytest.mark.needs_dsp
 def test_synthesize_speech_raises_instead_of_returning_none(tmp_path, monkeypatch):
     from christman_sound.lexicon import LexiconUnavailable
     from christman_voice_sdk.synthesis import voice_synthesis as vs
@@ -109,6 +111,7 @@ def test_synthesize_speech_raises_instead_of_returning_none(tmp_path, monkeypatc
         vs.synthesize_speech("hello")  # type: ignore[call-arg]  the caller's voice is required
 
 
+@pytest.mark.needs_dsp
 def test_mouth_has_no_outside_engine_left(monkeypatch):
     from christman_voice_sdk.synthesis import voice_synthesis as vs
 
@@ -151,6 +154,7 @@ def test_shorty_quantifies_then_refuses_to_render():
     assert err.voice_params == eng.quantify_emotion("hello", "happy", 0.0)["voice_params"]
 
 
+@pytest.mark.needs_dsp
 def test_orchestrator_speaks_only_in_the_callers_voice(tmp_path, monkeypatch):
     """No voice: refused with the reason. A non-neutral emotion: refused as a control the voice has no input for."""
     # VoicepackBuilder creates data/voicepacks relative to the working directory.
