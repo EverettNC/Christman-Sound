@@ -239,6 +239,28 @@ def _seq(value, n=10, dim=4):
     return [np.full(dim, value, dtype=float) for _ in range(n)]
 
 
+def test_temporal_never_opens_a_pickle(tmp_path, monkeypatch):
+    # Cardinal Rule 12, Everett's ruling on the 2026-10-29 review: the gated
+    # pickle load is gone. A .pkl model is refused with the reason, whatever
+    # the environment says, and pickle.load is never reached.
+    import pickle
+
+    def refuse(*a, **k):
+        raise AssertionError("pickle.load was called")
+
+    monkeypatch.setattr(pickle, "load", refuse)
+    monkeypatch.setenv("CORTI_ALLOW_PICKLE_MODELS", "1")      # the old opt-in does nothing
+    (tmp_path / "gesture_lstm_model.pkl").write_bytes(pickle.dumps({"x": 1}))
+    t = TemporalNonverbalEngine(lstm_model_dir=str(tmp_path))
+    assert t.models["gesture"] is None
+    assert "Cardinal Rule 12" in t.load_errors["gesture"]
+    import inspect
+
+    from christman_voice_sdk.nonverbal import engine_temporal as et
+    assert "pickle.load(" not in inspect.getsource(et).split('"""', 2)[2]
+    assert "model_digests" not in inspect.signature(TemporalNonverbalEngine).parameters
+
+
 def test_temporal_with_no_models_says_so():
     t = TemporalNonverbalEngine()
     r = t.process_multimodal_sequence(gesture_features=np.zeros(4))

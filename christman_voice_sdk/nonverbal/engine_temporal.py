@@ -37,8 +37,10 @@ WHAT CHANGED AND WHY
 
    `pickle.load` executes arbitrary code during deserialization. Model and
    label files are inputs. REMEDIATION Phase 4 lists this. Labels now load
-   from JSON. Model pickles require an explicit opt-in AND a SHA-256 that
-   matches a recorded digest.
+   from JSON. Model pickles first required an explicit opt-in AND a
+   SHA-256 that matched a recorded digest; since the 2026-10-29 review
+   (Cardinal Rule 12, no pickle of data we did not write) a pickle is never
+   loaded at all. A .pkl model file is refused with the reason.
 
 3. `except (ImportError, Exception)` — the second clause makes the first
    meaningless, and it caught everything including KeyboardInterrupt's
@@ -107,7 +109,6 @@ WHAT CHANGED AND WHY
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -118,10 +119,6 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
-
-#: Set to "1" to permit loading pickled model files. OFF by default —
-#: pickle.load executes arbitrary code. A digest must also match.
-ALLOW_PICKLE_ENV = "CORTI_ALLOW_PICKLE_MODELS"
 
 #: The built-in map. An entry carries its meaning, not a fixed speak/silent
 #: flag (Everett, 2026-10-29, ruling L), and NO WORDING (ruling J: the
@@ -274,7 +271,6 @@ class TemporalNonverbalEngine:
         # it. It must match the length the trained models were fit on; the
         # reason for 10 is Everett's to give.
         sequence_length: int = 10,
-        model_digests: Optional[Dict[str, str]] = None,
         # 0.6: a chosen starting value, not a measurement. Held until client
         # data replaces it. Reason: the same bar as nonverbal_engine, so one
         # number decides "say it" across both engines; it sits above the 0.5
@@ -287,8 +283,6 @@ class TemporalNonverbalEngine:
                 none, every modality reports `unavailable` and says why.
             language_map_path: a JSON language map. None uses the built-in
                 map and reads nothing.
-            model_digests: modality -> expected SHA-256 of its model file.
-                Required alongside the env opt-in before any pickle is loaded.
             confidence_threshold: a reading below this is `below_threshold`
                 and speaks nothing.
         """
@@ -297,7 +291,6 @@ class TemporalNonverbalEngine:
         self.lstm_model_dir = lstm_model_dir
         self.language_map_path = language_map_path
         self.sequence_length = int(sequence_length)
-        self.model_digests = dict(model_digests or {})
         self.confidence_threshold = float(confidence_threshold)
 
         self.gesture_buffer: List[Any] = []
@@ -383,14 +376,6 @@ class TemporalNonverbalEngine:
 
     # -- Model loading --------------------------------------------------------
 
-    @staticmethod
-    def _sha256(path: str) -> str:
-        hasher = hashlib.sha256()
-        with open(path, "rb") as fh:
-            while chunk := fh.read(8192):
-                hasher.update(chunk)
-        return hasher.hexdigest()
-
     def _load_models(self) -> None:
         """Load each modality's model, or record why it could not be loaded."""
         if self.lstm_model_dir is None:
@@ -437,28 +422,14 @@ class TemporalNonverbalEngine:
             return self._require_predict(model, keras_path)
 
         if os.path.exists(pickle_path):
-            if os.getenv(ALLOW_PICKLE_ENV, "0") != "1":
-                raise ModelLoadError(
-                    f"{pickle_path} is a pickle. pickle.load executes arbitrary "
-                    f"code during deserialization; set {ALLOW_PICKLE_ENV}=1 and "
-                    "supply a model_digests entry to permit it."
-                )
-            expected = self.model_digests.get(modality)
-            if not expected:
-                raise ModelLoadError(
-                    f"{pickle_path}: no expected SHA-256 in model_digests[{modality!r}]. "
-                    "Refusing to unpickle an unverified file."
-                )
-            actual = self._sha256(pickle_path)
-            if actual != expected:
-                raise ModelLoadError(
-                    f"{pickle_path}: digest mismatch. expected {expected[:16]}…, "
-                    f"got {actual[:16]}…"
-                )
-            import pickle  # imported only on the verified path
-            with open(pickle_path, "rb") as fh:
-                model = pickle.load(fh)
-            return self._require_predict(model, pickle_path)
+            # Cardinal Rule 12 (no pickle of data we did not write), Everett's
+            # ruling on the 2026-10-29 review: the gated pickle load (an
+            # environment opt-in plus a SHA-256) is removed. A pickle is
+            # never opened, whatever the setting.
+            raise ModelLoadError(
+                f"{pickle_path} is a pickle, and pickles are not loaded (Cardinal "
+                "Rule 12: no pickle of data we did not write). Save the model as "
+                f"{stem}.keras.")
 
         raise ModelLoadError(f"no model file for {modality} in {self.lstm_model_dir}")
 
@@ -754,7 +725,7 @@ def get_temporal_engine(**kwargs: Any) -> TemporalNonverbalEngine:
 __all__ = [
     "TemporalNonverbalEngine", "ClassificationResult", "ModelLoadError",
     "get_temporal_engine", "DEFAULT_LANGUAGE_MAP", "DEFAULT_LABELS",
-    "ALLOW_PICKLE_ENV", "SYSTEM_NOTES", "PAGING_INTENTS", "GENERIC_FEELING_INTENTS",
+    "SYSTEM_NOTES", "PAGING_INTENTS", "GENERIC_FEELING_INTENTS",
 ]
 
 # ==============================================================================
