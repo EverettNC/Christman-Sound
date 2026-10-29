@@ -136,9 +136,8 @@ def test_every_unguarded_third_party_import_is_declared():
 def test_the_scan_sees_the_imports_that_were_missing():
     """The scan itself works: it finds the imports that broke installs.
 
-    websockets was the fourth; since 2026-10-29 no module imports it at module
-    top (christman_ocr_shared no longer does, and voice_capture_client imports
-    it inside a function), so the scan rightly no longer sees it."""
+    websockets was the fourth; since 2026-10-29 nothing in the package imports
+    it, and it is no longer declared."""
     seen = {m for f in _scanned_files() for m, _ in _unguarded_imports(f)}
     assert {"yaml", "scipy", "numpy"} <= seen
 

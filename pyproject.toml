@@ -35,23 +35,21 @@ authors = [
 # - Added what the package imports at module top but did not declare:
 #   scipy (audio_processor, voice_capture_client, the tone engines),
 #   PyYAML (audio/config.py, imported by christman_voice_sdk/__init__.py),
-#   websockets (integration/voice_capture_client.py, whose capture and profile
-#   functions the package exports), and
-#   werkzeug (synthesis/tts_service.py imports it by name; flask needs it too).
+#   and werkzeug (synthesis/tts_service.py imports it by name; flask needs it too).
 # - cryptography is optional (voicepack encryption), so it is the "crypto"
 #   extra, not a base dependency.
 # WHAT CHANGED AND WHY (2026-10-29)
 # - crypto_bridge.py was removed from this repository, with its references
 #   here. christman_ocr_shared.py stays, being-neutral: it speaks through
-#   christman_sound and no longer imports websockets. websockets stays:
-#   voice_capture_client.py imports it inside the function that sends text to
-#   a relay.
+#   christman_sound.
+# - "websockets" removed. Nothing in the package imports it any more: the OCR
+#   and voice_capture_client both speak through christman_sound, and the relay
+#   that needed a websocket is gone.
 dependencies = [
     "numpy<2",
     "scipy",
     "soundfile",
     "PyYAML",
-    "websockets",
     # Intel Mac ceiling: PyTorch stopped publishing x86_64 macOS wheels after
     # 2.2.2. The marker keeps other platforms unpinned.
     "torch<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
