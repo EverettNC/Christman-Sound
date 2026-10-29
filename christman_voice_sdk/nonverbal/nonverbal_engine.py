@@ -178,13 +178,13 @@ CONFIDENCE_FLOOR = 0.20
 CONFIDENCE_CEILING = 0.95
 
 #: Intents that mean a person needs a human. Everett, 2026-10-29: "A
-#: nonverbal client's distress (the grunt; the help, pain and medicine
-#: symbols) must reach the crisis gate and a human." The grunt key, the
+#: nonverbal client's distress is just as important as a verbal client's."
+#: So the grunt, the help, pain and medicine symbols reach the crisis gate
+#: and a human. The grunt key, the
 #: "distress" sound and the point_up gesture map to "help"; the symbols map
 #: to need_help, pain and need_medicine. A fixed list of intents: add an
-#: intent here and it pages. (The quotation above is as the handoff wrote it;
-#: it was not in the rulings relayed to this session, so it is listed for
-#: Everett to confirm.)
+#: intent here and it pages. (The quotation is Everett's own words, as he
+#: gave them 2026-10-29, ruling AF; the handoff's wording is replaced.)
 #: DANGER. Everett, 2026-10-29 (ruling I, the silent alarm): a danger
 #: signal (help, scared, being attacked, "I'm scared for my safety"), from any
 #: channel, is NEVER spoken aloud and NEVER announced. It goes straight to a
@@ -244,8 +244,8 @@ def distress_readings(readings: "List[Interpretation]") -> "List[Interpretation]
     """
     The readings that must reach a human.
 
-    Everett, 2026-10-29: "Nonverbal distress is exactly the same as verbal
-    distress." A recognized distress reading counts at ANY confidence: the
+    Everett, 2026-10-29: "A nonverbal client's distress is just as important
+    as a verbal client's." A recognized distress reading counts at ANY confidence: the
     confidence bar never decides whether help comes. The bar decides only
     whether the engine may put words in someone's mouth for a reading it
     could have got wrong. Unrecognized input never counts — nothing is
@@ -329,8 +329,8 @@ class MapValidationError(ValueError):
 #
 # EVERY NUMBER BELOW IS A CHOSEN STARTING VALUE, NOT A MEASUREMENT. Each is
 # held until client data replaces it. They were in these tables before
-# 2026-10-29 with no reason written; the reasons are written now (Everett,
-# 2026-10-29: "every fixed number gets its reason beside it"):
+# 2026-10-29 with no reason written; the reasons are written now (Everett's
+# ruling, 2026-10-29: every fixed number gets its reason beside it):
 #
 #   0.9  a deliberate signal with one meaning: a pressed symbol ("pain",
 #        "help"), a nod, a shake, a thumbs up/down, the distress sound keys.
@@ -353,8 +353,9 @@ class MapValidationError(ValueError):
 #   eye region at 0.8: long_stare. At 0.7: rapid_scan.
 #   vocal_stimming at 0.9, while the stimming gesture is 0.7.
 #
-# THE SYMBOLS' NUMBERS ARE NOT A SPEAKING GATE (Everett, 2026-10-29). "A
-# symbol or key the client pressed counts like a spoken word." The bar
+# THE SYMBOLS' NUMBERS ARE NOT A SPEAKING GATE (Everett's ruling C,
+# 2026-10-29: a symbol or key the client pressed counts like a spoken
+# word). The bar
 # (confidence_threshold) is for readings this package could get wrong: a
 # camera's gesture, an eye region, a sound the microphone classified. A
 # pressed symbol is not a guess, so its number never decides whether it
@@ -660,8 +661,8 @@ class NonverbalEngine:
         """
         if interp.status is not Status.OK:
             return interp
-        # A PRESSED SYMBOL IS NOT UNDER THE BAR (Everett, 2026-10-29): "a
-        # symbol or key the client pressed counts like a spoken word." The bar
+        # A PRESSED SYMBOL IS NOT UNDER THE BAR (Everett's ruling C, 2026-10-29:
+        # a symbol or key the client pressed counts like a spoken word). The bar
         # exists for readings this package could get wrong: a camera's
         # gesture, an eye region, a sound the microphone classified. A symbol
         # is not a reading; the client chose it. So the typed confidence in

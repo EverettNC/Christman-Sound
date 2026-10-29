@@ -25,7 +25,8 @@ the template. Three things changed.
 
 1. THE REWRITER AND THE REDACTOR ARE GONE (Everett, 2026-10-29).
 
-   "We never change the truth, ever. We never sanitize anything." This file
+   His ruling: never change the truth; nothing sanitizes what a person
+   said. This file
    had `make_incisive`, `propose_rewrite` and `RewriteProposal`: they cut
    words out of a client's sentence and could put "[redacted]" in place of
    profanity. Removed, not switched off. A client's words are kept and

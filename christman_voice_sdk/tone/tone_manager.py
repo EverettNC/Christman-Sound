@@ -65,7 +65,10 @@ logger.addHandler(logging.NullHandler())
 # always ran and a private copy of NEGATORS (missing "nobody", "neither",
 # "nor", "hardly", "barely", "ain't" in places) silently diverged from the
 # reader's own.
-from ..audio.structural_affect import NEGATORS, SCOPE_BREAKERS
+# Everett, 2026-10-29 (ruling AE): the shared reading words, with every
+# correction ruled today, are the starting point; a client's learned words
+# extend or override them through ReadingWords.for_client.
+from ..audio.structural_affect import SHARED_READING_WORDS, ReadingWords
 
 
 _WORD = re.compile(r"[a-z']+")
@@ -104,20 +107,22 @@ def _tokens(text: str) -> List[str]:
     return out
 
 
-def _negated_at(tokens: Sequence[str], index: int) -> bool:
+def _negated_at(tokens: Sequence[str], index: int,
+                words: ReadingWords = SHARED_READING_WORDS) -> bool:
     for back in range(1, NEGATION_WINDOW + 1):
         j = index - back
         if j < 0:
             return False
         tok = tokens[j]
-        if tok in NEGATORS:
+        if tok in words.negators:
             return True
-        if tok == CLAUSE_BOUNDARY or tok in SCOPE_BREAKERS:
+        if tok == CLAUSE_BOUNDARY or tok in words.scope_breakers:
             return False
     return False
 
 
-def _live_matches(tokens: Sequence[str], markers: Set[str]) -> List[str]:
+def _live_matches(tokens: Sequence[str], markers: Set[str],
+                  words: ReadingWords = SHARED_READING_WORDS) -> List[str]:
     """Markers present and NOT inside a negation. Word-boundary matched."""
     found: List[str] = []
     joined = " ".join(tokens)
@@ -125,7 +130,7 @@ def _live_matches(tokens: Sequence[str], markers: Set[str]) -> List[str]:
         parts = marker.split()
         if len(parts) == 1:
             for i, tok in enumerate(tokens):
-                if tok == marker and not _negated_at(tokens, i):
+                if tok == marker and not _negated_at(tokens, i, words):
                     found.append(marker)
                     break
         elif f" {marker} " in f" {joined} ":
@@ -134,7 +139,7 @@ def _live_matches(tokens: Sequence[str], markers: Set[str]) -> List[str]:
                  if list(tokens[i:i + len(parts)]) == parts),
                 None,
             )
-            if idx is not None and not _negated_at(tokens, idx):
+            if idx is not None and not _negated_at(tokens, idx, words):
                 found.append(marker)
     return found
 
@@ -171,7 +176,11 @@ class ToneManager:
     #: Optional caller-supplied phrasing. EMPTY by default — nothing is
     #: prepended to a reply unless someone configures it. The predecessor
     #: injected fixed sentences into the being's voice.
-    def __init__(self, intro_phrases: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, intro_phrases: Optional[Dict[str, str]] = None,
+                 reading_words: Optional[ReadingWords] = None) -> None:
+        # Ruling AE: the shared reading words, or this client's learned layer
+        # over them (ReadingWords.for_client).
+        self.words = reading_words or SHARED_READING_WORDS
         self.intro_phrases: Dict[str, str] = dict(intro_phrases or {})
         self.profile: Dict[str, Any] = dict(DEFAULT_PROFILE)
         self.reading = ToneReading()
@@ -310,7 +319,7 @@ class ToneManager:
         best: Optional[Tuple[int, str]] = None
 
         for name, (markers, label, weight) in groups.items():
-            hits = _live_matches(tokens, markers)
+            hits = _live_matches(tokens, markers, self.words)
             if hits:
                 matched[name] = hits
                 cues.append(name)
