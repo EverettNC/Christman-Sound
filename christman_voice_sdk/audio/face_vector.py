@@ -127,11 +127,6 @@ class FaceVector:
     defer_to_human: bool
     reason: str
     notes: List[str] = field(default_factory=list)
-    #: The clauses the reading came from, each with whose state it is.
-    #: 2026-10-29 (Everett: "who did what to whom"): the face is told which
-    #: clause moved it, so "my mom's in pain" never moves the speaker's face.
-    #: Each carries `said`: the person's own words for that clause, exactly.
-    clauses: Tuple[Dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.values) != 8 or len(self.measured) != 8:
@@ -163,7 +158,6 @@ class FaceVector:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "output": "soul_mirror",
             "slots": dict(zip(PLUTCHIK, self.values)),
             "measured": dict(zip(PLUTCHIK, self.measured)),
             "measured_slots": self.measured_slots,
@@ -180,7 +174,6 @@ class FaceVector:
             "defer_to_human": self.defer_to_human,
             "reason": self.reason,
             "carries_full_plutchik": False,
-            "clauses": [dict(c) for c in self.clauses],
             "notes": list(self.notes),
         }
 
@@ -316,12 +309,6 @@ def build_face_vector(
         defer_to_human=rec.defer_to_human,
         reason=rec.reason,
         notes=notes,
-        clauses=tuple(
-            # The person's own words for the clause, exactly as said.
-            {"said": c.said, "placed": c.said_placed,
-             "attribution": c.attribution.value}
-            for c in (affect.clauses if affect is not None else [])
-        ),
     )
 
     if not vec.any_measured:

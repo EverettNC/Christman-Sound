@@ -60,13 +60,25 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-# One negation set for the whole package. 2026-10-29: this read a top-level
-# `structural_affect` module that exists nowhere, so the ImportError branch
-# always ran and a private copy of NEGATORS (missing "nobody", "neither",
-# "nor", "hardly", "barely", "ain't" in places) silently diverged from the
-# reader's own.
-from ..audio.structural_affect import NEGATORS, SCOPE_BREAKERS
+try:
+    from structural_affect import NEGATORS, SCOPE_BREAKERS
+except ImportError:
+    NEGATORS = frozenset({
+        "not", "no", "never", "none", "nothing", "cannot", "without",
+        "don't", "dont", "doesn't", "doesnt", "didn't", "didnt",
+        "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt", "won't", "wont",
+    })
+    SCOPE_BREAKERS = frozenset({
+        "but", "however", "although", "though", "yet", "because", "since",
+        "while", "and", "or", "so", "then",
+    })
 
+try:
+    from tone_engine import ResponseMode, ToneContext, ToneEngine, ToneProfile
+    _tone_engine_ok = True
+except ImportError:
+    ResponseMode = ToneContext = ToneEngine = ToneProfile = None
+    _tone_engine_ok = False
 
 _WORD = re.compile(r"[a-z']+")
 CLAUSE_BOUNDARY = "\x00"
@@ -145,7 +157,7 @@ class ToneReading:
 
     emotion_state: str = "unknown"
     cues: List[str] = field(default_factory=list)
-    source: str = "none"                 # caller_profile | keyword_fallback | none
+    source: str = "none"                 # tone_engine | keyword_fallback | none
     missing_fields: List[str] = field(default_factory=list)
     matched_markers: Dict[str, List[str]] = field(default_factory=dict)
 
@@ -178,28 +190,32 @@ class ToneManager:
 
     # -- Interpretation -------------------------------------------------------
 
-    def analyze_user_input(self, text: str) -> ToneReading:
+    def analyze_user_input(self, text: str, prior_misread: bool = False) -> ToneReading:
         """
         Interpret input and update delivery settings.
 
         Returns a ToneReading rather than a bare string, so the caller can see
         which analyzer ran and whether any expected field was missing.
-
-        2026-10-29: this tried a top-level `tone_engine` module first. No such
-        module exists in this package or anywhere it ships, so the keyword
-        reader always ran. That is now said plainly instead of tried. A caller
-        holding a real tone profile passes it to `apply_profile`.
         """
-        reading = self._from_keywords(text)
+        if _tone_engine_ok:
+            reading = self._from_tone_engine(text, prior_misread)
+        else:
+            reading = self._from_keywords(text)
         self.reading = reading
         return reading
 
-    def apply_profile(self, profile: Any, mode: Any) -> ToneReading:
-        """
-        Delivery settings from a tone profile the caller already has.
+    def _from_tone_engine(self, text: str, prior_misread: bool) -> ToneReading:
+        try:
+            engine = ToneEngine()
+            profile = engine.analyze(
+                ToneContext(user_said=text, prior_misread=prior_misread,
+                            explicit_state=None)
+            )
+            mode = engine.choose_mode(profile)
+        except Exception as exc:
+            logger.error("ToneEngine failed: %s", exc, exc_info=True)
+            return self._from_keywords(text)
 
-        Missing fields are reported, never read as 0.0.
-        """
         missing = [f for f in REQUIRED_PROFILE_FIELDS if not hasattr(profile, f)]
         if missing:
             # The predecessor defaulted these to 0.0, so a profile without
@@ -208,9 +224,8 @@ class ToneManager:
                 "ToneProfile is missing %s. These are NOT treated as zero.",
                 missing,
             )
-        reading = self._apply_profile(profile, mode, missing)
-        self.reading = reading
-        return reading
+
+        return self._apply_profile(profile, mode, missing)
 
     def _apply_profile(
         self, profile: Any, mode: Any, missing: List[str]
@@ -279,7 +294,7 @@ class ToneManager:
             }.get(mode_name, "neutral")
 
         return ToneReading(
-            emotion_state=state, cues=cues, source="caller_profile",
+            emotion_state=state, cues=cues, source="tone_engine",
             missing_fields=missing,
         )
 
