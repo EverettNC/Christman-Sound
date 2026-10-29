@@ -111,6 +111,15 @@ def test_2_harm_happening_now_pages_at_once_silently(text):
     assert s.silent_alarm is True and s.voice_aloud is False
 
 
+@pytest.mark.parametrize("text", ["he won't stop hitting me", "he will not stop choking me",
+                                  "she never stops hurting me"])
+def test_2_wont_stop_is_harm_now_not_harm_denied(text):
+    # Found in this rework: main cleared "he won't stop hitting me" with no page.
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == "harm_now_to_client"
+
+
 @pytest.mark.parametrize("text", ["he will hurt me", "he is going to kill me", "he might hit me"])
 def test_2_a_threat_still_pages_at_once(text):
     turn, pager = _hear(text)

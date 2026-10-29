@@ -220,6 +220,12 @@ _BODY_HARM_ME = re.compile(
     r"\b(?P<verb>" + "|".join(sorted(_HARM_VERB_FORMS, key=len, reverse=True)) + r")\s+"
     r"me\b(?!\s+(?:in|on)\s+(?:the|my)\s+)")
 _PAST_TIME = frozenset({"yesterday", "ago", "earlier", "last"})
+#: "he won't stop hitting me" is harm going on now, not harm denied. The
+#: frame reader marks it negated (the "won't"), and on main it cleared with
+#: no page at all, while "he won't stop hurting my arm" paged. Found in the
+#: 2026-10-29 rework of ruling H; the negator is on "stop", not on the harm.
+_WONT_STOP = re.compile(
+    r"\b(?:won'?t|will not|doesn'?t|does not|don'?t|do not|never)\s+stops?\s+\w+ing\s+me\b")
 
 
 @dataclass(frozen=True)
@@ -626,6 +632,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
     `previous_turn` (ruling X) anchors a subjectless fragment ("it hurts")."""
     frames = extract_frames(original)
     harms = body_harm(original)
+    wont_stop = bool(_WONT_STOP.search(normalize_apostrophes(original or "").lower()))
     # Ruling H (Everett, 2026-10-29), "verb plus me": "he choked me" and "she
     # stabbed me last week" are read for their time like "he hurt my neck",
     # not paged at once as a bare harm predicate. Only a plain statement
@@ -634,8 +641,10 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
     timed: List[HarmFrame] = []
     for frame in frames:
         if (frame.shape == "verb" and frame.patient is Party.SPEAKER
-                and frame.subject is not Party.SPEAKER and frame.modality is FrameModality.NONE
-                and frame.polarity is Polarity.HARM and not frame.negated
+                and frame.subject is not Party.SPEAKER
+                and (frame.modality is FrameModality.NONE or wont_stop)
+                and frame.polarity is Polarity.HARM
+                and (not frame.negated or wont_stop)
                 and any(_stem(h.verb) == frame.predicate for h in harms)):
             timed.append(frame)
     harms = [h for h in harms if h.part
