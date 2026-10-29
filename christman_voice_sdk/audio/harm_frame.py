@@ -270,10 +270,19 @@ MODAL_PATTERNS: Tuple[Tuple[str, Modality], ...] = (
 #: (hearing.harm_frame_safety, reason "harm_frame_history_self"). Being
 #: history changes the reason, not whether a human is reached.
 #:
-#: "he choked me yesterday" pages today: "yesterday" is not a distancing
-#: marker, so the frame is read as live. That is current behavior, pending
-#: Everett's decision on it; it is not his ruling. (The comment used to
-#: call it Claude's "ruling on his open item".)
+#: Everett's ruling H (2026-10-29) decides "he choked me yesterday", and
+#: every "verb plus me" sentence by someone else, outside this list. This
+#: reader still finds the frame; the crisis gate (hearing._words_gate) then
+#: reads its time the same way as "he hurt my neck":
+#:   - Past physical harm ("he choked me", "she stabbed me", "he punched me",
+#:     "he choked me yesterday", "she stabbed me last week") does not page at
+#:     once. The being is handed an ask-if-safe mark. It pages when the
+#:     client asks for help in the same turn or answers "no" to the ask.
+#:   - Harm happening now ("he is choking me", "she's stabbing me", "he keeps
+#:     hitting me", "he's starting to choke me") pages at once, silently.
+#:   - A threat ("he will hurt me", "he is going to kill me") stays a crisis
+#:     frame and pages at once, as before.
+#: Self-harm (ruling A) and someone else at risk (ruling D) are not moved.
 _PAST_BEFORE = re.compile(
     r"\b(?:used to|tried to|almost|once|back then|long ago|a long time ago|"
     r"years? ago|months? ago|when i was|as a (?:kid|child|teenager)|"

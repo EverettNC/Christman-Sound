@@ -68,7 +68,7 @@ from .fusion_engine import (
     FusionEngine,
     SafetyResult,
 )
-from .harm_frame import HarmFrame, Party, Polarity, extract_frames
+from .harm_frame import HarmFrame, Modality as FrameModality, Party, Polarity, _stem, extract_frames
 from .prosody import ProsodyAnalyzer, ProsodyReading, SpeakerBaseline
 from .structural_affect import (
     BODY_PARTS,
@@ -199,6 +199,9 @@ _HARM_VERB_FORMS = {
     "pull": "base", "pulls": "now", "pulling": "now", "pulled": "past",
     "bend": "base", "bends": "now", "bending": "now", "bent": "past",
     "crush": "base", "crushes": "now", "crushing": "now", "crushed": "past",
+    "strangle": "base", "strangles": "now", "strangling": "now", "strangled": "past",
+    "beat": "ambiguous", "beats": "now", "beating": "now", "beaten": "past",
+    "push": "base", "pushes": "now", "pushing": "now", "pushed": "past",
 }
 #: Words before the verb that put it in the present: "he IS hurting my arm",
 #: "NOW he's STARTING TO break my neck", "he KEEPS hitting my head".
@@ -209,6 +212,13 @@ _NOW_BEFORE = frozenset({
 _BODY_HARM = re.compile(
     r"\b(?P<verb>" + "|".join(sorted(_HARM_VERB_FORMS, key=len, reverse=True)) + r")\s+"
     r"(?:me\s+(?:in|on)\s+(?:the|my)\s+|my\s+)(?P<part>[a-z]+)\b")
+#: Ruling H (Everett, 2026-10-29) for "verb plus me": "he choked me" is read
+#: for its time the same way as "he hurt my neck". The part is "" (the
+#: client, whole). A reading of this shape only times a frame that
+#: harm_frame already found; it never adds a page or an ask on its own.
+_BODY_HARM_ME = re.compile(
+    r"\b(?P<verb>" + "|".join(sorted(_HARM_VERB_FORMS, key=len, reverse=True)) + r")\s+"
+    r"me\b(?!\s+(?:in|on)\s+(?:the|my)\s+)")
 _PAST_TIME = frozenset({"yesterday", "ago", "earlier", "last"})
 
 
@@ -233,8 +243,10 @@ def body_harm(text: str) -> List[BodyHarm]:
     """
     lowered = normalize_apostrophes(text or "").lower()
     out: List[BodyHarm] = []
-    for m in _BODY_HARM.finditer(lowered):
-        if m.group("part") not in BODY_PARTS:
+    matches = list(_BODY_HARM.finditer(lowered)) + list(_BODY_HARM_ME.finditer(lowered))
+    for m in matches:
+        part = m.groupdict().get("part") or ""
+        if part and part not in BODY_PARTS:
             continue
         clause_start = max(lowered.rfind(p, 0, m.start()) for p in ".!?;,") + 1
         before = tokenize(lowered[clause_start:m.start()])
@@ -254,7 +266,7 @@ def body_harm(text: str) -> List[BodyHarm]:
             now = False
         if set(before + after) & _PAST_TIME:
             now = False
-        out.append(BodyHarm(m.group("verb"), m.group("part"), now, m.group(0)))
+        out.append(BodyHarm(m.group("verb"), part, now, m.group(0)))
     return out
 
 
@@ -614,6 +626,21 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
     `previous_turn` (ruling X) anchors a subjectless fragment ("it hurts")."""
     frames = extract_frames(original)
     harms = body_harm(original)
+    # Ruling H (Everett, 2026-10-29), "verb plus me": "he choked me" and "she
+    # stabbed me last week" are read for their time like "he hurt my neck",
+    # not paged at once as a bare harm predicate. Only a plain statement
+    # (no will, might, going to) by someone else, not negated, and with the
+    # same verb harm_frame found, is moved; threats stay on the frame route.
+    timed: List[HarmFrame] = []
+    for frame in frames:
+        if (frame.shape == "verb" and frame.patient is Party.SPEAKER
+                and frame.subject is not Party.SPEAKER and frame.modality is FrameModality.NONE
+                and frame.polarity is Polarity.HARM and not frame.negated
+                and any(_stem(h.verb) == frame.predicate for h in harms)):
+            timed.append(frame)
+    harms = [h for h in harms if h.part
+             or any(_stem(h.verb) == f.predicate for f in timed)]
+    frames = [f for f in frames if f not in timed]
     harm_now = [h for h in harms if h.now]
     harm_past = [h for h in harms if not h.now]
     harm_flags = [f"harm_{'now' if h.now else 'reported'}:{h.said}" for h in harms]

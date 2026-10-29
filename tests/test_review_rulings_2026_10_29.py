@@ -66,6 +66,64 @@ def test_1_self_harm_is_voiced_when_asked_aloud_or_public(text):
     assert len(pager.calls) == 1 and turn.decision.speakable is True
 
 
+# -- 2. ruling H for "verb plus me" -----------------------------------------------------
+
+PAST_HARM_TO_ME = ["he choked me", "she stabbed me", "he punched me",
+                   "he choked me yesterday", "she stabbed me last week"]
+NOW_HARM_TO_ME = ["he is choking me", "she's stabbing me", "he keeps hitting me",
+                  "he's starting to choke me"]
+
+
+@pytest.mark.parametrize("text", PAST_HARM_TO_ME)
+def test_2_past_harm_to_the_client_asks_and_does_not_page(text):
+    turn, pager = _hear(text)
+    s = turn.decision.safety
+    assert pager.calls == []
+    assert s.status == "soft_redirect" and s.reason == "harm_reported_to_client"
+    assert s.follow_up == H.ASK_IF_SAFE
+    assert s.follow_up_about and s.follow_up_about in text.lower()
+    assert s.said == text
+
+
+@pytest.mark.parametrize("text", PAST_HARM_TO_ME)
+def test_2_past_harm_pages_when_help_is_asked_for_in_the_same_turn(text):
+    turn, pager = _hear(text + ", I need help")
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == "harm_reported_to_client"
+
+
+@pytest.mark.parametrize("text", PAST_HARM_TO_ME)
+def test_2_past_harm_pages_when_the_client_answers_no(text):
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager)
+    hearing.hear(text=text)
+    assert pager.calls == []
+    second = hearing.hear(text="no")
+    assert len(pager.calls) == 1 and second.decision.safety.reason == "answered_not_safe"
+
+
+@pytest.mark.parametrize("text", NOW_HARM_TO_ME)
+def test_2_harm_happening_now_pages_at_once_silently(text):
+    turn, pager = _hear(text)
+    s = turn.decision.safety
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == text
+    assert s.reason == "harm_now_to_client"
+    assert s.silent_alarm is True and s.voice_aloud is False
+
+
+@pytest.mark.parametrize("text", ["he will hurt me", "he is going to kill me", "he might hit me"])
+def test_2_a_threat_still_pages_at_once(text):
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1
+    assert turn.decision.safety.reason == "harm_frame_speaker_at_risk"
+
+
+@pytest.mark.parametrize("text", ["he didn't hurt me", "I hit me"])
+def test_2_a_negated_or_own_verb_plus_me_is_not_moved(text):
+    turn, pager = _hear(text)
+    assert turn.decision.safety.reason != "harm_reported_to_client"
+
+
 # -- 3. ruling F: two beings talking page nothing --------------------------------------
 
 @pytest.mark.parametrize("text", ["I want to kill myself", "he is hurting me", "he is choking me",

@@ -802,8 +802,10 @@ def test_H2_it_pages_when_the_client_asks_for_help():
     ("Now he’s starting to break my neck!", "harm_now_to_client"),
     ("he is hurting my arm", "harm_now_to_client"),
     ("she keeps hitting my head", "harm_now_to_client"),
-    ("he's hurting me", "harm_frame_speaker_at_risk"),
-    ("he is choking me", "harm_frame_speaker_at_risk"),
+    # Ruling H covers "verb plus me" too (Everett, 2026-10-29): read for its
+    # time like "he hurt my neck", so the reason is harm happening now.
+    ("he's hurting me", "harm_now_to_client"),
+    ("he is choking me", "harm_now_to_client"),
 ])
 def test_H3_harm_happening_now_pages_at_once(text, reason):
     turn, pager = _hear(text)
