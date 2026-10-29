@@ -250,6 +250,97 @@ def answered_follow_up(text: str, question: str) -> Optional[str]:
     return None
 
 
+#: DANGER SENTENCES the client types or says (Everett, 2026-10-29, rulings I
+#: and K). Read on word boundaries. A clause put in the past ("I was scared
+#: for my life", "yesterday ...") is not now and is left out.
+DANGER_SENTENCE_PATTERNS: Tuple[str, ...] = (
+    r"\b(?:scared|afraid|frightened|terrified)\s+for\s+my\s+(?:life|safety)\b",
+    r"\bfear\s+for\s+my\s+(?:life|safety)\b",
+    r"\b(?:i'?m|i\s+am|we'?re|we\s+are)\s+in\s+danger\b",
+    r"\b(?:i'?m|i\s+am)\s+being\s+(?:attacked|hurt|beaten|followed|threatened)\b",
+    r"\b(?:he|she|they|someone|somebody)(?:'s|\s+is|\s+are|'re)\s+"
+    r"(?:attacking|threatening|following)\s+me\b",
+    r"\bhelp\s+me\b(?=\s*(?:$|[.!?,]|please\b|now\b|right\s+now\b))",
+    r"^\s*help\s*[.!]*\s*$",
+)
+_DANGER_PAST = frozenset({"was", "were", "used", "yesterday", "ago", "earlier", "last"})
+
+#: The client asking for the words to be said aloud (ruling K). Without this,
+#: or a public setting from the being's own perception, a danger sentence is
+#: not voiced.
+ALOUD_PATTERNS: Tuple[str, ...] = (
+    r"\bsay\s+(?:that|it|this)\s+(?:out\s+loud|aloud|loud)\b",
+    r"\bsay\s+(?:that|it|this)\s+for\s+me\b",
+    r"\bread\s+(?:that|it|this)\s+(?:out\s+loud|aloud)\b",
+    r"\bspeak\s+(?:it|that|this|up)\b",
+    r"\bout\s+loud\s+please\b",
+)
+
+
+def danger_sentences(text: str) -> List[str]:
+    """The danger sentences in what the client typed or said, now. Reads only."""
+    lowered = normalize_apostrophes(text or "").lower()
+    out: List[str] = []
+    for pattern in DANGER_SENTENCE_PATTERNS:
+        for m in re.finditer(pattern, lowered):
+            start = max(lowered.rfind(p, 0, m.start()) for p in ".!?;,") + 1
+            before = set(tokenize(lowered[start:m.start()]))
+            if before & _DANGER_PAST:
+                continue
+            out.append(m.group(0).strip())
+    return out
+
+
+def asked_aloud(text: str) -> Optional[str]:
+    """The client's request that the words be said out loud, or None. Reads only."""
+    lowered = normalize_apostrophes(text or "").lower()
+    for pattern in ALOUD_PATTERNS:
+        m = re.search(pattern, lowered)
+        if m:
+            return m.group(0)
+    return None
+
+
+def _silent_alarm(words: SafetyResult, original: str, context: Dict[str, Any]) -> SafetyResult:
+    """
+    Mark a danger page as the silent alarm (rulings I and K, 2026-10-29).
+
+    Danger on the words: harm happening now to the client, a person attacking
+    the client (a harm frame against the speaker by someone else), a danger
+    sentence ("I'm scared for my safety"), the client's own "not safe", or a
+    "no" to "Are you safe?". It pages, it is not voiced, and the hold marker
+    carries no words a screen could show. It IS voiced when the client asked
+    for it aloud, or when the being's own perception reports a public
+    setting (context["public_setting"] is exactly True); absent or unknown,
+    silent. The words themselves are never changed.
+    """
+    if words.status != "hard_block":
+        return words
+    danger = (
+        words.reason in ("harm_now_to_client", "client_danger", "answered_not_safe")
+        # Someone else doing harm to the client: a verb frame whose patient
+        # is the speaker and whose subject is not ("he is choking me"; the
+        # frame reads "he's" as an unknown subject, so not-the-speaker is
+        # the test). "I want to kill myself" has the speaker as subject.
+        or (words.reason == "harm_frame_speaker_at_risk" and "shape:verb" in words.flags
+            and "patient:speaker" in words.flags and "subject:speaker" not in words.flags)
+        or "client_distress:not safe" in words.flags
+    )
+    if not danger:
+        return words
+    aloud = asked_aloud(original)
+    public = context.get("public_setting") is True
+    return replace(
+        words,
+        silent_alarm=True,
+        voice_aloud=bool(aloud) or public,
+        hold_marker="",
+        flags=list(words.flags) + ["silent_alarm"]
+        + ([f"asked_aloud:{aloud}"] if aloud else [])
+        + (["public_setting"] if public else []),
+    )
+
+
 #: The client's own state that reaches a human at once (ruling A).
 CLIENT_DISTRESS_TERMS = frozenset({
     "not okay", "not safe", "no one loves me", "no one cares", "have no one",
@@ -316,10 +407,15 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
     original = text or ""
     words = _words_gate(original, context.get("between_beings") is True,
                         str(context.get("answering_follow_up") or ""))
+    words = _silent_alarm(words, original, context)
     nonverbal = [d for d in (context.get("nonverbal_distress") or [])
                  if isinstance(d, dict)]
     if not nonverbal:
         return words
+    # A danger signal from any nonverbal channel is the silent alarm (ruling
+    # I): never spoken, never announced, and never voiced aloud by this
+    # package, whatever the setting.
+    nv_silent = any(d.get("silent_alarm") for d in nonverbal)
     # Everett, 2026-10-29: the acoustic key (and every nonverbal signal) must
     # never disrupt the interpretation of what is spoken. The words were read
     # above, alone. A nonverbal distress signal may only ADD a page: when
@@ -330,17 +426,25 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
         f"nonverbal:{d.get('modality')}:{d.get('input')}:{d.get('intent')}"
         for d in nonverbal
     ]
+    silent_flags = ["silent_alarm"] if nv_silent and not words.silent_alarm else []
     if words.status == "hard_block":
-        return replace(words, flags=list(words.flags) + nonverbal_flags)
+        return replace(
+            words, flags=list(words.flags) + nonverbal_flags + silent_flags,
+            silent_alarm=words.silent_alarm or nv_silent,
+            hold_marker="" if nv_silent else words.hold_marker,
+        )
     inputs = [str(d.get("input")) for d in nonverbal]
     return replace(
         words,
         status="hard_block",
         reason="nonverbal_distress",
         flags=nonverbal_flags + list(words.flags)
-        + [f"words:{words.status}:{words.reason}"],
+        + [f"words:{words.status}:{words.reason}"] + silent_flags,
         flagged_terms=inputs + list(words.flagged_terms),
-        hold_marker=f"[SAFETY HOLD — nonverbal distress: {', '.join(inputs)}]",
+        hold_marker="" if nv_silent else
+        f"[SAFETY HOLD — nonverbal distress: {', '.join(inputs)}]",
+        silent_alarm=nv_silent,
+        voice_aloud=False,
     )
 
 
@@ -422,6 +526,17 @@ def _words_gate(original: str, between_beings: bool, answering: str = "") -> Saf
             flags=harm_flags + own_flags + other_flags,
             flagged_terms=[h.verb for h in harm_now],
             hold_marker="[SAFETY HOLD — harm happening now to the client]",
+        )
+
+    danger = danger_sentences(original)
+    if danger and not between_beings:
+        return SafetyResult(
+            status="hard_block",
+            reason="client_danger",
+            said=original,
+            flags=[f"danger:{d}" for d in danger] + harm_flags + own_flags + other_flags,
+            flagged_terms=danger,
+            hold_marker="[SAFETY HOLD — danger]",
         )
 
     answer = answered_follow_up(original, answering) if answering else None
@@ -554,13 +669,22 @@ class HearingTurn:
     nonverbal_distress: List[Dict[str, Any]] = field(default_factory=list)
     #: The Soul Mirror's 8-slot vector, with its measured mask and clauses.
     face_vector: Optional[FaceVector] = None
+    #: The client's earlier danger sentence, exactly as said, released to be
+    #: voiced because the client now asked for it out loud (ruling K).
+    voice_held: Optional[str] = None
 
     @property
     def person_message(self) -> Optional[str]:
         """
         What the PERSON said through a nonverbal channel, from the map — or
         None. Never the being's reply, and never held by a safety hold.
+
+        Under the silent alarm (ruling I) it is None: a danger meaning from
+        any channel is paged and never spoken.
         """
+        if self.decision is not None and self.decision.safety.silent_alarm \
+                and self.nonverbal_distress and any(d.get("silent_alarm") for d in self.nonverbal_distress):
+            return None
         if self.nonverbal and self.nonverbal.get("speakable"):
             return self.nonverbal.get("message")
         if self.acoustic is not None and self.acoustic.speakable:
@@ -585,6 +709,7 @@ class HearingTurn:
             "temporal": self.temporal,
             "nonverbal_distress": list(self.nonverbal_distress),
             "person_message": self.person_message,
+            "voice_held": self.voice_held,
             "notes": list(self.notes),
         }
 
@@ -632,6 +757,11 @@ class Hearing:
         #: The question the being asked on the last turn with words, if any.
         #: The client's next words are read as the answer to it, once.
         self.awaiting_answer: Optional[str] = None
+        #: A danger sentence the client typed or said that was paged and not
+        #: voiced (the silent alarm). If the client's next words ask for it
+        #: to be said out loud, it is handed back, exactly, to be voiced
+        #: (ruling K). Held for one turn only.
+        self.held_words: Optional[str] = None
 
     def hear(
         self,
@@ -665,6 +795,7 @@ class Hearing:
         be reached.
         """
         notes: List[str] = []
+        voice_held: Optional[str] = None
         taken: Optional[CortiIngest] = None
         reading: Optional[ProsodyReading] = None
 
@@ -713,13 +844,15 @@ class Hearing:
         if sequences is not None:
             for result in (sequences.get("all_results") or {}).values():
                 # Hand Up pages (Everett, 2026-10-29), as do the distress intents.
-                if (result.get("pages") or result.get("intent") in DISTRESS_INTENTS) \
+                if (result.get("pages") or result.get("intent") in DISTRESS_INTENTS
+                        or result.get("silent_alarm")) \
                         and result.get("status") in ("ok", "below_threshold"):
                     distress.append({"modality": f"temporal:{result.get('modality')}",
                                      "input": result.get("expression"),
                                      "intent": result.get("intent"),
                                      "message": result.get("message"),
-                                     "confidence": result.get("confidence")})
+                                     "confidence": result.get("confidence"),
+                                     "silent_alarm": bool(result.get("silent_alarm"))})
 
         live_state: Dict[str, Any] = {}
         if between_beings:
@@ -738,8 +871,12 @@ class Hearing:
             affect = self.affect.analyze(text)
             if self.awaiting_answer:
                 live_state["answering_follow_up"] = self.awaiting_answer
+            if self.held_words is not None and asked_aloud(text):
+                voice_held = self.held_words
             decision = self.fusion.fuse(text, live_state=live_state, prosody=reading)
             self.awaiting_answer = decision.safety.follow_up or None
+            self.held_words = (text if decision.safety.silent_alarm
+                               and not decision.safety.voice_aloud else None)
         else:
             notes.append("no text — structural_affect and harm_frame not run")
             if distress:
@@ -766,10 +903,12 @@ class Hearing:
             temporal=sequences,
             nonverbal_distress=distress,
             face_vector=face_vector,
+            voice_held=voice_held,
         )
 
 
 __all__ = ["Hearing", "HearingTurn", "harm_frame_safety", "CrisisNotDelivered",
            "NONVERBAL_INPUTS", "asked_for_help", "HELP_REQUEST_PATTERNS",
            "CLIENT_DISTRESS_TERMS", "body_harm", "BodyHarm", "BODY_PARTS",
-           "FOLLOW_UP_HARM_TO_CLIENT", "FOLLOW_UP_SOMEONE_ELSE", "answered_follow_up"]
+           "FOLLOW_UP_HARM_TO_CLIENT", "FOLLOW_UP_SOMEONE_ELSE", "answered_follow_up",
+           "danger_sentences", "asked_aloud", "DANGER_SENTENCE_PATTERNS", "ALOUD_PATTERNS"]

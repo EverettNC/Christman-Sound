@@ -261,6 +261,14 @@ def _make_handler(receiver: CortiReceiver) -> type:
                     self._send_json(503, {"error": "crisis_not_delivered",
                                           "detail": str(err), "key": key})
                     return
+                if turn.decision is not None and turn.decision.safety.silent_alarm:
+                    # THE SILENT ALARM (Everett, 2026-10-29, ruling I): the
+                    # danger went to a human. The answer to the device that
+                    # sent the key says nothing about it, so nothing on that
+                    # device announces it. The page itself is in the turn the
+                    # receiver keeps (ring, on_turn), not in this reply.
+                    self._send_json(200, {"received": True})
+                    return
                 self._send_json(200, turn.to_dict())
                 return
 
