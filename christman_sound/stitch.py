@@ -488,25 +488,29 @@ def join_units(bank: FrameBank, sel: Selection) -> Stitched:
     return Stitched(track=t, phones=phones, joins_at=joins_at, rec_of=rec_of)
 
 
+def _blend_join(arr: List[float], j: int, width: int, n: int) -> None:
+    """Meet in the middle across the join at frame j: each side moves toward the midpoint, fully at the join, fading over JOIN_SMOOTH frames."""
+    L, R = j - 1, j
+    if L < 0 or R >= n:
+        return
+    for k in range(width):
+        mid = 0.5 * (arr[L * width + k] + arr[R * width + k])
+        dl = mid - arr[L * width + k]
+        dr = mid - arr[R * width + k]
+        for s in range(JOIN_SMOOTH):
+            w = (JOIN_SMOOTH - s) / JOIN_SMOOTH
+            if L - s >= 0:
+                arr[(L - s) * width + k] = arr[(L - s) * width + k] + dl * w
+            if R + s < n:
+                arr[(R + s) * width + k] = arr[(R + s) * width + k] + dr * w
+
+
 def _smooth_join(t: Track, j: int, ne: int, nb: int) -> None:
     L, R = j - 1, j
     if L < 0 or R >= t.n:
         return
-
-    def blend(arr: List[float], width: int) -> None:
-        for k in range(width):
-            mid = 0.5 * (arr[L * width + k] + arr[R * width + k])
-            dl = mid - arr[L * width + k]
-            dr = mid - arr[R * width + k]
-            for s in range(JOIN_SMOOTH):
-                w = (JOIN_SMOOTH - s) / JOIN_SMOOTH
-                if L - s >= 0:
-                    arr[(L - s) * width + k] = arr[(L - s) * width + k] + dl * w
-                if R + s < t.n:
-                    arr[(R + s) * width + k] = arr[(R + s) * width + k] + dr * w
-
-    blend(t.env, ne)
-    blend(t.ap, nb)
+    _blend_join(t.env, j, ne, t.n)
+    _blend_join(t.ap, j, nb, t.n)
     if t.f0[L] > 0 and t.f0[R] > 0:
         sl = math.log2(t.f0[L])
         sr = math.log2(t.f0[R])
@@ -592,6 +596,34 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
     rec_of = st.rec_of
     vowel_set = set(vowels)
 
+    # Each session's envelope and level to the voice's (smoothed over 9 grid
+    # points, clamped), so units from different sessions sound like one voice;
+    # the sentence's own vowels are never averaged away. Applied first, to the
+    # stitched frames, and smoothed across each join exactly as join_units
+    # smoothed the frames there. (Until 2026-10-29 it was added after the
+    # joins were smoothed, frame by frame by session, so a join between two
+    # sessions became a step the size of the difference between their
+    # corrections: two sessions 7 dB apart gave a 7 dB step in one frame.)
+    corrs: List[List[float]] = []
+    for ltas, level in rec_stats:
+        gain = _clamp(m["level_db"] - level, -CLAMP_LEVEL_DB, CLAMP_LEVEL_DB) if math.isfinite(level) else 0
+        raw = [m["ltas_db"][k] - ltas[k] if math.isfinite(ltas[k]) else 0 for k in range(ne)]
+        out = []
+        for k in range(ne):
+            s, q = 0.0, 0
+            for d in range(-4, 5):
+                j = k + d
+                if 0 <= j < ne:
+                    s += raw[j]
+                    q += 1
+            out.append(_clamp(s / q, -CLAMP_LTAS_DB, CLAMP_LTAS_DB) + gain)
+        corrs.append(out)
+    corr_track = [v for r in rec_of for v in corrs[r]]
+    for j in st.joins_at:
+        _blend_join(corr_track, j, ne, t.n)
+    for k in range(len(t.env)):
+        t.env[k] = t.env[k] + corr_track[k]
+
     # Rate and articulation: time.
     speech = sum(1 for p in phones if p != "SIL")
     nuclei = sum(1 for i, p in enumerate(phones) if p in vowel_set and (i == 0 or phones[i - 1] != p))
@@ -644,21 +676,8 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
                             f"voiced aperiodicity {ap_now:.3f} x{ap_factor:.3f} to {ap_want:.4f} (calibrated for stitched "
                             f"speech; recordings: HNR {m['hnr_db']:.1f} dB, CPP {m['cpp_db']:.1f} dB)", ap_factor))
 
-    # Resonance and timbre.
-    corrs: List[List[float]] = []
-    for ltas, level in rec_stats:
-        gain = _clamp(m["level_db"] - level, -CLAMP_LEVEL_DB, CLAMP_LEVEL_DB) if math.isfinite(level) else 0
-        raw = [m["ltas_db"][k] - ltas[k] if math.isfinite(ltas[k]) else 0 for k in range(ne)]
-        out = []
-        for k in range(ne):
-            s, q = 0.0, 0
-            for d in range(-4, 5):
-                j = k + d
-                if 0 <= j < ne:
-                    s += raw[j]
-                    q += 1
-            out.append(_clamp(s / q, -CLAMP_LTAS_DB, CLAMP_LTAS_DB) + gain)
-        corrs.append(out)
+    # Resonance and timbre: the controls' warp and tilt (each session's
+    # correction went in first, above).
     max_corr = 0.0
     for r in set(rec_of):
         for k in range(ne):
@@ -677,9 +696,8 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
         src_j.append(j)
         src_w.append(_clamp((src - grid[j]) / (grid[j + 1] - grid[j]), 0, 1))
     for i in range(t.n):
-        corr = corrs[rec_of[i]]
         base = i * ne
-        row = [t.env[base + k] + corr[k] for k in range(ne)]
+        row = [t.env[base + k] for k in range(ne)]
         for k in range(ne):
             f = grid[k]
             j, w = src_j[k], src_w[k]

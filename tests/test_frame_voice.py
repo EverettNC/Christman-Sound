@@ -255,6 +255,25 @@ def test_stitch_matches_codec_war(dsp, tmp_path):
     print(f"stitch.py against stitch.ts: same units, joins and applied parameters; largest difference {worst:.2e}")
 
 
+def test_a_join_between_two_sessions_is_not_a_step():
+    """Two sessions 7 dB apart, joined: each is brought to the voice's level with no step at the join.
+
+    Before 2026-10-29 each session's correction was added after join_units had
+    smoothed the join, so the join became a 7 dB step in one frame.
+    """
+    ne, nb, n, half, a, b = 96, 8, 40, 20, -25.0, -18.0
+    env_hz = [k * 11025 / (ne - 1) for k in range(ne)]
+    t = cs_stitch.Track(f0=[140.0] * n, env=[a] * (half * ne) + [b] * ((n - half) * ne), ap=[0.1] * (n * nb),
+                        rms=[a] * half + [b] * (n - half))
+    cs_stitch._smooth_join(t, half, ne, nb)  # as join_units does at every join the recordings do not hold
+    st = cs_stitch.Stitched(track=t, phones=["AA"] * n, joins_at=[half], rec_of=[0] * half + [1] * (n - half))
+    m = {**_measures([0.0] * ne), "voiced_aperiodicity": 0.1}
+    v = cs_stitch.apply_voice(st, m, dict(cs_stitch.NEUTRAL_CONTROLS), [([0.0] * ne, a), ([0.0] * ne, b)],
+                              env_hz, ["AA"], 110, 22050)
+    level = [v.track.env[i * ne + 10] for i in range(v.track.n)]
+    assert max(abs(x - m["level_db"]) for x in level) < 1e-9, level
+
+
 # ------------------------------------------------------------ refusals
 
 def test_a_missing_voice_folder_names_what_is_missing(tmp_path):
