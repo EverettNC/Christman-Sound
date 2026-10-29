@@ -45,22 +45,19 @@ CASES = [
     ("I can't be happy", "i cant be happy", -0.425, SELF, True),
     # a new subject is a new clause: "want" does not reach "scared"
     ("I want to go home, I'm scared", "i want to go home im scared", -0.8, SELF, True),
-    # a new subject is a new clause: "nobody" does not reach "alone"
-    ("Nobody cares, I'm alone", "nobody cares im alone", -0.55, SELF, True),
-    # HELD for Everett (2026-10-29): the handoff read "no one loves me" as
-    # distress through a new idiom. Taken out; main's reading, pinned.
-    ("No one loves me", "no one loves me", 0.0, SELF, False),
+    # nobody caring is the client's own isolation (Everett, ruling A)
+    ("Nobody cares, I'm alone", "nobody cares im alone", -0.675, SELF, True),
+    ("No one loves me", "no one loves me", -0.85, SELF, True),
     # was X, now worse: escalation is not discounted as the past
     ("I was scared and now I'm terrified", "i was scared and now im terrified", -0.875, SELF, True),
     # courtesy is not affect
     ("Thank you, I'm scared", "thank you im scared", -0.8, SELF, True),
     ("I'm so scared", "im so scared", -1.0, SELF, True),
-    # HELD for Everett (2026-10-29): the client's own "not okay" / "not
-    # safe". Text alone cannot tell "I'm okay" from "I'm okay"; only the voice
-    # carries the difference. Main's reading (negation cancels), pinned.
-    ("I don't feel safe", "i dont feel safe", 0.0, SELF, False),
-    ("I'm not okay", "im not okay", 0.0, SELF, False),
-    ("I don't think I'm safe", "i dont think im safe", 0.0, SELF, False),
+    # felt danger is not cancelled like "not happy" (Everett, ruling A:
+    # the client's own "not okay" / "not safe" is distress)
+    ("I don't feel safe", "i dont feel safe", -0.7, SELF, True),
+    ("I'm not okay", "im not okay", -0.6, SELF, True),
+    ("I don't think I'm safe", "i dont think im safe", -0.7, SELF, True),
 ]
 
 

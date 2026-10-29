@@ -158,37 +158,48 @@ IDIOMS: Dict[str, float] = {
     "hanging in there": -0.2,
     "getting by": -0.15,
     "at a loss": -0.5,
-    # HELD FOR EVERETT (2026-10-29): the handoff added "no one loves me"
-    # (-0.85), "no one cares" (-0.8) and "have no one" (-0.75) here, so the
-    # client's own "no one loves me" read as distress. That is a change to
-    # how the client's own words route, so they are taken out and the
-    # question is written for Everett; main (e35fe46) read them through
-    # "no"/"nobody" as negators.
+    # The client's own isolation. Everett, 2026-10-29 (ruling A): the
+    # client's own "no one cares", "no one loves me", "I have no one" is
+    # distress and reaches a human. Main read "no"/"nobody" as negators and
+    # cancelled the caring word, so these read 0.0. The speaker is always
+    # the one alone here (the objects are me/us; "nobody cares about HIM" is
+    # left to ordinary scoring). Weights: chosen starting values, held until
+    # client data replaces them; they sit with "scared" (-0.8), as isolation
+    # is as heavy as fear.
+    "no one loves me": -0.85,
+    "no one cares": -0.8,
+    "have no one": -0.75,
     # Inability over a good state reads as the lack of it (ABILITY_NEGATORS),
     # so the idiom that means the opposite is listed.
     "couldn't be happier": 0.9,
     "couldnt be happier": 0.9,
     "couldn't be better": 0.85,
     "couldnt be better": 0.85,
-    # Someone ELSE not okay / not safe. Everett, 2026-10-29: "My mom is not
-    # okay: a carbon saying another person is not okay" is flagged and routed
-    # like someone else at risk. These two count ONLY when the subject in
-    # front of them is another person (see SELF_HELD_IDIOMS): the client's
-    # own "I'm not okay" / "I don't feel safe" is held for Everett ("text
-    # alone cannot tell 'I'm okay' from 'I'm okay'; only the voice carries
-    # the difference") and reads as main (e35fe46) read it: "okay"/"safe"
-    # under a negation, cancelled.
+    # "Not okay" / "not safe". Plain negation cancels ("not happy" is not
+    # "sad"); these two do not: they are reports of distress and danger.
+    # Everett, 2026-10-29: the client's OWN "I'm not okay", "I don't feel
+    # safe", "I'm not safe" is distress and reaches a human (ruling A).
+    # Someone ELSE's ("my mom is not okay", "Mary is not okay") is an
+    # observation: recorded and flagged for the being to follow up, paged
+    # only when the client asks for help (ruling D). Whose it is comes from
+    # the subject in front of the words (see SUBJECT_IDIOMS).
     "not safe": -0.7,
     "not okay": -0.6,
 }
 
-#: Idioms that count only when another person is their subject. With the
-#: speaker, or no one named, as the subject, the words are left to ordinary
-#: scoring, exactly as main read them. See `_subject_before`.
-SELF_HELD_IDIOMS = frozenset({"not okay", "not safe"})
+#: Idioms whose subject is read match by match: the speaker ("self"),
+#: another person ("other"), or no one this package should read as a
+#: person's state ("you", a thing): then the words are left to ordinary
+#: scoring, as main read them. See `_idiom_subject`.
+SUBJECT_IDIOMS = frozenset({"not okay", "not safe"})
+
+#: Idioms that are always the speaker's own state (the speaker is the one
+#: no one loves). See the isolation entries above.
+SELF_IDIOMS = frozenset({"no one loves me", "no one cares", "have no one"})
 
 #: Idiom match patterns that need more than word boundaries. "had enough TO
 #: EAT" is a meal, not distress (measured 2026-10-11: self_distress=True).
+_NOBODY = r"(?:nobody|no one|noone|no body)"
 _FEEL_NEG = (r"don't|dont|do\s+not|doesn't|doesnt|does\s+not|didn't|didnt|"
              r"did\s+not|never|not|can't|cant|cannot")
 #: A person and a form of "be", kept OUTSIDE the match by lookbehind so the
@@ -199,13 +210,25 @@ _PERSON_BE = (r"(?:(?<=\bi am )|(?<=\bi'm )|(?<=\bim )|(?<=\bhe is )|(?<=\bhe's 
               r"|(?<=\btheyre )|(?<=\byou are )|(?<=\byou're )|(?<=\byoure ))")
 IDIOM_PATTERNS: Dict[str, str] = {
     "had enough": r"\bhad enough\b(?!\s+(?:to|food|money|time|sleep|rest)\b)",
+    # The object decides whose isolation it is: "nobody cares about HIM" is
+    # not the speaker's, so it is left to ordinary scoring.
+    "no one loves me": (
+        rf"\b{_NOBODY}\s+(?:even\s+|really\s+|ever\s+)?"
+        r"(?:loves|likes|wants|needs|believes|cares\s+about)\s+(?:me|us)\b"
+    ),
+    "no one cares": (
+        rf"\b{_NOBODY}\s+(?:even\s+|really\s+|ever\s+)?"
+        r"(?:cares|listens|understands|notices|helps)\b"
+        r"(?!\s+(?:about\s+)?(?:him|her|them|it|that|this|his|their)\b)"
+    ),
+    "have no one": rf"\b(?:have|got)\s+{_NOBODY}\b",
     # Felt unsafety: "don't feel safe", "never feel safe", "not feeling
     # safe". Or a person, not a thing, is not safe: "I'm not safe", "she is
     # not safe". "that's not safe" (a warning about a thing) is left alone.
     "not safe": (
         rf"\b(?:{_FEEL_NEG})\s+(?:feel|feeling|felt)\s+(?:very\s+|really\s+|so\s+)?safe\b"
         rf"|\b(?:{_FEEL_NEG})\s+(?:think|believe)\s+(?:i\s+am|i'm|im)\s+safe\b"
-        rf"|{_PERSON_BE}\s*not\s+(?:very\s+|really\s+)?safe\b"
+        rf"|{_PERSON_BE}\s*not\s+(?:very\s+|really\s+)?safe\b(?!\s+to\b)"
     ),
     "not okay": (
         rf"\b(?:{_FEEL_NEG})\s+(?:feel|feeling)\s+(?:okay|ok|alright|all right)\b(?!\s+with\b)"
@@ -302,16 +325,25 @@ OTHER_EXPERIENCER = (THIRD_PERSON - {"it", "its"}) | PERSON_NOUNS
 #: "my mom is not okay" read "okay" negated, 0.0 — nobody was flagged. The
 #: person stays OUTSIDE the match (lookbehind) so the subject still decides
 #: whose state it is.
-_OTHER_SUBJECTS = sorted(PERSON_NOUNS | {"he", "she", "they", "we", "you"})
-_OTHER_BE = "|".join(rf"(?<=\b{re.escape(n)} )" for n in _OTHER_SUBJECTS)
-_OTHER_POSS = "|".join(rf"(?<=\b{re.escape(n)})" for n in sorted(PERSON_NOUNS))
-_BE_NOT = r"(?:is\s+not|isn't|isnt|are\s+not|aren't|arent)"
-# "not okay WITH it" is disagreement, not danger.
+# Any subject, then "is not" / "'s not" / "isn't" / "are not" / "am not"
+# ("my mom is not okay", "Mary's not okay", the ear's "moms not okay"); and
+# the bare words at the start of what was said ("not okay", "not safe"), which
+# on an AAC board are the speaker's own (Everett's subjectless ruling,
+# 2026-10-11). Whose state it is is decided after the match, from the subject
+# in front of it (_idiom_subject); "it", "this", "that" and "you" are no
+# person's state here and are left to ordinary scoring.
+_ANY_BE_NOT = (r"(?:\b(?:is|are|am)\s+not|\b(?:isn't|isnt|aren't|arent)"
+               r"|(?<=[a-z])(?:'s|s|'re|re|'m|m)\s+not)")
+_BARE = r"(?:^|(?<=[.!?;,]))\s*not"
+# "not okay WITH it" is disagreement, not danger. "not safe TO drive" is a
+# caution about doing something, not a report of danger, so the be-forms and
+# the bare form leave it alone; "I don't feel safe to go home" is still felt
+# danger and is kept by the feel-forms above.
 for _name, _state in (("not okay", r"(?:okay|ok|alright|all right)\b(?!\s+with\b)"),
-                      ("not safe", r"safe")):
+                      ("not safe", r"safe\b(?!\s+to\b)")):
     IDIOM_PATTERNS[_name] += (
-        rf"|(?:{_OTHER_BE}){_BE_NOT}\s+(?:really\s+|very\s+)?{_state}\b"
-        rf"|(?:{_OTHER_POSS})(?:'s|s)\s+not\s+(?:really\s+|very\s+)?{_state}\b"
+        rf"|{_ANY_BE_NOT}\s+(?:really\s+|very\s+)?{_state}"
+        rf"|{_BARE}\s+(?:really\s+|very\s+)?{_state}"
     )
 
 
@@ -576,35 +608,61 @@ def is_person(tok: str) -> bool:
     )
 
 
-#: Words passed over, walking back from a held idiom to its subject:
-#: "she REALLY doesn't feel safe", "my mom IS not okay".
+#: Words passed over, walking back from "not okay" / "not safe" to its
+#: subject: "she REALLY doesn't feel safe", "my mom IS not okay".
 _SUBJECT_WALK_PAST = frozenset({
     "really", "just", "still", "actually", "honestly", "truly", "even",
     "also", "always", "ever", "sometimes", "so", "very",
     "do", "does", "did", "is", "am", "are", "be", "been", "being",
+    "feel", "feels", "feeling", "think", "believe",
 })
 
-#: Pronouns that name someone other than the speaker as a subject. "we"
-#: includes the speaker, so it is not here.
-_OTHER_PRONOUNS = frozenset({"he", "she", "they", "you"})
+#: Pronouns that name someone other than the speaker. "we" includes the
+#: speaker, so it is the speaker's own. "you" is said AT someone: Everett,
+#: 2026-10-29 (ruling E), "you're not okay" is a statement said at someone,
+#: not the client's distress, so it is read as no one's state here.
+_OTHER_PRONOUNS = frozenset({"he", "she", "they"})
+
+#: Capitalised words that are not names: a sentence may start with them.
+_NOT_NAMES = (EXPLETIVE_SUBJECTS | FIRST_PERSON | frozenset({
+    "there", "here", "nothing", "what", "who", "which", "why", "how", "when",
+    "where", "the", "a", "an", "and", "but", "so", "then", "now", "today",
+    "tonight", "yesterday", "tomorrow", "life", "you", "your", "please",
+    "yes", "no", "ok", "okay", "not",
+}))
 
 
-def _other_person_subject(before: str) -> bool:
+def proper_names(raw: str) -> frozenset:
+    """Capitalised words in what was typed, lower-cased, that may be names."""
+    return frozenset(
+        w.lower() for w in re.findall(r"\b[A-Z][a-zA-Z]+", raw or "")
+        if w.lower() not in _NOT_NAMES
+    )
+
+
+def _idiom_subject(before: str, names: frozenset = frozenset()) -> str:
     """
-    Is the subject right in front of a held idiom ("not okay", "not safe")
-    another person?
+    Whose "not okay" / "not safe" this is, from the subject right in front.
 
-    Walks back over adverbs and auxiliaries to the first other word. True
-    only for a pronoun or a person word naming someone other than the
-    speaker ("she", "my mom", "my moms"). The speaker ("i", "we"), a thing
-    ("that"), or nothing at all leaves the words to ordinary scoring, as
-    main read them: held for Everett (2026-10-29).
+    Walks back over adverbs, auxiliaries and "feel"/"think" to the first
+    other word:
+      "self"  the speaker ("i", "we"), or no subject at all (on an AAC board
+              a lone "not okay" is the speaker's own: Everett's subjectless
+              ruling, 2026-10-11)
+      "other" another person: he, she, they, a person word ("my mom", the
+              ear's "my moms"), or a name typed with a capital ("Mary")
+      ""      no one's state: "you" (ruling E), "it", "this", "that", a
+              thing. The words are then left to ordinary scoring.
     """
     for tok in reversed(tokenize(before)):
         if tok in _SUBJECT_WALK_PAST:
             continue
-        return tok in _OTHER_PRONOUNS or (tok not in FIRST_PERSON and is_person(tok))
-    return False
+        if tok in FIRST_PERSON:
+            return "self"
+        if tok in _OTHER_PRONOUNS or is_person(tok) or tok in names:
+            return "other"
+        return ""
+    return "self"
 
 
 #: Curly and typographic apostrophes, as phones and AAC boards emit them.
@@ -872,7 +930,8 @@ class StructuralAffectAnalyzer:
         # Every one of those is somebody else's state, a negation, or a
         # resolved past — and every one passed the single gate for a care
         # response.
-        idiom_scores, idioms_found, masked, idiom_map, surface = self._match_idioms(lowered)
+        idiom_scores, idioms_found, masked, idiom_map, surface, idiom_subjects = (
+            self._match_idioms(lowered, proper_names(raw)))
         if idioms_found:
             notes.append(f"idioms matched: {idioms_found}")
 
@@ -903,7 +962,8 @@ class StructuralAffectAnalyzer:
         requests: List[str] = []
         profanity = 0
         for clause in clauses:
-            c_hits, c_requests, c_prof = self._score_clause(clause, clauses, idiom_map)
+            c_hits, c_requests, c_prof = self._score_clause(
+                clause, clauses, idiom_map, idiom_subjects)
             hits.extend(c_hits)
             requests.extend(c_requests)
             profanity += c_prof
@@ -923,9 +983,9 @@ class StructuralAffectAnalyzer:
         return f"__idiom_{letters}__"
 
     def _match_idioms(
-        self, lowered: str
+        self, lowered: str, names: frozenset = frozenset()
     ) -> Tuple[List[Tuple[float, str]], List[str], str,
-               Dict[str, Tuple[str, float]], Dict[str, str]]:
+               Dict[str, Tuple[str, float]], Dict[str, str], Dict[str, str]]:
         """
         Find multiword expressions and replace each with one placeholder token.
 
@@ -934,38 +994,53 @@ class StructuralAffectAnalyzer:
         meaning competes with its own parts. The placeholder stays IN the
         clause so negation, tense, contrast and attribution still see it.
 
-        Returns (scores, names, rewritten_text, token -> (phrase, weight),
-        token -> the words the person actually said, for the clause text).
+        "not okay" / "not safe" and the isolation idioms get one token per
+        match, each with whose state it is ("self" or "other"); a "not okay"
+        whose subject is no one's ("you", "it") is not taken at all.
+
+        Returns (scores, idiom names, rewritten_text, token -> (phrase,
+        weight), token -> the words the person actually said, token -> whose
+        state it is).
         """
         found: List[Tuple[float, str]] = []
-        names: List[str] = []
+        found_names: List[str] = []
         idiom_map: Dict[str, Tuple[str, float]] = {}
         surface: Dict[str, str] = {}
+        subjects: Dict[str, str] = {}
         masked = lowered
         # Longest first, so "can't stop laughing" wins over "can't stop".
         for n, phrase in enumerate(sorted(IDIOMS, key=len, reverse=True)):
             pattern = IDIOM_PATTERNS.get(phrase) or rf"\b{re.escape(phrase)}\b"
-            token = self._idiom_token(n)
-            held = phrase in SELF_HELD_IDIOMS
-            taken: List[str] = []
+            base = self._idiom_token(n)
+            per_match = phrase in SUBJECT_IDIOMS or phrase in SELF_IDIOMS
+            taken: List[Tuple[str, str, str]] = []
 
             def _take(m: "re.Match[str]") -> str:
-                # A held idiom counts only with another person as its
-                # subject; otherwise the words stay as they were said, for
-                # ordinary scoring.
-                if held and not _other_person_subject(m.string[:m.start()]):
-                    return m.group(0)
-                taken.append(m.group(0))
+                subject = ""
+                if phrase in SUBJECT_IDIOMS:
+                    subject = _idiom_subject(m.string[:m.start()], names)
+                    if not subject:
+                        return m.group(0)   # no one's state: left as said
+                elif phrase in SELF_IDIOMS:
+                    subject = "self"
+                token = base
+                if per_match:
+                    suffix = self._idiom_token(len(taken))[len("__idiom_"):-2]
+                    token = f"{base[:-2]}_{suffix}__"
+                taken.append((token, m.group(0), subject))
                 return f" {token} "
 
             masked = re.sub(pattern, _take, masked)
             if not taken:
                 continue
-            idiom_map[token] = (phrase, IDIOMS[phrase])
-            surface[token] = " ".join(taken[0].split())
+            for token, said, subject in taken:
+                idiom_map[token] = (phrase, IDIOMS[phrase])
+                surface.setdefault(token, " ".join(said.split()))
+                if subject:
+                    subjects[token] = subject
             found.append((IDIOMS[phrase], phrase))
-            names.append(phrase)
-        return found, names, masked, idiom_map, surface
+            found_names.append(phrase)
+        return found, found_names, masked, idiom_map, surface, subjects
 
     # -- Pass 2 ---------------------------------------------------------------
 
@@ -1268,8 +1343,10 @@ class StructuralAffectAnalyzer:
         clause: Clause,
         all_clauses: List[Clause],
         idiom_map: Optional[Dict[str, Tuple[str, float]]] = None,
+        idiom_subjects: Optional[Dict[str, str]] = None,
     ) -> Tuple[List[AffectHit], List[str], int]:
         """Score one clause, applying negation, volition, tense, and degree."""
+        idiom_subjects = idiom_subjects or {}
         hits: List[AffectHit] = []
         requests: List[str] = []
         profanity = 0
@@ -1384,11 +1461,16 @@ class StructuralAffectAnalyzer:
                 weight *= self.CONCESSION_WEIGHT
                 note_parts.append("conceded clause — before a contrast marker")
 
-            # -- PASS 6 applied: someone else's state
-            if clause.attribution is Attribution.OTHER and weight != 0.0:
+            # -- PASS 6 applied: whose state. An idiom whose subject was read
+            # at the match ("Mary is not okay", "no one loves me") carries
+            # that; every other word carries its clause's.
+            attribution = {
+                "self": Attribution.SELF, "other": Attribution.OTHER,
+            }.get(idiom_subjects.get(tok, ""), clause.attribution)
+            if attribution is Attribution.OTHER and weight != 0.0:
                 weight *= self.OTHER_ATTRIBUTION_WEIGHT
                 note_parts.append("attributed to another person")
-            elif clause.attribution is Attribution.IMPERSONAL and weight != 0.0:
+            elif attribution is Attribution.IMPERSONAL and weight != 0.0:
                 weight = 0.0
                 note_parts.append("impersonal — describes nobody's experience")
 
@@ -1402,7 +1484,7 @@ class StructuralAffectAnalyzer:
                     volitional=volitional,
                     past_tense=past,
                     conceded=conceded,
-                    attribution=clause.attribution,
+                    attribution=attribution,
                     modifier=modifier,
                     note="; ".join(note_parts),
                     when="past" if time_word else "now",
@@ -1655,6 +1737,9 @@ __all__ = [
     "normalize_apostrophes",
     "tokenize",
     "is_person",
+    "proper_names",
+    "SUBJECT_IDIOMS",
+    "SELF_IDIOMS",
 ]
 
 # ==============================================================================
