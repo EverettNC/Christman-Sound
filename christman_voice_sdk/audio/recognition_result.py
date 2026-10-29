@@ -19,12 +19,12 @@ because the failure mode it prevents is specific and it is the expensive one:
     a confident number attached, through the same interface a working one uses,
     and nothing downstream can tell the difference.
 
-For a nonverbal user that is not a bug in a pipeline. It is words placed in the
+For a nonverbal client that is not a bug in a pipeline. It is words placed in the
 mouth of someone who cannot correct the record.
 
 Three rules, enforced structurally rather than by convention:
 
-1.  `text` holds what the user said, or it is empty. An error, a status, a
+1.  `text` holds what the client said, or it is empty. An error, a status, a
     placeholder, or a diagnostic NEVER goes in the text slot. A caller writing
     `if result.text:` must never be handed a failure that reads as speech.
 
@@ -34,7 +34,7 @@ Three rules, enforced structurally rather than by convention:
     measurement exists" — which is different from 0.0, and both are different
     from a low measured value.
 
-3.  Anything not derived from the user's actual audio is `simulated=True`,
+3.  Anything not derived from the client's actual audio is `simulated=True`,
     carries `confidence=None`, and cannot be produced unless simulation was
     explicitly switched on. Simulation is opt-in, tagged at the source, and
     visible to every consumer.
@@ -60,12 +60,12 @@ class RecognitionStatus(str, Enum):
     utterance is not a crash, and none of the three is speech.
     """
 
-    OK = "ok"                       # Audio was recognized. `text` is the user's words.
+    OK = "ok"                       # Audio was recognized. `text` is the client's words.
     NO_SPEECH = "no_speech"         # Audio contained no speech. Not an error.
     UNRECOGNIZED = "unrecognized"   # Speech present, no confident transcription.
     ERROR = "error"                 # The attempt failed. See metadata["error"].
     UNAVAILABLE = "unavailable"     # No recognizer. Nothing was attempted.
-    SIMULATED = "simulated"         # Not user audio. Test fixture only.
+    SIMULATED = "simulated"         # Not client audio. Test fixture only.
 
 
 class SimulationNotEnabled(RuntimeError):
@@ -97,10 +97,10 @@ class RecognitionResult:
 
     Attributes:
         status: What happened. See RecognitionStatus.
-        text: The user's words, or "". Never an error or a placeholder.
+        text: The client's words, or "". Never an error or a placeholder.
         confidence: Measured confidence in [0.0, 1.0], or None when no
             measurement exists. Never invented.
-        simulated: True when this did not come from the user's audio.
+        simulated: True when this did not come from the client's audio.
         source: Which recognizer produced this, for audit.
         metadata: Diagnostics. Errors live here, never in `text`.
     """
@@ -169,7 +169,7 @@ class RecognitionResult:
         A successful recognition.
 
         Args:
-            text: What the user actually said. Empty text is rejected — that is
+            text: What the client actually said. Empty text is rejected — that is
                 NO_SPEECH or UNRECOGNIZED, not a success with nothing in it.
             confidence: The measured value, or None if the backend does not
                 report one. Do not substitute a constant.
@@ -251,10 +251,10 @@ class RecognitionResult:
                 "unavailable — return unavailable() instead."
             )
         meta = dict(metadata)
-        meta["warning"] = "SIMULATED OUTPUT — not user speech"
+        meta["warning"] = "SIMULATED OUTPUT — not client speech"
         return cls(
             status=RecognitionStatus.SIMULATED,
-            text="",          # The phrase does not occupy the user-speech slot.
+            text="",          # The phrase does not occupy the client-speech slot.
             confidence=None,
             simulated=True,
             source=source,
@@ -266,7 +266,7 @@ class RecognitionResult:
     @property
     def is_user_speech(self) -> bool:
         """
-        True only for real, recognized user speech.
+        True only for real, recognized client speech.
 
         The single check a consumer should gate on before treating this as
         something a person said.

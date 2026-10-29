@@ -88,7 +88,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from .structural_affect import FIRST_PERSON, THIRD_PERSON, NEGATORS, normalize_apostrophes
+from .structural_affect import (
+    FIRST_PERSON,
+    NEGATORS,
+    SHARED_READING_WORDS,
+    current_words,
+    normalize_apostrophes,
+)
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -259,13 +265,30 @@ MODAL_PATTERNS: Tuple[Tuple[str, Modality], ...] = (
 
 #: What precedes a predicate when it is history rather than a live statement.
 #:
-#: Everett's ruling, 2026-10-11: "I used to want to kill myself" and "the
-#: hitting stopped years ago" must NOT call a human; "he choked me yesterday"
-#: MUST (my ruling on his open item — strangulation by someone still in the
-#: person's life is not history). So the distancing markers are the ones
-#: that put a stop between then and now: "used to", "years ago", "back
-#: then", "when I was". "yesterday" and "last night" are not on this list
-#: on purpose.
+#: The distancing markers are the ones that put a stop between then and
+#: now: "used to", "years ago", "back then", "when I was". A frame they
+#: precede is read as history (past_tense), not as a live statement.
+#: "yesterday" and "last night" are not on this list on purpose.
+#:
+#: CORRECTED 2026-10-29 (review). This comment used to say "I used to want
+#: to kill myself" must NOT call a human. Everett's ruling A (2026-10-29)
+#: says it does: the client's own history of harm reaches a human
+#: (hearing.harm_frame_safety, reason "harm_frame_history_self"). Being
+#: history changes the reason, not whether a human is reached.
+#:
+#: Everett's ruling H (2026-10-29) decides "he choked me yesterday", and
+#: every "verb plus me" sentence by someone else, outside this list. This
+#: reader still finds the frame; the crisis gate (hearing._words_gate) then
+#: reads its time the same way as "he hurt my neck":
+#:   - Past physical harm ("he choked me", "she stabbed me", "he punched me",
+#:     "he choked me yesterday", "she stabbed me last week") does not page at
+#:     once. The being is handed an ask-if-safe mark. It pages when the
+#:     client asks for help in the same turn or answers "no" to the ask.
+#:   - Harm happening now ("he is choking me", "she's stabbing me", "he keeps
+#:     hitting me", "he's starting to choke me") pages at once, silently.
+#:   - A threat ("he will hurt me", "he is going to kill me") stays a crisis
+#:     frame and pages at once, as before.
+#: Self-harm (ruling A) and someone else at risk (ruling D) are not moved.
 _PAST_BEFORE = re.compile(
     r"\b(?:used to|tried to|almost|once|back then|long ago|a long time ago|"
     r"years? ago|months? ago|when i was|as a (?:kid|child|teenager)|"
@@ -343,9 +366,40 @@ def _stem(tok: str) -> Optional[str]:
     return None
 
 _SELF_PATIENT = frozenset({"me", "myself", "my", "mine", "us", "ourselves", "our"})
-_OTHER_PATIENT = frozenset(THIRD_PERSON) | {"him", "her", "them", "himself",
-                                            "herself", "themselves", "yourself",
-                                            "you"}
+
+#: Everett's ruling (2026-10-29): the package carries no person list. The
+#: held copy of the old person words (mother, dad, friend, patient, movie
+#: ...) that was kept here for him is removed. Who a word names is found by
+#: grammar: the personal and indefinite pronouns below, a first-person
+#: possessive with its noun ("my sister"), and a bare noun with no article
+#: right after a harm verb ("kill mom", "hurt Sarah"). Reading "mom wants to
+#: die" correctly is the being's job, with context and its own client's
+#: people; here a subject the grammar cannot place gets the ask-who mark.
+_OTHER_PATIENT = frozenset({
+    "he", "she", "they", "him", "her", "them", "his", "their", "theirs",
+    "himself", "herself", "themselves", "yourself", "you",
+    "someone", "somebody", "everyone", "everybody", "nobody", "anyone",
+    "anybody", "whoever",
+})
+#: A word after a verb that is not its object: articles and determiners make
+#: the object a thing ("kill THE process"); prepositions, particles and time
+#: words are not an object at all. Grammar words, not people.
+_NOT_A_BARE_OBJECT = frozenset({
+    "the", "a", "an", "this", "that", "these", "those", "some", "any", "every",
+    "each", "no", "all", "both", "either", "neither", "one", "it", "its",
+    "at", "in", "on", "for", "with", "to", "from", "by", "of", "about", "into",
+    "onto", "over", "under", "up", "down", "off", "out", "back", "away",
+    "again", "now", "then", "so", "too", "very", "really", "badly", "bad",
+    "hard", "today", "tonight", "yesterday", "tomorrow", "last", "earlier",
+    "and", "but", "or", "because", "if", "when", "while", "just", "even",
+})
+_ARTICLES = frozenset({"the", "a", "an", "this", "that", "these", "those"})
+#: A reflexive object other than the speaker's: "she wants to kill herself"
+#: is someone else's own risk (ruling D), not a threat by one person to another.
+OTHER_REFLEXIVE = frozenset({"himself", "herself", "themselves", "themself"})
+#: Third-person agreement before or in an ideation phrase: "mom WANTS to
+#: die", "mom IS suicidal". The subject is not the client, whatever word it is.
+_THIRD_PERSON_AGREEMENT = frozenset({"wants", "is", "was", "has", "does", "feels", "seems"})
 _WORD = re.compile(r"[a-z']+")
 
 
@@ -377,6 +431,10 @@ class HarmFrame:
     #: different things for "kill the process" (verb) and a bare "suicidal"
     #: typed on an AAC board (ideation).
     shape: str = "verb"
+    #: True when the grammar says the subject is not the client ("mom WANTS
+    #: to die") but cannot say who it is. The being asks who (ruling AA);
+    #: it is never read as the client's own risk.
+    subject_unresolved: bool = False
 
     @property
     def identified(self) -> Dict[str, bool]:
@@ -448,6 +506,7 @@ class HarmFrame:
         return (
             self.patient is Party.UNKNOWN
             and self.shape in {"self_harm_phrase", "ideation"}
+            and not self.subject_unresolved
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -460,6 +519,7 @@ class HarmFrame:
             "negated": self.negated, "past_tense": self.past_tense,
             "post": self.post,
             "shape": self.shape,
+            "subject_unresolved": self.subject_unresolved,
             "speaker_is_patient": self.speaker_is_patient,
             "speaker_may_be_patient": self.speaker_may_be_patient,
             "speaker_is_agent": self.speaker_is_agent,
@@ -468,6 +528,44 @@ class HarmFrame:
             "live_risk": self.live_risk,
             "clause": self.clause,
         }
+
+
+def _negators() -> frozenset:
+    """
+    This module's own negators (pinned to Everett's crisis table), with the
+    client's learned corrections laid over them (ruling AE): a negator the
+    being learned for this client is added, one it removed is removed.
+    """
+    active = current_words()
+    if active is SHARED_READING_WORDS:
+        return NEGATORS
+    added = active.negators - SHARED_READING_WORDS.negators
+    removed = SHARED_READING_WORDS.negators - active.negators
+    return (NEGATORS | added) - removed
+
+
+def _idiom_not_harm(tokens: List[str], index: int, stem: str) -> bool:
+    """
+    The harm word at `index` is part of an idiom that is not harm, read from
+    the reading words in force (ruling AE: the shared set, or one client's
+    layer over it). "kill time", "killing time", "kill some time". Walks at
+    most three words ahead and stops at a person, so "kill you, it's time"
+    is still read as a threat.
+    """
+    for phrase in current_words().idioms_not_harm:
+        words = phrase.lower().split()
+        if len(words) < 2 or _stem(words[0]) != stem:
+            continue
+        for ahead in range(1, 4):
+            k = index + ahead
+            if k >= len(tokens):
+                break
+            tok = tokens[k]
+            if tok == words[-1]:
+                return True
+            if tok in _OTHER_PATIENT or tok in _SELF_PATIENT or tok in FIRST_PERSON:
+                break
+    return False
 
 
 def _party(token: str) -> Tuple[Party, str]:
@@ -494,7 +592,7 @@ def _negated_before(tokens: List[str], index: int, reach: int = 4) -> bool:
         j = index - back
         if j < 0:
             return False
-        if tokens[j] in NEGATORS:
+        if tokens[j] in _negators():
             return True
     return False
 
@@ -540,8 +638,16 @@ def _patient_after(tokens: List[str], index: int, reach: int = 3) -> Tuple[Party
         if p is not Party.UNKNOWN:
             return p, ptext
     if index + 1 < len(tokens):
+        nxt = tokens[index + 1]
+        if nxt not in _NOT_A_BARE_OBJECT and nxt not in _negators():
+            # A bare noun straight after the verb, with no article: a name or
+            # a word used as one ("kill mom", "hurt sarah", "kill whoever").
+            # Grammar, not a list: "kill THE process" has an article.
+            return Party.THIRD_PARTY, nxt
         # a following noun that is not a person -> impersonal object
-        return Party.IMPERSONAL, tokens[index + 1]
+        if nxt in _ARTICLES and index + 2 < len(tokens):
+            return Party.IMPERSONAL, f"{nxt} {tokens[index + 2]}"
+        return Party.IMPERSONAL, nxt
     return Party.UNKNOWN, ""
 
 
@@ -571,7 +677,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
             # "she wants me to kill myself" is not a shape this handles;
             # the reflexive says the speaker, and the speaker wins.
             subj, subj_text = Party.SPEAKER, "i"
-        negated = bool(tokens_before) and tokens_before[-1] in NEGATORS or bool(
+        negated = bool(tokens_before) and tokens_before[-1] in _negators() or bool(
             re.search(r"\b(?:never|not|don't|dont|won't|wont|wouldn't|wouldnt)\s+"
                       r"(?:want|going|gonna|plan|intend|need|have|got)?\s*(?:to\s+)?$", before)
         )
@@ -611,12 +717,23 @@ def extract_frames(text: str) -> List[HarmFrame]:
             continue
         tokens_before = _WORD.findall(before)
         subj, subj_text = _subject_before(tokens_before)
+        # "mom wants to die": the verb agrees in the third person, so the
+        # subject is someone other than the client even when the grammar
+        # cannot say who. No list decides it; the being asks who.
+        unresolved = subj is Party.UNKNOWN and (
+            phrase.split()[0] in _THIRD_PERSON_AGREEMENT
+            or (bool(tokens_before) and tokens_before[-1] in _THIRD_PERSON_AGREEMENT
+                and not (len(tokens_before) >= 2 and tokens_before[-2] in FIRST_PERSON)))
+        if unresolved:
+            subj_text = next((t for t in reversed(tokens_before)
+                              if t not in _THIRD_PERSON_AGREEMENT
+                              and t not in _NOT_A_BARE_OBJECT), "")
         past = (
             phrase in PAST_IDEATION_PHRASES
             or _distanced_at(masked, m.start(), m.end())
             or bool(_PAST_BEFORE.search(before))
         )
-        negated = bool(tokens_before) and tokens_before[-1] in NEGATORS and not (
+        negated = bool(tokens_before) and tokens_before[-1] in _negators() and not (
             # "don't want to live" carries its own negator; it is not a
             # negated wish, it IS the wish.
             phrase.startswith(_SELF_NEGATED_PREFIXES)
@@ -632,6 +749,7 @@ def extract_frames(text: str) -> List[HarmFrame]:
             negated=negated, past_tense=past,
             post=post, clause=raw,
             shape="ideation",
+            subject_unresolved=unresolved,
         ))
         masked = masked[:m.start()] + (" " * (m.end() - m.start())) + masked[m.end():]
 
@@ -669,12 +787,18 @@ def extract_frames(text: str) -> List[HarmFrame]:
         stem = _stem(tok)
         if stem is None:
             continue
+        if stem in HARM_PREDICATES and _idiom_not_harm(tokens, i, stem):
+            continue        # "kill time": an idiom, not harm (ruling AE words)
         if stem in HARM_PREDICATES:
             polarity, severity = Polarity.HARM, HARM_PREDICATES[stem]
         else:
             polarity, severity = Polarity.HELP, HELP_PREDICATES[stem]
 
         patient, patient_text = _patient_after(tokens, i)
+        if i > 0 and tokens[i - 1] in _ARTICLES:
+            # "THE hitting stopped": the harm word is a noun here, with no
+            # one it is aimed at.
+            patient, patient_text = Party.IMPERSONAL, ""
         subject, subject_text = _subject_before(tokens[:i], reach=5)
 
         seg = " ".join(tokens[max(0, i - 6):i + 1])

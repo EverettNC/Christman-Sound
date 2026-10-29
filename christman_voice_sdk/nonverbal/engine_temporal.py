@@ -37,8 +37,10 @@ WHAT CHANGED AND WHY
 
    `pickle.load` executes arbitrary code during deserialization. Model and
    label files are inputs. REMEDIATION Phase 4 lists this. Labels now load
-   from JSON. Model pickles require an explicit opt-in AND a SHA-256 that
-   matches a recorded digest.
+   from JSON. Model pickles first required an explicit opt-in AND a
+   SHA-256 that matched a recorded digest; since the 2026-10-29 review
+   (Cardinal Rule 12, no pickle of data we did not write) a pickle is never
+   loaded at all. A .pkl model file is refused with the reason.
 
 3. `except (ImportError, Exception)` — the second clause makes the first
    meaningless, and it caught everything including KeyboardInterrupt's
@@ -81,6 +83,16 @@ WHAT CHANGED AND WHY
    older map with no such field works exactly as before for every meaning
    that is not danger.
 
+11. THE BUILT-IN MAP SPOKE FOR THE CLIENT. 2026-10-29 review, Everett's
+   rulings J and I. The built-in map still said "Go back." for Wave Left,
+   "Move forward." for Wave Right, and "I need help." for Hand Up. Ruling J:
+   the camera speaks only meanings learned for that client, so the built-in
+   map carries no wording at all; every built-in reading is reported (label,
+   intent, confidence) and says nothing. Ruling I: help and danger are the
+   silent alarm, so Hand Up ("Request attention") pages a human, silently,
+   and is never spoken, from the built-in map or from the client's own map.
+   A help or danger meaning never reaches `_speaks`.
+
 9. THE SYSTEM'S WORDS WERE GLUED TO THE PERSON'S. 2026-10-29.
    `enhanced_response` was "I see your gesture. I need help." — one string,
    so a voice reading it aloud spoke the system's sentence as the person's.
@@ -97,7 +109,6 @@ WHAT CHANGED AND WHY
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -109,32 +120,32 @@ import numpy as np
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-#: Set to "1" to permit loading pickled model files. OFF by default —
-#: pickle.load executes arbitrary code. A digest must also match.
-ALLOW_PICKLE_ENV = "CORTI_ALLOW_PICKLE_MODELS"
-
 #: The built-in map. An entry carries its meaning, not a fixed speak/silent
-#: flag (Everett, 2026-10-29, ruling L). Whether it is spoken is decided by
-#: the conditions in `_speaks`. `pages` marks a signal that goes to a human
-#: (Hand Up, ruling 5).
+#: flag (Everett, 2026-10-29, ruling L), and NO WORDING (ruling J: the
+#: camera speaks only meanings learned for that client). Each built-in
+#: reading is reported by its label and intent and says nothing; a spoken
+#: meaning comes only from the client's own language map. `pages` marks a
+#: signal that goes to a human (Hand Up, ruling 5); Hand Up is help, so it is
+#: the silent alarm (ruling I).
 DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, Any]] = {
-    "Hand Up": {"intent": "Request attention", "message": "I need help.", "pages": True},
-    "Wave Left": {"intent": "Previous mode", "message": "Go back."},
-    "Wave Right": {"intent": "Next mode", "message": "Move forward."},
-    "Head Jerk": {"intent": "Stress (tick)", "message": "I'm overwhelmed."},
-    "Looking Up": {"intent": "Thinking", "message": "I'm thinking."},
-    "Rapid Blinking": {"intent": "Discomfort", "message": "I'm uneasy."},
-    "Neutral": {"intent": "Calm", "message": "I'm fine."},
-    "Happy": {"intent": "Joy", "message": "I'm happy."},
-    "Sad": {"intent": "Unhappy", "message": "I'm sad."},
-    "Angry": {"intent": "Upset", "message": "I'm angry."},
-    "Fear": {"intent": "Worried", "message": "I'm scared."},
-    "Surprise": {"intent": "Shocked", "message": "I'm surprised."},
+    "Hand Up": {"intent": "Request attention", "pages": True},
+    "Wave Left": {"intent": "Previous mode"},
+    "Wave Right": {"intent": "Next mode"},
+    "Head Jerk": {"intent": "Stress (tick)"},
+    "Looking Up": {"intent": "Thinking"},
+    "Rapid Blinking": {"intent": "Discomfort"},
+    "Neutral": {"intent": "Calm"},
+    "Happy": {"intent": "Joy"},
+    "Sad": {"intent": "Unhappy"},
+    "Angry": {"intent": "Upset"},
+    "Fear": {"intent": "Worried"},
+    "Surprise": {"intent": "Shocked"},
 }
 
 #: Built-in readings of a generic feeling: a face, an eye movement, a tic.
-#: Not spoken (ruling J). A meaning in the client's own language map is a
-#: meaning learned for that client, and is spoken unless it is danger.
+#: Not spoken (ruling J); the built-in map carries no wording for any of
+#: them. A meaning in the client's own language map is a meaning learned for
+#: that client, and is spoken unless it is help or danger.
 GENERIC_FEELING_INTENTS = frozenset({
     "Stress (tick)", "Thinking", "Discomfort", "Calm", "Joy", "Unhappy",
     "Upset", "Worried", "Shocked",
@@ -149,16 +160,35 @@ GENERIC_FEELING_INTENTS = frozenset({
 PAGING_INTENTS = frozenset({"Request attention"})
 
 
+#: The face model's "Fear" label ("Worried") was danger by its old built-in
+#: wording, "I'm scared." (nonverbal_engine.DANGER_WORDS), so a Fear reading
+#: paged a human, silently. Ruling J took the wording out of the built-in
+#: map; this keeps the reading danger by its intent, so the page is not lost
+#: with the words (ruling I). Measured on this branch before this line: the
+#: built-in Fear reading no longer paged.
+TEMPORAL_DANGER_INTENTS = frozenset({"Worried"})
+
+
 def _danger(entry: Dict[str, Any]) -> bool:
     """A danger meaning: never spoken, always paged (ruling I, the silent alarm)."""
     from .nonverbal_engine import is_danger
-    return is_danger(entry.get("intent"), entry.get("message"))
+    return (entry.get("intent") in TEMPORAL_DANGER_INTENTS
+            or is_danger(entry.get("intent"), entry.get("message")))
 
 
 def _pages(entry: Dict[str, Any]) -> bool:
     """This map entry goes to the crisis gate and a human."""
     return (entry.get("pages") is True or entry.get("intent") in PAGING_INTENTS
             or _danger(entry))
+
+
+def _silent_alarm(entry: Dict[str, Any]) -> bool:
+    """
+    Help or danger: paged silently, never spoken, never announced (Everett's
+    ruling I: help and danger are the silent alarm). Hand Up's "Request
+    attention" is help, from the built-in map or the client's own.
+    """
+    return _danger(entry) or entry.get("intent") in PAGING_INTENTS
 
 
 #: The system's own words about what it saw. Never joined to the person's.
@@ -241,7 +271,6 @@ class TemporalNonverbalEngine:
         # it. It must match the length the trained models were fit on; the
         # reason for 10 is Everett's to give.
         sequence_length: int = 10,
-        model_digests: Optional[Dict[str, str]] = None,
         # 0.6: a chosen starting value, not a measurement. Held until client
         # data replaces it. Reason: the same bar as nonverbal_engine, so one
         # number decides "say it" across both engines; it sits above the 0.5
@@ -254,8 +283,6 @@ class TemporalNonverbalEngine:
                 none, every modality reports `unavailable` and says why.
             language_map_path: a JSON language map. None uses the built-in
                 map and reads nothing.
-            model_digests: modality -> expected SHA-256 of its model file.
-                Required alongside the env opt-in before any pickle is loaded.
             confidence_threshold: a reading below this is `below_threshold`
                 and speaks nothing.
         """
@@ -264,7 +291,6 @@ class TemporalNonverbalEngine:
         self.lstm_model_dir = lstm_model_dir
         self.language_map_path = language_map_path
         self.sequence_length = int(sequence_length)
-        self.model_digests = dict(model_digests or {})
         self.confidence_threshold = float(confidence_threshold)
 
         self.gesture_buffer: List[Any] = []
@@ -350,14 +376,6 @@ class TemporalNonverbalEngine:
 
     # -- Model loading --------------------------------------------------------
 
-    @staticmethod
-    def _sha256(path: str) -> str:
-        hasher = hashlib.sha256()
-        with open(path, "rb") as fh:
-            while chunk := fh.read(8192):
-                hasher.update(chunk)
-        return hasher.hexdigest()
-
     def _load_models(self) -> None:
         """Load each modality's model, or record why it could not be loaded."""
         if self.lstm_model_dir is None:
@@ -404,28 +422,14 @@ class TemporalNonverbalEngine:
             return self._require_predict(model, keras_path)
 
         if os.path.exists(pickle_path):
-            if os.getenv(ALLOW_PICKLE_ENV, "0") != "1":
-                raise ModelLoadError(
-                    f"{pickle_path} is a pickle. pickle.load executes arbitrary "
-                    f"code during deserialization; set {ALLOW_PICKLE_ENV}=1 and "
-                    "supply a model_digests entry to permit it."
-                )
-            expected = self.model_digests.get(modality)
-            if not expected:
-                raise ModelLoadError(
-                    f"{pickle_path}: no expected SHA-256 in model_digests[{modality!r}]. "
-                    "Refusing to unpickle an unverified file."
-                )
-            actual = self._sha256(pickle_path)
-            if actual != expected:
-                raise ModelLoadError(
-                    f"{pickle_path}: digest mismatch. expected {expected[:16]}…, "
-                    f"got {actual[:16]}…"
-                )
-            import pickle  # imported only on the verified path
-            with open(pickle_path, "rb") as fh:
-                model = pickle.load(fh)
-            return self._require_predict(model, pickle_path)
+            # Cardinal Rule 12 (no pickle of data we did not write), Everett's
+            # ruling on the 2026-10-29 review: the gated pickle load (an
+            # environment opt-in plus a SHA-256) is removed. A pickle is
+            # never opened, whatever the setting.
+            raise ModelLoadError(
+                f"{pickle_path} is a pickle, and pickles are not loaded (Cardinal "
+                "Rule 12: no pickle of data we did not write). Save the model as "
+                f"{stem}.keras.")
 
         raise ModelLoadError(f"no model file for {modality} in {self.lstm_model_dir}")
 
@@ -560,18 +564,28 @@ class TemporalNonverbalEngine:
                 modality=modality, status="below_threshold",
                 expression=expression, intent=entry.get("intent"),
                 confidence=confidence, message=None,
+                # Ruling M: nothing is held for confirmation; the being asks.
                 reason=(f"confidence {confidence:.3f} is below the "
-                        f"{self.confidence_threshold} threshold — please confirm"),
+                        f"{self.confidence_threshold} threshold: reported, not spoken"),
                 # Below the speaking bar is not below the paging bar.
                 pages=_pages(entry),
-                silent_alarm=_danger(entry),
+                silent_alarm=_silent_alarm(entry),
             )
 
         # .get, not [] — a hand-edited map missing a key took the engine down.
-        # Silent or vocal by the conditions, not by a flag (rulings I, J, L):
-        # see _speaks. A danger meaning never speaks, learned or not.
-        danger = _danger(entry)
-        speaks = self._speaks(entry, danger)
+        # Help and danger first (ruling I): the silent alarm. They never reach
+        # _speaks, learned or built in.
+        if _silent_alarm(entry):
+            return ClassificationResult(
+                modality=modality, status="ok",
+                expression=expression, intent=entry.get("intent"),
+                message=None, confidence=confidence,
+                reason=(f"{expression!r} is help or danger: it goes to a human "
+                        "silently and is never spoken (silent alarm)"),
+                pages=True, silent_alarm=True,
+            )
+        # Silent or vocal by the conditions, not by a flag (rulings J, L).
+        speaks = self._speaks(entry)
         return ClassificationResult(
             modality=modality, status="ok",
             expression=expression,
@@ -579,27 +593,28 @@ class TemporalNonverbalEngine:
             message=entry.get("message") if speaks else None,
             confidence=confidence,
             reason=None if speaks else (
-                f"{expression!r} is danger: it goes to a human silently and is "
-                "never spoken (silent alarm)" if danger else
-                f"{expression!r} is observed, not said — the system does not "
-                "speak a feeling for the person"
+                f"{expression!r} has no meaning learned for this client: the "
+                "reading is reported, not spoken"
             ),
             pages=_pages(entry),
-            silent_alarm=danger,
+            silent_alarm=False,
         )
 
-    def _speaks(self, entry: Dict[str, Any], danger: bool) -> bool:
+    def _speaks(self, entry: Dict[str, Any], danger: bool = False) -> bool:
         """
         Silent or vocal, by the conditions (Everett, 2026-10-29, rulings I, J,
-        L). Danger: silent. A meaning from the client's own map: spoken. A
-        built-in generic feeling (face, eye, tic): silent. Any other built-in
-        meaning (Hand Up's request, the waves): spoken.
+        L). Help or danger: silent, always (ruling I; `_classify` never asks
+        about them, and this refuses them again in case anything else does).
+        Ruling J: the camera speaks only meanings learned for that client, so
+        a meaning speaks only when it comes from the client's own map and
+        carries words. Every built-in reading is silent.
         """
-        if danger:
+        if danger or _silent_alarm(entry):
             return False
-        if getattr(self, "language_map_source", "built_in") == "client":
-            return True
-        return entry.get("intent") not in GENERIC_FEELING_INTENTS
+        if getattr(self, "language_map_source", "built_in") != "client":
+            return False
+        message = entry.get("message")
+        return isinstance(message, str) and bool(message.strip())
 
     def classify_gesture_sequence(self) -> Dict[str, Any]:
         return self._classify("gesture", self.gesture_buffer).to_dict()
@@ -710,7 +725,7 @@ def get_temporal_engine(**kwargs: Any) -> TemporalNonverbalEngine:
 __all__ = [
     "TemporalNonverbalEngine", "ClassificationResult", "ModelLoadError",
     "get_temporal_engine", "DEFAULT_LANGUAGE_MAP", "DEFAULT_LABELS",
-    "ALLOW_PICKLE_ENV", "SYSTEM_NOTES", "PAGING_INTENTS", "GENERIC_FEELING_INTENTS",
+    "SYSTEM_NOTES", "PAGING_INTENTS", "GENERIC_FEELING_INTENTS",
 ]
 
 # ==============================================================================

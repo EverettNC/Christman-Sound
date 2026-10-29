@@ -80,11 +80,17 @@ class ChristmanMusicEngine:
     def _load_musical_memory(self) -> Dict:
         memory_file = os.path.join(self.memory_path, "musical_memory.json")
         if os.path.exists(memory_file):
+            # Rule 6 (2026-10-29 review): a memory file that could not be
+            # read was logged and replaced by a blank memory, which the next
+            # save then wrote over the client's file. Now it is raised, with
+            # the file and the reason, and the file is left as it is.
             try:
                 with open(memory_file, "r") as f:
                     return json.load(f)
-            except Exception as e:
-                logger.error(f"Failed to load musical memory: {e}")
+            except (OSError, ValueError) as e:
+                raise RuntimeError(
+                    f"musical memory at {memory_file} could not be read "
+                    f"({type(e).__name__}: {e}); it was not replaced") from e
         return {
             "compositions": [],
             "favorite_patterns": [],

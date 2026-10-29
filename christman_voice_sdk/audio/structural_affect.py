@@ -82,7 +82,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 # -----------------------------------------------------------------------------
 # Vocabulary
@@ -323,6 +325,20 @@ SCOPE_BREAKERS = frozenset({
 })
 
 
+#: Body parts. "he hurt my ARM" is the client's body, not someone else
+#: (hearing.py), and "Is there something wrong with your LEG?" / "Yeah, it
+#: hurts" is the client's own leg (ruling X).
+BODY_PARTS = frozenset({
+    "arm", "arms", "neck", "head", "face", "back", "leg", "legs", "hand",
+    "hands", "wrist", "wrists", "finger", "fingers", "rib", "ribs", "chest",
+    "stomach", "belly", "eye", "eyes", "nose", "mouth", "jaw", "throat",
+    "shoulder", "shoulders", "knee", "knees", "foot", "feet", "ankle",
+    "ankles", "hip", "hips", "side", "ear", "ears", "lip", "lips", "tooth",
+    "teeth", "body", "skin", "hair", "cheek", "chin", "spine", "elbow",
+    "elbows", "thumb", "toes",
+})
+
+
 @dataclass(frozen=True)
 class ReadingWords:
     """
@@ -339,13 +355,25 @@ class ReadingWords:
 
     negators: frozenset
     scope_breakers: frozenset
+    #: The client's own body (ruling AE, 2026-10-29): "he hurt my ARM" is the
+    #: client, "my arm hurts" is the client's own pain. A client's layer can
+    #: add the words that client uses for their body.
+    body_parts: frozenset = BODY_PARTS
+    #: Idioms where a harm word is not harm: "kill time" ("I'm going to kill
+    #: some time"). Written "<verb> <object>"; the crisis gate (harm_frame)
+    #: reads the verb in any form and the object after it, with up to two
+    #: words between ("kill a little time"), never past a person ("kill you,
+    #: it's time" is still read). A client's layer adds their own ("beat
+    #: traffic"). Starting set: the one idiom Everett's review named.
+    idioms_not_harm: frozenset = frozenset({"kill time"})
 
-    _FIELDS = ("negators", "scope_breakers")
+    _FIELDS = ("negators", "scope_breakers", "body_parts", "idioms_not_harm")
 
     def for_client(self, learned: Optional[Dict[str, Dict[str, Any]]] = None) -> "ReadingWords":
         """
         This set, extended or overridden by one client's learned words:
-        {"negators": {"add": [...], "remove": [...]}, "scope_breakers": {...}}.
+        {"negators": {"add": [...], "remove": [...]}, "scope_breakers": {...},
+        "body_parts": {...}, "idioms_not_harm": {...}}.
         None or {} returns the shared set unchanged. An unknown key raises:
         a misspelled layer must not be silently ignored.
         """
@@ -369,7 +397,35 @@ class ReadingWords:
 #: The shared set: the affect reader's own negators (ability and
 #: time-bounded included, judging modals not: rulings R and T) and scope
 #: breakers.
-SHARED_READING_WORDS = ReadingWords(negators=AFFECT_NEGATORS, scope_breakers=SCOPE_BREAKERS)
+SHARED_READING_WORDS = ReadingWords(negators=AFFECT_NEGATORS, scope_breakers=SCOPE_BREAKERS,
+                                    body_parts=BODY_PARTS)
+
+#: The words in force for the reading under way. Every reader (the clause
+#: reader, the crisis gate, harm_frame's negation) reads them here, so one
+#: client's learned layer reaches all of them at once (ruling AE). Outside
+#: `using_reading_words` it is the shared set.
+_ACTIVE_WORDS: ContextVar[ReadingWords] = ContextVar("reading_words", default=SHARED_READING_WORDS)
+
+
+def current_words() -> ReadingWords:
+    """The reading words in force now: a client's layer, or the shared set."""
+    return _ACTIVE_WORDS.get()
+
+
+@contextmanager
+def using_reading_words(words: Optional[ReadingWords]) -> Iterator[ReadingWords]:
+    """Read with `words` (one client's layer) inside this block; None keeps
+    whatever is in force."""
+    if words is None:
+        yield current_words()
+        return
+    if not isinstance(words, ReadingWords):
+        raise TypeError(f"reading words must be ReadingWords, got {type(words).__name__}")
+    token = _ACTIVE_WORDS.set(words)
+    try:
+        yield words
+    finally:
+        _ACTIVE_WORDS.reset(token)
 
 #: Contrast markers. The clause AFTER one of these is the resolution — the
 #: thing the speaker actually landed on. "I'm overwhelmed BUT I'm glad."
@@ -393,28 +449,34 @@ FIRST_PERSON = frozenset({"i", "i'm", "im", "i've", "ive", "i'd", "id",
                           "i'll", "ill", "me", "my", "mine", "myself", "we",
                           "we're", "our", "us"})
 
-#: Third-person / other-attribution markers.
-THIRD_PERSON = frozenset({
-    "he", "she", "they", "him", "her", "them", "his", "their", "theirs",
-    "it", "its", "someone", "somebody", "everyone", "nobody", "people",
-    "mother", "father", "mom", "dad", "sister", "brother", "friend",
-    "patient", "character", "author", "article", "film", "movie", "book",
-    "story", "topic", "subject",
-})
-
-#: Who else can be the experiencer, for affect: main's THIRD_PERSON, less
-#: "it" (ruling X: "it hurts" is read against the turn before it).
+#: NO FIXED PERSON LIST (Everett, 2026-10-29, ruling AA). "What better way
+#: than the being adapting and molding to the family versus standardized
+#: lists. I hate standardized lists." The handoff's list of person words
+#: (mom, dad, friend, teacher, nurse, caregiver, boss, ...) went first. The
+#: 2026-10-29 review found main's own fixed lists still here: THIRD_PERSON
+#: (he, she, they ... plus mother, father, mom, dad, sister, brother,
+#: friend, patient, character, author, article, film, movie, book, story,
+#: topic, subject, people) and OTHER_EXPERIENCER (the same, less "it"). Both
+#: are removed.
 #:
-#: Everett, 2026-10-29 (ruling AA): the handoff's fixed list of person words
-#: (mom, dad, friend, teacher, nurse, caregiver, boss, ...) is removed. "What
-#: better way than the being adapting and molding to the family versus
-#: standardized lists. I hate standardized lists." Who counts as a person in
-#: a client's life is learned per client by the being (the same per-client
-#: repertoire as rulings J and N; not built). Grammar alone ("my ___" plus a
-#: feeling) does not decide it: when the words cannot tell whether the
-#: subject is a person, nothing is concluded and the being asks (see
-#: `_attribute` and hearing.ASK_WHO).
-OTHER_EXPERIENCER = THIRD_PERSON - {"it", "its"}
+#: What is left decides by GRAMMAR, never by a list of people:
+#:   - the third-person pronouns below (a closed word class of the
+#:     language, not a list of people);
+#:   - a name typed with a capital ("Mary is scared", see `proper_names`);
+#:   - a contraction after a possessive ("my mom's in pain", the ear's "my
+#:     moms in pain"): the grammar makes "mom" the subject of "is", so the
+#:     feeling is hers, never the client's (ruling P; see
+#:     `contracted_subjects`).
+#: Anything else, "my ___ is sad" with no contraction, cannot be told from
+#: the grammar: nothing is concluded and the being asks who (ruling AA,
+#: hearing.ASK_WHO). Who counts as a person in a client's life is learned
+#: per client by the being (rulings J, N and AA); ReadingWords.for_client
+#: does not yet carry people, so that layer is not built here.
+THIRD_PERSON_PRONOUNS = frozenset({
+    "he", "she", "they", "him", "her", "them", "his", "hers", "their",
+    "theirs", "himself", "herself", "themselves", "someone", "somebody",
+    "everyone", "everybody", "nobody",
+})
 
 #: Someone else is not okay / not safe (Everett's ruling, 2026-10-29, in the
 #: coordinator's words: "my mom is not okay" is a carbon saying another
@@ -452,18 +514,6 @@ EXPLETIVE_SUBJECTS = frozenset({
 #: Possessives. "my MOM", "her BROTHER".
 POSSESSIVES = frozenset({"my", "our", "your", "his", "her", "their"})
 
-#: Body parts. "he hurt my ARM" is the client's body, not someone else
-#: (hearing.py), and "Is there something wrong with your LEG?" / "Yeah, it
-#: hurts" is the client's own leg (ruling X).
-BODY_PARTS = frozenset({
-    "arm", "arms", "neck", "head", "face", "back", "leg", "legs", "hand",
-    "hands", "wrist", "wrists", "finger", "fingers", "rib", "ribs", "chest",
-    "stomach", "belly", "eye", "eyes", "nose", "mouth", "jaw", "throat",
-    "shoulder", "shoulders", "knee", "knees", "foot", "feet", "ankle",
-    "ankles", "hip", "hips", "side", "ear", "ears", "lip", "lips", "tooth",
-    "teeth", "body", "skin", "hair", "cheek", "chin", "spine", "elbow",
-    "elbows", "thumb", "toes",
-})
 
 #: Words that may open a fragment before its subject: "YEAH, it hurts".
 _FRAGMENT_OPENERS = frozenset({
@@ -484,7 +534,7 @@ def anchor_from(previous_turn: str) -> Optional[Tuple[str, str]]:
     if not lowered.strip():
         return None
     m = re.search(r"\byour\s+([a-z]+)", lowered)
-    if m and m.group(1) in BODY_PARTS:
+    if m and m.group(1) in current_words().body_parts:
         return ("self", f"your {m.group(1)}")
     m = re.search(r"\b(that|this|the|those|these|your)\s+([a-z]+(?:\s+[a-z]+){0,2})", lowered)
     if m:
@@ -635,9 +685,54 @@ _PREDICATE_START = frozenset({
 def _opens_predicate(tok: str) -> bool:
     return bool(tok) and (
         tok in _PREDICATE_START or tok in LEXICON or tok in INTENSIFIERS
-        or tok in DOWNTONERS or tok in AFFECT_NEGATORS
+        or tok in DOWNTONERS or tok in current_words().negators
         or tok.startswith("__idiom_") or tok.endswith("ing")
     )
+
+
+#: The ear drops apostrophes: "my moms in pain" is "my mom's in pain". A
+#: plural noun is never followed straight by one of these with no verb
+#: between ("my feelings in pain" is not English), so after a possessive,
+#: "<word>s" + one of these is "<word> is". Words that can follow a plural
+#: as its verb or adverb ("hurt", "really", "always") are left out on
+#: purpose: "my feelings hurt" stays the client's own feelings. Grammar, not
+#: a list of people (ruling AA).
+_EAR_IS_OPENERS = frozenset({
+    "in", "not", "so", "very", "too", "been", "being", "going", "gonna",
+    "gone", "sick", "ill", "mad", "crying", "falling", "home", "here",
+    "there", "at", "on", "out", "back",
+})
+
+
+def _ear_is(tok: str, nxt: str) -> bool:
+    """`tok` + `nxt` is the ear's "<word>s <predicate>" for "<word>'s <predicate>"."""
+    return (len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss")
+            and "'" not in tok and tok not in current_words().body_parts and tok[:-1] not in current_words().body_parts
+            and (nxt in _EAR_IS_OPENERS or nxt.startswith("__idiom_")))
+
+
+def contracted_subjects(raw: str) -> frozenset:
+    """
+    Words the grammar makes the subject of "is" through a contraction after
+    a possessive (ruling P, ruling AA): "my mom's in pain" -> {"mom"}, the
+    ear's "my moms not okay" -> {"mom"}. Their feeling is theirs, never the
+    client's. "sam's scared" (no possessive) is not here: from the ear a
+    lower-case name cannot be told from a thing, and the being asks whose.
+    Reads only.
+    """
+    raw_toks = [m.group(0).strip("'") for m in _WORD.finditer(_same_length_lower(raw))]
+    out = set()
+    for i in range(1, len(raw_toks)):
+        tok, prev = raw_toks[i], raw_toks[i - 1]
+        nxt = raw_toks[i + 1] if i + 1 < len(raw_toks) else ""
+        if prev not in POSSESSIVES:
+            continue
+        if tok.endswith("'s") and len(tok) > 2 and _opens_predicate(nxt):
+            if tok[:-2] not in current_words().body_parts:
+                out.add(tok[:-2])
+        elif _ear_is(tok, nxt):
+            out.add(tok[:-1])
+    return frozenset(out)
 
 
 def tokenize(text: str) -> List[str]:
@@ -673,16 +768,18 @@ def _tokenize_with_start(text: str) -> List[Tuple[str, int]]:
             out.extend((t, at) for t in _CONTRACTIONS[tok])
             continue
         nxt = raw[i + 1].group(0).strip("'") if i + 1 < len(raw) else ""
+        prev = raw[i - 1].group(0).strip("'") if i > 0 else ""
         if tok.endswith("'s") and len(tok) > 2 and not tok.startswith("__"):
             out.append((tok[:-2], at))
             if _opens_predicate(nxt):
                 out.append(("is", at))
             continue
-        if (tok.endswith("s") and tok not in OTHER_EXPERIENCER
-                and tok[:-1] in OTHER_EXPERIENCER and _opens_predicate(nxt)):
+        if prev in POSSESSIVES and _ear_is(tok, nxt):
             # The ear drops apostrophes: "my moms in pain" is "my mom's in
-            # pain". Only before a predicate, so "my moms car" stays a
-            # possessive.
+            # pain". Only after a possessive and before a word no plural can
+            # take with no verb between, so "my moms car" stays a
+            # possessive and "my feelings hurt" stays plural. Grammar, not a
+            # list of people (ruling AA).
             out.extend(((tok[:-1], at), ("is", at)))
             continue
         out.append((tok, at))
@@ -751,12 +848,11 @@ def place_said(text: str, clauses: List["Clause"],
 
 
 def is_person(tok: str) -> bool:
-    """A word known to name someone other than the speaker, plurals and the
-    ear's possessive ("my moms in pain") included. Not knowing a word is not
-    knowing it is no one (ruling AA)."""
-    return tok in OTHER_EXPERIENCER or (
-        tok.endswith("s") and tok[:-1] in OTHER_EXPERIENCER
-    )
+    """A word the GRAMMAR makes someone other than the speaker: a
+    third-person pronoun. No noun is on any list (ruling AA): whether "mom",
+    "teacher" or "dog" names a person in a client's life is learned per
+    client by the being. Not knowing a word is not knowing it is no one."""
+    return tok in THIRD_PERSON_PRONOUNS
 
 
 #: Words passed over, walking back from "not okay" / "not safe" to its
@@ -791,6 +887,15 @@ def proper_names(raw: str) -> frozenset:
     )
 
 
+def named_by_grammar(raw: str) -> frozenset:
+    """
+    Words in what was said that the grammar marks as someone other than the
+    speaker: a name typed with a capital, and a contraction after a
+    possessive ("my mom's in pain"). Ruling AA: no list decides this.
+    """
+    return proper_names(raw) | contracted_subjects(raw)
+
+
 def _idiom_subject(before: str, names: frozenset = frozenset()) -> str:
     """
     Whose "not okay" / "not safe" this is, from the subject right in front.
@@ -800,12 +905,25 @@ def _idiom_subject(before: str, names: frozenset = frozenset()) -> str:
       "self"  the speaker ("i", "we"), or no subject at all (on an AAC board
               a lone "not okay" is the speaker's own: Everett's subjectless
               ruling, 2026-10-11)
-      "other" another person: he, she, they, a person word ("my mom", the
-              ear's "my moms"), or a name typed with a capital ("Mary")
-      "unclear" "my ___" where the word is not known to be a person
-              ("my teacher is not okay"): ruling AA, the being asks.
+      "other" another person, by grammar: he, she, they, a name typed with
+              a capital ("Mary"), or a contraction after a possessive ("my
+              mom's not okay", the ear's "my moms not okay"); `names`
+              carries the last two (see `named_by_grammar`)
+              A third-person possessive ("her mom is not okay") is someone
+              else's by grammar too, as `_attribute` reads it.
+      "unclear" "my ___" with no contraction ("my mom is not okay", "my
+              teacher is not okay"): whether the word names a person is not
+              plain from the grammar; ruling AA, the being asks who.
+      "whose" a bare word with nothing in front of it, as the ear sends a
+              name or a family word in lower case ("mom is not okay",
+              "mary is not okay"): a name cannot be told from a thing, so
+              whose state it is cannot be told; ruling P, the being asks
+              whose. (Until the 2026-10-29 review the person list made
+              "mom" someone else here; with the list gone (ruling AA) this
+              keeps it from going unread.)
       ""      no one's state: "you" (ruling E), "it", "this", "that", a
-              thing. The words are then left to ordinary scoring.
+              thing ("the car"). The words are then left to ordinary
+              scoring.
     """
     toks = tokenize(before)
     for k in range(len(toks) - 1, -1, -1):
@@ -816,10 +934,35 @@ def _idiom_subject(before: str, names: frozenset = frozenset()) -> str:
             return "self"
         if tok in _OTHER_PRONOUNS or is_person(tok) or tok in names:
             return "other"
-        if k > 0 and toks[k - 1] in POSSESSIVES and tok not in BODY_PARTS:
+        prev = toks[k - 1] if k > 0 else ""
+        if prev in POSSESSIVES and tok not in current_words().body_parts:
+            if prev in {"his", "her", "their"}:
+                return "other"
             return "unclear"
+        if (tok.isalpha() and tok not in _NOT_NAMES and tok not in _NOT_A_BARE_SUBJECT
+                and prev not in _BARE_SUBJECT_BLOCKERS):
+            return "whose"
         return ""
     return "self"
+
+
+#: The note on an idiom hit whose subject is a bare word (ruling P): the
+#: being asks whose (hearing.whose_feeling_unclear reads it).
+WHOSE_NOTE = "whose it is cannot be told from the words (ruling P)"
+
+#: Words in front of a word that make it part of a noun phrase or a clause
+#: already under way, so it is not a bare subject ("THE car", "THAT is").
+_BARE_SUBJECT_BLOCKERS = frozenset({
+    "the", "a", "an", "this", "that", "these", "those", "some", "any", "every",
+    "each", "no", "another", "your", "to", "of", "for", "with", "at", "on",
+    "in", "by", "from", "about",
+})
+#: Words that are never a bare subject of "not okay" / "not safe".
+_NOT_A_BARE_SUBJECT = frozenset({
+    "you", "is", "am", "are", "was", "were", "be", "been", "being", "not",
+    "and", "or", "but", "so", "if", "to", "it", "this", "that", "things",
+    "everything", "something", "nothing", "all",
+})
 
 
 #: Curly and typographic apostrophes, as phones and AAC boards emit them.
@@ -1149,7 +1292,19 @@ class StructuralAffectAnalyzer:
     #: Reason: "a little", the same downtoner, is 0.6 in DOWNTONERS.
     NOT_SO_WEIGHT = 0.6
 
+    def __init__(self, reading_words: Optional[ReadingWords] = None) -> None:
+        #: One client's reading words (ReadingWords.for_client), or None to
+        #: read with whatever is in force (the shared set by default).
+        self.reading_words = reading_words
+
     def analyze(
+        self, text: str, prosody: Optional[ProsodyFeatures] = None,
+        previous_turn: str = "",
+    ) -> AffectReading:
+        with using_reading_words(self.reading_words):
+            return self._analyze(text, prosody=prosody, previous_turn=previous_turn)
+
+    def _analyze(
         self, text: str, prosody: Optional[ProsodyFeatures] = None,
         previous_turn: str = "",
     ) -> AffectReading:
@@ -1193,7 +1348,7 @@ class StructuralAffectAnalyzer:
         # resolved past — and every one passed the single gate for a care
         # response.
         idiom_scores, idioms_found, masked, idiom_map, surface, idiom_subjects = (
-            self._match_idioms(lowered, proper_names(raw)))
+            self._match_idioms(lowered, named_by_grammar(raw)))
         if idioms_found:
             notes.append(f"idioms matched: {idioms_found}")
 
@@ -1209,8 +1364,10 @@ class StructuralAffectAnalyzer:
         # PASS 3 — contrast: which clause is the resolution.
         clauses = self._mark_resolution(clauses, masked)
 
-        # PASS 6 (per clause) — who is experiencing this.
-        names = proper_names(raw)
+        # PASS 6 (per clause) — who is experiencing this. By grammar, never
+        # by a list of people (ruling AA): pronouns, typed names, and a
+        # contraction after a possessive.
+        names = named_by_grammar(raw)
         clauses = [
             Clause(c.index, c.text, c.tokens, c.is_resolution,
                    self._attribute(c.tokens, names))
@@ -1225,8 +1382,16 @@ class StructuralAffectAnalyzer:
         fragments = {c.index for c in clauses
                      if c.attribution is Attribution.UNKNOWN and self._is_fragment(c.tokens)}
         if anchor is not None and fragments:
+            # Rulings X and O (Everett, 2026-10-29): a reaction to a thing
+            # after a question ("this is scary" after "did you like that
+            # haunted house?") is about the thing. It is not the client's
+            # own negative feeling and does not move the mode; it reads as
+            # describing the thing. The client's own body ("your leg") is
+            # the client's.
+            kind = (Attribution.SELF if anchor[0] == "self"
+                    else Attribution.IMPERSONAL)
             clauses = [
-                Clause(c.index, c.text, c.tokens, c.is_resolution, Attribution.SELF)
+                Clause(c.index, c.text, c.tokens, c.is_resolution, kind)
                 if c.index in fragments else c
                 for c in clauses
             ]
@@ -1394,6 +1559,40 @@ class StructuralAffectAnalyzer:
         "think", "believe", "guess", "suppose", "reckon", "expect", "feel",
     })
 
+    #: Verbs that agree only with a third-person singular subject (never
+    #: "i"): grammar, used to see a new subject start (ruling AA).
+    _THIRD_SINGULAR_VERBS = frozenset({
+        "is", "was", "isn't", "isnt", "wasn't", "wasnt", "has", "hasn't",
+        "hasnt", "does", "doesn't", "doesnt",
+    })
+
+    #: Modals that open a question ("can you", "will you", "did you").
+    _QUESTION_MODALS = frozenset({
+        "can", "could", "will", "would", "can't", "cant", "did", "didn't", "didnt",
+    })
+
+    #: Determiners: a word after one is inside a noun phrase, not its start.
+    _DETERMINERS = frozenset({
+        "the", "a", "an", "this", "that", "these", "those", "some", "any",
+        "every", "each", "no", "another",
+    })
+
+    #: Function words and feeling words that are never a new subject.
+    _NOT_A_SUBJECT = (
+        FIRST_PERSON | EXPLETIVE_SUBJECTS | frozenset(LEXICON)
+        | frozenset(INTENSIFIERS) | frozenset(DOWNTONERS) | AFFECT_NEGATORS
+        | SCOPE_BREAKERS | CONTRAST_MARKERS | RESOLUTION_MARKERS | PAST_MARKERS
+        | frozenset({
+            "you", "there", "here", "what", "who", "which", "why", "how",
+            "when", "where", "whatever", "whoever", "that", "this", "the",
+            "a", "an", "and", "or", "if", "to", "of", "for", "with", "at",
+            "on", "in", "by", "from", "about", "as", "than", "is", "am",
+            "are", "was", "were", "be", "been", "being", "do", "does", "did",
+            "have", "has", "had", "not", "yes", "yeah", "no", "ok", "okay",
+            "please", "thank", "thanks", "like", "just", "also", "too",
+        })
+    )
+
     _SEEM_VERBS = frozenset({
         "feel", "feels", "felt", "feeling", "look", "looks", "looked",
         "seem", "seems", "seemed", "sound", "sounds", "sounded", "just",
@@ -1412,10 +1611,28 @@ class StructuralAffectAnalyzer:
             return True
         if tok in EXPLETIVE_SUBJECTS and nxt in cls._CLAUSE_VERBS:
             return True
-        if tok in POSSESSIVES and nxt in OTHER_EXPERIENCER and nxt2 in cls._CLAUSE_VERBS:
+        # Ruling AA: these were decided by a fixed list of people. They are
+        # decided by grammar now.
+        # A possessive noun phrase with its own verb is a new subject: "i'm
+        # scared | my mom is sad", "i'm scared | my teacher is sad". The
+        # client's own body stays in the clause ("i'm scared my leg is
+        # broken" is the client's).
+        # Not before a modal that opens a question ("he hurt my feelings
+        # CAN you get someone"): that "my ___" is the object of the verb
+        # before it, not a new subject.
+        if (tok in POSSESSIVES and nxt and nxt not in current_words().body_parts
+                and nxt not in cls._NOT_A_SUBJECT and nxt2 in cls._CLAUSE_VERBS
+                and nxt2 not in cls._QUESTION_MODALS):
             return True
-        if (tok in OTHER_EXPERIENCER and nxt in cls._CLAUSE_VERBS
+        if (tok in THIRD_PERSON_PRONOUNS and nxt in cls._CLAUSE_VERBS
                 and prev not in POSSESSIVES and prev not in {"the", "a", "an"}):
+            return True
+        # A bare word before a third-person singular verb ("mom IS sad")
+        # cannot be the speaker: "is", "was", "has" never take "i". A new
+        # subject: "i'm scared | mom is sad".
+        if (nxt in cls._THIRD_SINGULAR_VERBS and tok not in cls._NOT_A_SUBJECT
+                and tok.isalpha() and prev not in POSSESSIVES
+                and prev not in cls._DETERMINERS and prev not in cls._BOUND_BEFORE):
             return True
         return False
 
@@ -1487,7 +1704,7 @@ class StructuralAffectAnalyzer:
             coord, piece = pieces[k], pieces[k + 1]
             toks = tokenize(piece)
             has_subject = bool(
-                set(toks) & (FIRST_PERSON | OTHER_EXPERIENCER | EXPLETIVE_SUBJECTS)
+                set(toks) & (FIRST_PERSON | THIRD_PERSON_PRONOUNS | EXPLETIVE_SUBJECTS)
             )
             has_verb = bool(set(toks) & StructuralAffectAnalyzer._CLAUSE_VERBS)
             if has_subject and has_verb:
@@ -1587,18 +1804,21 @@ class StructuralAffectAnalyzer:
 
         subj = set(subject)
 
-        # A possessive with a person noun points at that person.
+        # A possessive with a word the grammar marks as someone else ("my
+        # mom's in pain": a contraction after a possessive; a typed name)
+        # points at that person (ruling P).
         for i, tok in enumerate(subject):
             if tok in POSSESSIVES:
                 nxt = subject[i + 1] if i + 1 < len(subject) else ""
-                if is_person(nxt):
+                if is_person(nxt) or (nxt and nxt in names):
                     return Attribution.OTHER
-                # Ruling AA: "my teacher is sad" — whether the word names a
-                # person is learned per client, not read off a list. The
-                # client's own body ("my leg hurts") is the client's; any
-                # other "my ___" cannot be told: UNKNOWN, and the being asks.
+                # Ruling AA: "my teacher is sad", "my mom is sad" — whether
+                # the word names a person is learned per client, never read
+                # off a list. The client's own body ("my leg hurts") is the
+                # client's; any other "my ___" cannot be told: UNKNOWN, and
+                # the being asks who.
                 if ((not elliptical or i == 0) and tok in {"my", "our"} and nxt
-                        and nxt not in BODY_PARTS
+                        and nxt not in current_words().body_parts
                         and nxt not in LEXICON and not nxt.startswith("__")):
                     return Attribution.UNKNOWN
 
@@ -1855,8 +2075,13 @@ class StructuralAffectAnalyzer:
             # that; every other word carries its clause's.
             attribution = {
                 "self": Attribution.SELF, "other": Attribution.OTHER,
-                "unclear": Attribution.UNKNOWN,     # ruling AA: the being asks
+                "unclear": Attribution.UNKNOWN,     # ruling AA: the being asks who
+                # Ruling P: a bare lower-case word, whose it is cannot be
+                # told; read as no one's here, and the being asks whose.
+                "whose": Attribution.IMPERSONAL,
             }.get(idiom_subjects.get(tok, ""), clause.attribution)
+            if idiom_subjects.get(tok) == "whose":
+                note_parts.append(WHOSE_NOTE)
             if attribution is Attribution.OTHER and weight != 0.0:
                 weight *= self.OTHER_ATTRIBUTION_WEIGHT
                 note_parts.append("attributed to another person")
@@ -1932,7 +2157,7 @@ class StructuralAffectAnalyzer:
         about_idx: Optional[int] = None
         for j in range(index - 1, -1, -1):
             tok = tokens[j]
-            if tok in SCOPE_BREAKERS and not (tok == "so" and cls._so_intensifies(tokens, j)):
+            if tok in current_words().scope_breakers and not (tok == "so" and cls._so_intensifies(tokens, j)):
                 return None
             if tok in cls._BELIEF_VERBS:
                 if about_idx is None:
@@ -1943,7 +2168,7 @@ class StructuralAffectAnalyzer:
                 if k != about_idx:
                     return None
                 neg_idx = next((n for n in range(j - 1, max(-1, j - 4), -1)
-                                if tokens[n] in AFFECT_NEGATORS), None)
+                                if tokens[n] in current_words().negators), None)
                 verb_neg = tokens[neg_idx] if neg_idx is not None else ""
                 verb_words = " ".join(tokens[neg_idx:j + 1]) if neg_idx is not None else tok
                 holder = next((t for t in reversed(tokens[:j])
@@ -1952,7 +2177,13 @@ class StructuralAffectAnalyzer:
                 if about_idx > 0 and tokens[about_idx - 1] in cls._POSSESSIVES:
                     about = f"{tokens[about_idx - 1]} {about}"
                 return holder, about, verb_words, verb_neg
-            if about_idx is None and (tok in cls._SUBJECT_STARTS or is_person(tok)):
+            # Who the belief is about, by grammar (ruling AA): a subject
+            # pronoun, a third-person pronoun, or a noun after a possessive
+            # ("i think my mom is sad": about "my mom"), never a list.
+            if about_idx is None and (
+                    tok in cls._SUBJECT_STARTS or is_person(tok)
+                    or (j > 0 and tokens[j - 1] in cls._POSSESSIVES
+                        and tok not in current_words().body_parts and tok not in cls._NOT_A_SUBJECT)):
                 about_idx = j
         return None
 
@@ -1991,7 +2222,7 @@ class StructuralAffectAnalyzer:
             if tokens[j] in {"since", "until", "till", "for"}:
                 tail: List[str] = []
                 for t in tokens[j + 1:j + 4]:
-                    if t in SCOPE_BREAKERS or t in StructuralAffectAnalyzer._SUBJECT_STARTS:
+                    if t in current_words().scope_breakers or t in StructuralAffectAnalyzer._SUBJECT_STARTS:
                         break
                     tail.append(t)
                 return " ".join([tokens[j]] + tail) if tail else ""
@@ -2048,7 +2279,7 @@ class StructuralAffectAnalyzer:
             if j < 0:
                 return None
             tok = tokens[j]
-            if tok in AFFECT_NEGATORS:
+            if tok in current_words().negators:
                 return degree
             if tok not in StructuralAffectAnalyzer._NOT_SO_WORDS and tok not in {
                     "feel", "feeling", "be", "being", "really", "even"}:
@@ -2084,9 +2315,9 @@ class StructuralAffectAnalyzer:
             if j < 0:
                 return None
             tok = tokens[j]
-            if tok in AFFECT_NEGATORS:
+            if tok in current_words().negators:
                 return tok
-            if tok in SCOPE_BREAKERS:
+            if tok in current_words().scope_breakers:
                 if tok == "so" and StructuralAffectAnalyzer._so_intensifies(tokens, j):
                     continue
                 return None
@@ -2131,7 +2362,7 @@ class StructuralAffectAnalyzer:
                 if tok == "like" and nxt in StructuralAffectAnalyzer._SUBJECT_STARTS:
                     return False
                 return True
-            if tok in SCOPE_BREAKERS or tok in AFFECT_NEGATORS:
+            if tok in current_words().scope_breakers or tok in current_words().negators:
                 return False
         return False
 
@@ -2325,13 +2556,17 @@ __all__ = [
     "PROFANITY",
     "REQUEST_WORDS",
     "THANKS",
-    "OTHER_EXPERIENCER",
+    "THIRD_PERSON_PRONOUNS",
     "AFFECT_NEGATORS",
+    "current_words",
+    "using_reading_words",
     "ABILITY_NEGATORS",
     "normalize_apostrophes",
     "tokenize",
     "is_person",
     "proper_names",
+    "contracted_subjects",
+    "named_by_grammar",
     "SUBJECT_IDIOMS",
     "SELF_IDIOMS",
     "STATE_IDIOMS",

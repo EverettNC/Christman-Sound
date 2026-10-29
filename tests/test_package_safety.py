@@ -305,6 +305,64 @@ def test_the_people_served_are_clients_in_these_files():
     assert hits == [], "\n".join(hits)
 
 
+def test_the_people_served_are_clients_in_the_whole_package():
+    """
+    2026-10-29 review: the check above covered a handful of files and the
+    word "user" was still in comments and docstrings elsewhere. This one
+    reads every file in the package (core.py aside: never touched) for the
+    word itself, singular or plural, any case: "user", "users", "user's",
+    "User". A macOS path ("/Users/") and words that only contain it
+    ("expanduser", "abuser") are not the word. Public names that callers
+    outside this package use (is_user_speech, user_input, user_data,
+    analyze_user_input) are identifiers, not the word, and are left for
+    Everett to rename with their callers.
+    """
+    pattern = re.compile(r"(?<![\w/])users?(?!\w)", re.I)
+    files = [ROOT / "christman_ocr_shared.py"]
+    for pkg in ("christman_voice_sdk", "christman_sound", "scripts"):
+        files.extend(sorted((ROOT / pkg).rglob("*.py")))
+    core = ROOT / "christman_sound" / "core.py"
+    hits = []
+    for path in files:
+        if path == core:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line):
+                hits.append(f"{path.relative_to(ROOT)}:{n}: {line.strip()}")
+    assert len(files) > 50
+    assert hits == [], "\n".join(hits)
+    # The pattern itself: it finds the word, singular or plural, and only the word.
+    for said in ("a user", "the user's words", "Users", "user-speech"):
+        assert pattern.search(said), said
+    for said in ("/Users/EverettN", "expanduser()", "an abuser", "is_user_speech", "user_input"):
+        assert not pattern.search(said), said
+
+
+def test_not_run_is_read_whatever_its_case():
+    # 2026-10-29 review: "NOT RUN: ..." in capitals was left out of the list.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_cs_conftest", ROOT / "tests" / "conftest.py")
+    conftest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(conftest)
+    for message in ("not run: git is missing", "NOT RUN: git is missing",
+                    "Not Run: git is missing", "Skipped: NOT RUN: git is missing"):
+        assert conftest._not_run_reason(message) == "git is missing", message
+    assert conftest._not_run_reason("skipped for no reason") is None
+
+
+def test_no_avatar_flag_is_left_on():
+    # Ruling AC (2026-10-29 review): no avatar work is done in this package,
+    # so no flag says it is on.
+    import dataclasses
+
+    from christman_voice_sdk.audio.config import TIER_FEATURES, TierFeatures
+
+    names = {f.name for f in dataclasses.fields(TierFeatures)}
+    assert not any("avatar" in n for n in names), names
+    assert all(not hasattr(t, "avatar_integration") for t in TIER_FEATURES.values())
+
+
 def test_grounder_reads_the_one_breathing_number():
     from christman_voice_sdk.tone import emotion_quantifier
     from christman_voice_sdk.utils import grounder

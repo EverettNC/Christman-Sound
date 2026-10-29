@@ -33,11 +33,16 @@ MUST_CALL = [
     "I don't want to be here anymore",
     "I don’t want to be here anymore",   # curly apostrophe (U+2019)
     "he is choking me",
-    "he choked me",
-    "he stabbed me",
     "he is hitting me",
+    # Everett, 2026-10-29: a threat of harm against anyone is an absolute
+    # threat; harm happening now to anyone pages.
+    "he is going to kill her",
+    "he is going to kill mom",
+    "she's going to hurt my sister",
+    "he's about to stab him",
+    "he is hurting her",
+    "she's choking",
     "he is strangling me",
-    "she punched me",
     "he is beating me",
     "I wish I was dead",
     "I want to end it all",
@@ -101,7 +106,9 @@ MUST_NOT_CALL = [
     # assistance, because we don't want to step in the middle of a situation
     # where we don't belong." Recorded and flagged for the being to follow up.
     "she wants to die",
-    "he is going to kill her",
+    "mom wants to die",
+    "he killed my dog last year",
+    "he hurt my mom yesterday",
     "my mom is not okay",
     "my moms not okay",
     "my mom's not safe",
@@ -115,8 +122,17 @@ MUST_NOT_CALL = [
 
 # Everett's open items. Ruled 2026-10-11; one line each to overrule.
 RULED_CALL = [
-    "he choked me yesterday",     # strangulation by someone still around is not history
     "I'm going to end it",        # no object after "end it"; a check-in costs minutes
+]
+# Everett's ruling H, 2026-10-29: past physical harm by someone else ("he
+# choked me", "he choked me yesterday") does not page at once. The being asks
+# whether the client is safe; it pages on a request for help in the same
+# turn or a "no" to that ask (tests/test_review_rulings_2026_10_29.py).
+RULED_ASK_IF_SAFE = [
+    "he choked me",
+    "he stabbed me",
+    "she punched me",
+    "he choked me yesterday",
 ]
 RULED_NO_CALL = [
     "I want to die laughing",     # the words after the phrase mark the idiom
@@ -141,6 +157,14 @@ def test_must_not_call_a_human():
 def test_ruled_call():
     misses = [s for s in RULED_CALL if _status(s) != "hard_block"]
     assert not misses, f"ruled a call, did not hard_block: {misses}"
+
+
+def test_ruled_ask_if_safe():
+    from christman_voice_sdk.audio.hearing import ASK_IF_SAFE
+    wrong = [s for s in RULED_ASK_IF_SAFE
+             if (harm_frame_safety(s).status, harm_frame_safety(s).follow_up)
+             != ("soft_redirect", ASK_IF_SAFE)]
+    assert not wrong, f"ruling H: these must ask if the client is safe: {wrong}"
 
 
 def test_ruled_no_call():
@@ -172,10 +196,17 @@ def test_third_party_at_risk_is_followed_up_and_pages_only_when_asked():
 
 
 def test_someone_else_not_okay_is_followed_up():
-    r = harm_frame_safety("my mom is not okay")
+    r = harm_frame_safety("my mom's not okay")
     assert r.status == "soft_redirect", r
     assert r.reason == "other_person_not_okay"
     assert "follow_up:someone_else" in r.flags
+    assert r.said == "my mom's not okay"
+    # Ruling AA (2026-10-29 review): with no fixed person list, "my mom is
+    # not okay" cannot be told from the grammar. It still never pages on its
+    # own; the being asks who.
+    r = harm_frame_safety("my mom is not okay")
+    assert r.status == "soft_redirect" and r.reason == "person_unclear", r
+    assert r.follow_up == "ask_who" and r.follow_up_about == "my mom"
     assert r.said == "my mom is not okay"
 
 

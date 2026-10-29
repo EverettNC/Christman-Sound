@@ -156,6 +156,7 @@ def test_a_held_vowel_is_its_resonances_not_the_swell(dsp, voice):
     assert c_new >= 1.8 * c_old
 
 
+@pytest.mark.needs_dsp
 @pytest.mark.parametrize("vowel", ["UW", "IY", "AE"])
 def test_measured_vowels_sit_at_the_voices_formants(dsp, vowel, voice):
     want = voice.vowel_formants[vowel]
@@ -185,6 +186,7 @@ def test_s_hisses_high_and_sh_lower(dsp, voice):
     assert 2000 < cents["SH"] < cents["S"]
 
 
+@pytest.mark.needs_dsp
 def test_ay_glides_from_the_measured_onset_to_offset(dsp, voice):
     assert "AY" in voice.glides, "the profile carries the measured AY glide"
     (on, off) = voice.glides["AY"]

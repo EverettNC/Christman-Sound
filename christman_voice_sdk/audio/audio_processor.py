@@ -162,19 +162,19 @@ class AudioProcessor:
         self.tier_features = None
 
         if config is not None:
-            try:
-                self.tier_features = config.get_tier_features(tier)
-                target_sr = config.get("audio.sample_rate", target_sr)
-                target_db = config.get("audio.target_db", target_db)
-                silence_threshold_db = config.get(
-                    "audio.silence_threshold_db", silence_threshold_db
-                )
-                segment_length = config.get(
-                    "audio.segment_length_seconds", segment_length
-                )
-                overlap = config.get("audio.overlap_seconds", overlap)
-            except Exception as exc:
-                logger.error("Config read failed, using defaults: %s", exc)
+            # Rule 6 (2026-10-29 review): a config that could not be read
+            # was logged and replaced by the defaults, so the caller's
+            # settings were silently ignored. Now the error goes up.
+            self.tier_features = config.get_tier_features(tier)
+            target_sr = config.get("audio.sample_rate", target_sr)
+            target_db = config.get("audio.target_db", target_db)
+            silence_threshold_db = config.get(
+                "audio.silence_threshold_db", silence_threshold_db
+            )
+            segment_length = config.get(
+                "audio.segment_length_seconds", segment_length
+            )
+            overlap = config.get("audio.overlap_seconds", overlap)
 
         if overlap >= segment_length:
             # The original computed step = (segment_length - overlap) with no
@@ -191,6 +191,9 @@ class AudioProcessor:
         self.segment_length = float(segment_length)
         self.overlap = float(overlap)
         self.min_segment_seconds = float(min_segment_seconds)
+        #: What noise reduction did on the last file (see _reduce_noise).
+        self.noise_reduction: Dict[str, Any] = {"applied": False,
+                                                "reason": "nothing processed yet"}
 
         logger.info(
             "AudioProcessor initialized: sr=%d target_db=%.1f tier=%s",
@@ -259,27 +262,42 @@ class AudioProcessor:
         return audio, sr
 
     def _reduce_noise(self, audio: np.ndarray, sr: int) -> np.ndarray:
-        """Spectral noise reduction, if noisereduce is installed."""
+        """
+        Spectral noise reduction, if noisereduce is installed.
+
+        `self.noise_reduction` says what happened on the last call:
+        {"applied": True} or {"applied": False, "reason": ...}. Rule 6
+        (2026-10-29 review): a noise reduction that FAILED was logged and the
+        raw audio handed on as if it had been cleaned. Now the failure is
+        raised, with the reason. Not installed, or not asked for by the
+        tier, is not a failure: the raw audio goes on and the reason is
+        recorded.
+        """
         if nr is None:
+            self.noise_reduction = {"applied": False,
+                                    "reason": "noisereduce is not installed"}
             return audio
 
         quality = getattr(self.tier_features, "noise_reduction_quality", None)
         prop = {"basic": 0.5, "advanced": 0.8, "studio": 1.0}.get(quality, 0.0)
         if prop <= 0.0:
+            self.noise_reduction = {"applied": False,
+                                    "reason": f"no noise reduction for quality {quality!r}"}
             return audio
 
         try:
-            return np.asarray(
+            cleaned = np.asarray(
                 nr.reduce_noise(
                     y=audio, sr=sr, stationary=(prop < 1.0), prop_decrease=prop
                 ),
                 dtype=np.float32,
             )
         except Exception as exc:
-            # Noise reduction failing must not fail the pipeline, and must not
-            # silently return something that looks processed.
-            logger.error("Noise reduction failed, using raw audio: %s", exc)
-            return audio
+            raise RuntimeError(
+                f"noise reduction failed ({type(exc).__name__}: {exc}); the "
+                "audio was not cleaned") from exc
+        self.noise_reduction = {"applied": True}
+        return cleaned
 
     def _normalize_loudness(self, audio: np.ndarray) -> np.ndarray:
         """

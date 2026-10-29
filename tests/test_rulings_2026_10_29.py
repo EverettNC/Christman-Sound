@@ -133,18 +133,34 @@ def test_A_no_human_reachable_is_loud():
 
 # -- D. an observation about another carbon is followed up, not paged ------------
 
+# Ruling AA (2026-10-29 review): no fixed person list. These are someone
+# else by GRAMMAR: a pronoun, a typed name, a contraction after a possessive.
+# "my mom is not okay", "My mom is not okay." and "my dad isn't safe" were
+# here because "mom" and "dad" were on THIRD_PERSON; with the list gone the
+# grammar cannot tell whether "mom" names a person, so the being asks who
+# (UNCLEAR_PERSON below). They still never page unless the client asks.
 OBSERVATIONS = [
     ("she wants to die", "harm_frame_third_party_at_risk"),
-    ("he is going to kill her", "harm_frame_third_party_at_risk"),
+    # "he is going to kill her" was here. Everett, 2026-10-29: a threat of
+    # harm against anyone is an absolute threat and pages at once, silently
+    # (tests/test_review_rulings_2026_10_29.py, section a).
+    ("he hurt her yesterday", "harm_frame_third_party_at_risk"),
     ("my brother wants to kill himself", "harm_frame_third_party_at_risk"),
-    ("my mom is not okay", "other_person_not_okay"),
-    ("My mom is not okay.", "other_person_not_okay"),
+    ("my mom's not okay", "other_person_not_okay"),
+    ("My mom's not okay.", "other_person_not_okay"),
     ("my moms not okay", "other_person_not_okay"),
     ("Mary is not okay", "other_person_not_okay"),
-    ("my dad isn't safe", "other_person_not_okay"),
+    ("my dad's not safe", "other_person_not_okay"),
     ("my mom's not safe", "other_person_not_okay"),
     ("she doesn't feel safe", "other_person_not_okay"),
     ("she doesn’t feel safe", "other_person_not_okay"),   # a phone's curly apostrophe
+]
+
+#: "my ___ is ..." with no contraction: not plain from the grammar (ruling AA).
+UNCLEAR_PERSON = [
+    ("my mom is not okay", "my mom"),
+    ("My mom is not okay.", "my mom"),
+    ("my dad isn't safe", "my dad"),
 ]
 
 
@@ -180,6 +196,29 @@ def test_D_it_pages_when_the_client_asks_for_help(text, reason, ask):
     assert len(pager.calls) == 1 and pager.calls[0][0].said == said
 
 
+@pytest.mark.parametrize("text,about", UNCLEAR_PERSON)
+def test_D_and_AA_an_unclear_person_is_asked_about_not_paged(text, about):
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == [], d.to_dict()
+    assert d.safety.status == "soft_redirect" and d.safety.reason == "person_unclear"
+    assert d.safety.follow_up == H.ASK_WHO and d.safety.follow_up_about == about
+    assert d.affect.is_self_distress is False                  # never the client's
+    assert d.safety.said == text
+
+
+@pytest.mark.parametrize("text,about", UNCLEAR_PERSON)
+@pytest.mark.parametrize("ask", ASKS)
+def test_D_and_AA_an_unclear_person_pages_when_the_client_asks_for_help(text, about, ask):
+    said = f"{text} {ask}"
+    turn, pager = _hear(said)
+    d = turn.decision
+    assert d.mode == MODE_SAFETY_HOLD, d.to_dict()
+    assert d.safety.status == "hard_block" and d.safety.reason == "person_unclear"
+    assert any(f.startswith("asked_for_help:") for f in d.safety.flags)
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == said
+
+
 @pytest.mark.parametrize("said", [
     "my mom is not okay please don't call anyone",
     "she wants to die, don't call someone",
@@ -196,7 +235,7 @@ def test_D_a_request_taken_back_is_not_a_request(said):
     "it's not okay to hit",
     "The car is not okay",
     "yesterday my mom was not okay",    # the past (ruling 3)
-    "my mom is okay",
+    "my mom's okay",                    # hers by grammar, and okay ("my mom is okay": AA asks who)
     "she is safe now",
 ])
 def test_D_not_a_person_now_is_not_even_flagged(text):
@@ -252,6 +291,7 @@ LEXICON = Path(os.environ.get("CHRISTMAN_LEXICON_PATH")
                or Path.home() / "models" / "vosk-model-en-us-0.22" / "graph" / "phones" / "align_lexicon.txt")
 
 
+@pytest.mark.needs_dsp
 def test_E_both_directions_through_the_mouth(tmp_path):
     """The client's "calm down" is spoken as typed; the being's is refused
     with nothing written. Rendered to a file, never played."""
@@ -349,7 +389,7 @@ def test_G_the_key_never_changes_the_reading_of_the_words(text, key):
 
 
 def test_G_when_the_key_adds_the_page_the_words_reading_is_kept_beside_it():
-    keyed, pager = _hear("my mom is not okay", acoustic_key="grunt_distress")
+    keyed, pager = _hear("my mom's not okay", acoustic_key="grunt_distress")
     s = keyed.decision.safety
     assert s.reason == "nonverbal_distress"
     assert "words:soft_redirect:other_person_not_okay" in s.flags
@@ -486,7 +526,9 @@ def test_5_hand_up_pages_a_human():
     shown = pager.calls[0][1]["nonverbal_distress"]
     assert [d["input"] for d in shown] == ["Hand Up"]
     assert shown[0]["intent"] == "Request attention"
-    assert turn.person_message == "I need help."     # the client still speaks
+    # Ruling I: help is the silent alarm. Nothing is spoken, nothing shown.
+    assert turn.person_message is None
+    assert turn.decision.safety.silent_alarm is True and turn.decision.safety.hold_marker == ""
 
 
 def test_5_hand_up_pages_even_from_a_map_on_disk_without_the_pages_field(tmp_path):
@@ -613,7 +655,9 @@ def test_9_the_word_ear_payload_carries_the_text_as_recognized():
 
 def test_9_corti_receiver_route_returns_the_mapped_words_unaltered():
     """The acoustic route speaks the map's words for the client, as the map
-    holds them; nothing on the way edits them."""
+    holds them; nothing on the way edits them. The built-in sound map holds
+    no words (ruling J covers sounds, 2026-10-29), so a built-in grunt
+    speaks nothing; nothing is invented on the way either."""
     import http.client
 
     from christman_voice_sdk.audio import corti_receiver as cr
@@ -627,7 +671,8 @@ def test_9_corti_receiver_route_returns_the_mapped_words_unaltered():
                      headers={"Content-Type": "application/json", "Content-Length": str(len(raw))})
         body = json.loads(conn.getresponse().read())
         conn.close()
-        assert body["person_message"] == DEFAULT_SOUNDS["grunt_acknowledge"]["message"]
+        assert DEFAULT_SOUNDS["grunt_acknowledge"]["message"] is None
+        assert body["person_message"] is None
     finally:
         server.shutdown()
         server.server_close()
@@ -763,8 +808,10 @@ def test_H2_it_pages_when_the_client_asks_for_help():
     ("Now he’s starting to break my neck!", "harm_now_to_client"),
     ("he is hurting my arm", "harm_now_to_client"),
     ("she keeps hitting my head", "harm_now_to_client"),
-    ("he's hurting me", "harm_frame_speaker_at_risk"),
-    ("he is choking me", "harm_frame_speaker_at_risk"),
+    # Ruling H covers "verb plus me" too (Everett, 2026-10-29): read for its
+    # time like "he hurt my neck", so the reason is harm happening now.
+    ("he's hurting me", "harm_now_to_client"),
+    ("he is choking me", "harm_now_to_client"),
 ])
 def test_H3_harm_happening_now_pages_at_once(text, reason):
     turn, pager = _hear(text)
@@ -780,7 +827,9 @@ def test_H3_now_harm_pages_whatever_key_or_symbol_comes_with_it():
         assert turn.decision.safety.reason == "harm_now_to_client"
 
 
-@pytest.mark.parametrize("text", ["I hurt my arm", "my arm hurts", "I hurt my arm playing ball"])
+# "my arm hurts" was here. Everett, 2026-10-29: pain is the client's own
+# feeling and pages every time (tests/test_review_rulings_2026_10_29.py).
+@pytest.mark.parametrize("text", ["I hurt my arm", "I hurt my arm playing ball"])
 def test_H_the_clients_own_accident_is_not_someone_hurting_them(text):
     turn, pager = _hear(text)
     assert pager.calls == []
@@ -792,7 +841,9 @@ def test_H_the_clients_own_accident_is_not_someone_hurting_them(text):
 def test_D_the_being_asks_and_a_yes_pages(answer, pages):
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
-    first = hearing.hear(text="my mom is not okay")
+    # A contraction after a possessive: "mom" is someone else by grammar
+    # (ruling AA; the uncontracted form asks who first).
+    first = hearing.hear(text="my mom's not okay")
     assert first.decision.safety.follow_up == "ask_if_help_needed"   # the being asks
     assert first.decision.safety.follow_up_about == "not okay"
     assert pager.calls == []
@@ -888,6 +939,22 @@ def test_I_temporal_danger_is_paged_and_never_spoken(tmp_path, expression, entry
     _assert_silent_and_paged(turn, pager)
 
 
+def test_I_the_built_in_fear_reading_still_pages_with_its_words_gone():
+    # The built-in Fear reading was danger by its old wording "I'm scared.".
+    # Ruling J took the wording away; the reading must still page, silently.
+    t = TemporalNonverbalEngine(sequence_length=10)
+    labels = t.labels["emotion"]
+    idx = labels.index("Fear")
+    t.models["emotion"] = CentroidModel([[_seq(60.0 * (i - idx))] for i in range(len(labels))])
+    for frame in _seq(0.0)[:-1]:
+        t.add_emotion_features(frame)
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager, temporal_engine=t).hear(
+        temporal={"emotion_features": np.zeros(4)})
+    assert turn.temporal["primary_result"]["expression"] == "Fear"
+    _assert_silent_and_paged(turn, pager)
+
+
 @pytest.mark.parametrize("kwargs,says,pages", [
     ({"nonverbal": {"symbol": "pain"}}, "I'm in pain.", True),
     ({"nonverbal": {"symbol": "medicine"}}, "I need my medicine.", True),
@@ -904,12 +971,49 @@ def test_I_needs_are_spoken_as_normal(kwargs, says, pages):
         assert turn.decision.safety.silent_alarm is False
 
 
-def test_I_hand_up_is_a_need_spoken_and_paged():
+def test_I_hand_up_is_help_paged_silently_and_never_spoken():
+    # Ruling I (2026-10-29 review): the built-in Hand Up "I need help." is
+    # never spoken. Help and danger are the silent alarm.
     pager = Pager()
     turn = Hearing(crisis_callback=pager, temporal_engine=_hand_up_engine()).hear(
         temporal={"gesture_features": np.zeros(4)})
-    assert turn.person_message == "I need help."
-    assert len(pager.calls) == 1 and turn.decision.safety.silent_alarm is False
+    _assert_silent_and_paged(turn, pager)
+
+
+def test_I_hand_up_from_the_clients_own_map_is_still_never_spoken(tmp_path):
+    # Even a client's map that words Hand Up as "I need help." does not speak
+    # it: help never reaches _speaks.
+    path = tmp_path / "language_map.json"
+    path.write_text(json.dumps({"Hand Up": {"intent": "Request attention",
+                                            "message": "I need help."}}), encoding="utf-8")
+    pager = Pager()
+    engine = _hand_up_engine(language_map_path=str(path))
+    assert engine.language_map_source == "client"
+    turn = Hearing(crisis_callback=pager, temporal_engine=engine).hear(
+        temporal={"gesture_features": np.zeros(4)})
+    _assert_silent_and_paged(turn, pager)
+
+
+def test_I_no_help_or_danger_meaning_reaches_speaks(monkeypatch):
+    from christman_voice_sdk.nonverbal import engine_temporal as et
+
+    asked = []
+    real = et.TemporalNonverbalEngine._speaks
+
+    def watch(self, entry, danger=False):
+        asked.append(entry.get("intent"))
+        return real(self, entry, danger)
+
+    monkeypatch.setattr(et.TemporalNonverbalEngine, "_speaks", watch)
+    pager = Pager()
+    Hearing(crisis_callback=pager, temporal_engine=_hand_up_engine()).hear(
+        temporal={"gesture_features": np.zeros(4)})
+    assert "Request attention" not in asked and len(pager.calls) == 1
+    # And asked directly, it refuses help and danger whatever the map says.
+    t = TemporalNonverbalEngine(sequence_length=10)
+    t.language_map_source = "client"
+    assert real(t, {"intent": "Request attention", "message": "I need help."}) is False
+    assert real(t, {"intent": "Worried", "message": "I'm scared."}) is False
 
 
 def test_I_the_device_that_sent_the_key_is_told_nothing():
@@ -995,6 +1099,28 @@ def test_K_a_public_setting_from_the_beings_perception(public, voiced):
     assert d.speakable is voiced
 
 
+@pytest.mark.parametrize("public,voiced", [(True, True), (None, False), ("yes", False), (False, False),
+                                           (1, False)])
+@pytest.mark.parametrize("text", ["I'm scared for my safety", "he is choking me", "help me"])
+def test_K_hearing_carries_public_setting_through_to_the_gate(text, public, voiced):
+    # Ruling K: Hearing.hear takes public_setting and carries it through
+    # live_state into fusion and harm_frame_safety. A danger sentence the
+    # client typed is voiced only when asked aloud or public_setting is True.
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager)
+    kw = {} if public is None else {"public_setting": public}
+    turn = hearing.hear(text=text, **kw)
+    d = turn.decision
+    assert len(pager.calls) == 1                                  # it always pages
+    assert d.safety.silent_alarm is True
+    assert d.safety.voice_aloud is voiced and d.speakable is voiced
+    assert d.safety.said == text and d.input_text == text          # never changed
+    assert ("public_setting" in d.safety.flags) is voiced
+    assert pager.calls[0][1].get("public_setting", None) == (None if public is None else public)
+    # Silent: held for one turn, for the client to ask aloud. Voiced: nothing held.
+    assert (hearing.held_words == text) is (not voiced)
+
+
 @pytest.mark.parametrize("text", ["I'm scared of the needle", "help me pick a font",
                                   "I was scared for my life back then", "I'm not in danger"])
 def test_K_not_a_danger_sentence(text):
@@ -1014,6 +1140,22 @@ def test_K_not_a_danger_sentence(text):
 def test_J_a_built_in_generic_feeling_is_not_spoken(kwargs):
     turn = Hearing(crisis_callback=Pager()).hear(**kwargs)
     assert turn.person_message is None
+
+
+@pytest.mark.parametrize("nonverbal", [
+    {"gesture": "wave"}, {"gesture": "nod"}, {"gesture": "thumbs_up"}, {"gesture": "shake"},
+    {"gesture": "open_palm"}, {"eye_data": {"region": "center"}},
+    {"eye_data": {"region": "bottom_right"}}, {"eye_data": {"region": "top_left"}},
+])
+def test_J_the_camera_speaks_only_meanings_learned_for_that_client(nonverbal):
+    # 2026-10-29 review: a built-in wave said "Hello there!", a nod "Yes, I
+    # agree.", a thumbs up "I like this.", a centre gaze "I select this option."
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager).hear(nonverbal=nonverbal)
+    assert turn.person_message is None
+    assert turn.nonverbal["status"] == "ok"                 # the reading is still reported
+    assert turn.nonverbal["primary"]["message"] is None
+    assert pager.calls == []
 
 
 @pytest.mark.parametrize("map_name,key,arg", [
@@ -1046,16 +1188,28 @@ def test_L_a_speaks_flag_in_a_map_decides_nothing(tmp_path):
     assert silent.decision.safety.silent_alarm is True
 
 
-def test_L_an_old_style_temporal_map_works_as_before_except_danger(tmp_path):
-    old = {k: {"intent": v["intent"], "message": v["message"]} for k, v in DEFAULT_LANGUAGE_MAP.items()}
+#: A client's language map in the old style: intent and message, no other field.
+OLD_STYLE_MAP = {
+    "Hand Up": {"intent": "Request attention", "message": "I need help."},
+    "Wave Left": {"intent": "Previous mode", "message": "Go back."},
+    "Neutral": {"intent": "Calm", "message": "I'm fine."},
+    "Fear": {"intent": "Worried", "message": "I'm scared."},
+}
+
+
+def test_L_an_old_style_temporal_map_works_as_before_except_help_and_danger(tmp_path):
+    old = OLD_STYLE_MAP
     path = tmp_path / "old_map.json"
     path.write_text(json.dumps(old), encoding="utf-8")
     t = TemporalNonverbalEngine(sequence_length=10, language_map_path=str(path))
-    assert t._speaks(old["Neutral"], danger=False) is True      # the client's own map: spoken
-    assert t._speaks(old["Wave Left"], danger=False) is True
+    assert t._speaks(old["Neutral"]) is True                    # the client's own map: spoken
+    assert t._speaks(old["Wave Left"]) is True
+    assert t._speaks(old["Hand Up"]) is False                   # help: the silent alarm (ruling I)
     built_in = TemporalNonverbalEngine(sequence_length=10)
-    assert built_in._speaks(DEFAULT_LANGUAGE_MAP["Neutral"], danger=False) is False
-    assert built_in._speaks(DEFAULT_LANGUAGE_MAP["Hand Up"], danger=False) is True
+    # Ruling J: no built-in meaning speaks, and the built-in map has no words.
+    for key in DEFAULT_LANGUAGE_MAP:
+        assert built_in._speaks(DEFAULT_LANGUAGE_MAP[key]) is False
+    assert not any("message" in e for e in DEFAULT_LANGUAGE_MAP.values())
     for engine in (t, built_in):
         assert engine._speaks(old["Fear"], danger=True) is False
     assert not any("speaks" in e for e in DEFAULT_LANGUAGE_MAP.values())
@@ -1095,6 +1249,32 @@ def test_M_the_human_is_reached_before_and_without_the_reply(kwargs, monkeypatch
     assert turn.decision.delivery["page_sent_first"] is True
 
 
+@pytest.mark.parametrize("text", ["thank you, I'm scared", "my teacher is sad", "mary is scared",
+                                  "it hurts", "I'm happy today", "I want to kill myself"])
+def test_M_no_delivery_holds_anything_for_confirmation(text):
+    # 2026-10-29 review: the unknown mode still carried confirm_before_acting
+    # True. Ruling M: the being asks through the ask marks; the package never
+    # holds an action for confirmation.
+    turn, _ = _hear(text)
+    assert not any("confirm" in k for k in turn.decision.delivery), turn.decision.delivery
+
+
+def test_M_no_confirm_before_acting_or_please_confirm_left_in_the_package():
+    import christman_voice_sdk
+    pkg = Path(christman_voice_sdk.__file__).resolve().parent
+    found = []
+    for path in pkg.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for needle in ('"confirm_before_acting": True', "please confirm"):
+            if needle in text:
+                found.append(f"{path.relative_to(pkg)}: {needle}")
+    assert found == []
+    from christman_voice_sdk.tone.tonescore_analyzer import ToneScoreCalculator
+    from christman_voice_sdk.tone.tonescore_engine import ToneScoreEngine
+    assert "confirm_before_acting" not in ToneScoreEngine.adaptive_response_mode(None)
+    assert "confirm_before_acting" not in ToneScoreCalculator.get_response_mode(None)
+
+
 @pytest.mark.parametrize("text", ["I want to kill myself", "I'm not okay", "he is choking me"])
 def test_M_nothing_after_the_gate_can_hold_the_page(text, monkeypatch):
     from christman_voice_sdk.audio import fusion_engine as fe
@@ -1125,7 +1305,7 @@ def test_O_not_enough_to_tell_concludes_nothing_and_asks():
     assert pager.calls == []
     assert d.mode == MODE_UNKNOWN and d.knows is False            # nothing concluded
     assert d.safety.reason == "fear_without_context"
-    assert d.safety.follow_up == "ask_if_safe"                    # the being asks
+    assert d.safety.follow_up == "ask_what_about"                 # the being asks (W, Z)
     assert d.safety.follow_up_about == "scared"
     assert turn.person_message is None                            # nothing spoken for the client
     assert d.input_text == text and d.safety.said == text         # the words, untouched
@@ -1161,24 +1341,32 @@ def test_O_the_next_turn_continues_the_thought():
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
     first = hearing.hear(text="I want to go home I'm scared")
-    assert first.decision.safety.follow_up == "ask_if_safe" and pager.calls == []
+    assert first.decision.safety.follow_up == "ask_what_about" and pager.calls == []
     second = hearing.hear(text="this guy keeps following me")
     assert len(pager.calls) == 1 and second.decision.safety.silent_alarm is True
 
 
-def test_O_a_no_to_the_question_pages():
+def test_O_the_question_is_what_about_so_a_bare_no_does_not_page():
+    # Rulings W and Z (Everett, 2026-10-29) changed the ask after a fear with
+    # no context from "Are you safe?" to "What are you scared about?". A bare
+    # "no" does not answer that, so it no longer pages; danger in the answer
+    # still does (test_O_the_next_turn_continues_the_thought).
     pager = Pager()
     hearing = Hearing(crisis_callback=pager)
-    hearing.hear(text="I'm scared")
+    first = hearing.hear(text="I'm scared")
+    assert first.decision.safety.follow_up == "ask_what_about"
     hearing.hear(text="no")
-    assert len(pager.calls) == 1
+    assert pager.calls == []
 
 
 # -- P. whose feeling it is ----------------------------------------------------------
 # Everett, 2026-10-29: "you can't take possession of your mother's pain."
 
+# "my dad is sad" (no contraction) was here while "dad" was on the fixed
+# person list; by ruling AA it asks who (see the AA tests). "my dad's sad"
+# is his, by grammar.
 @pytest.mark.parametrize("text", ["My mom's in pain", "my moms in pain", "She's scared", "shes scared",
-                                  "Mary is scared", "my dad is sad"])
+                                  "Mary is scared", "my dad's sad", "my mom's scared"])
 def test_P_someone_elses_feeling_is_theirs_never_the_clients(text):
     r = A.analyze(text)
     assert r.attribution.value == "other", r.to_dict()
@@ -1460,9 +1648,13 @@ def test_X_anchored_pain_is_the_clients_own_leg(text, before):
     d = turn.decision
     assert d.safety.reason == "answer_about_own_body"
     assert "about:your leg" in d.safety.flags and "need:hurts" in d.safety.flags
-    # The same as saying it whole.
+    # Not a page: pain read against the being's own question is engaging
+    # (Everett, 2026-10-29: "that's not a page, that's engaging"). Said
+    # whole, unasked, "my leg hurts" pages: pain is the client's feeling.
+    assert pager.calls == []
+    assert "own_pain:hurts" in d.safety.flags
     whole, whole_pager = _hear("my leg hurts")
-    assert bool(pager.calls) == bool(whole_pager.calls)
+    assert len(whole_pager.calls) == 1
 
 
 @pytest.mark.parametrize("text,before", [
@@ -1544,9 +1736,32 @@ def test_AA_the_handoffs_person_list_is_gone():
         assert not sa.is_person(word)
 
 
+def test_AA_mains_fixed_person_lists_are_gone_too():
+    # 2026-10-29 review: THIRD_PERSON and OTHER_EXPERIENCER still held mom,
+    # dad, friend, brother, sister and the rest. Ruling AA: no fixed person list.
+    import christman_voice_sdk.audio.harm_frame as hf
+    import christman_voice_sdk.audio.structural_affect as sa
+    assert not hasattr(sa, "THIRD_PERSON") and not hasattr(sa, "OTHER_EXPERIENCER")
+    assert not hasattr(hf, "THIRD_PERSON")
+    for word in ("mom", "mother", "dad", "father", "friend", "brother", "sister", "patient",
+                 "people", "moms", "friends"):
+        assert not sa.is_person(word), word
+    # Grammar still decides: pronouns, a typed name, a contraction after a possessive.
+    assert sa.is_person("she") and sa.is_person("they")
+    assert sa.named_by_grammar("my mom's in pain") >= {"mom"}
+    assert sa.named_by_grammar("my moms in pain") >= {"mom"}
+    assert sa.named_by_grammar("Mary is scared") >= {"mary"}
+    assert "feeling" not in sa.named_by_grammar("my feelings hurt")    # a plural, not "feeling is"
+    assert sa.named_by_grammar("sam's scared") == frozenset()          # no possessive: whose? (P)
+
+
 @pytest.mark.parametrize("text,about", [("my teacher is sad", "my teacher"),
                                         ("my dog is sad", "my dog"),
-                                        ("my teacher is not okay", "my teacher")])
+                                        ("my teacher is not okay", "my teacher"),
+                                        ("my mom is sad", "my mom"),
+                                        ("my dad is sad", "my dad"),
+                                        ("my friend is scared", "my friend"),
+                                        ("my mom is okay", "my mom")])
 def test_AA_when_it_cannot_tell_a_person_nothing_is_concluded_and_the_being_asks(text, about):
     r = A.analyze(text)
     assert r.is_self_distress is False                          # never the client's
@@ -1556,6 +1771,52 @@ def test_AA_when_it_cannot_tell_a_person_nothing_is_concluded_and_the_being_asks
     assert d.safety.reason == "person_unclear" and d.mode == MODE_UNKNOWN
     assert d.safety.follow_up == H.ASK_WHO and d.safety.follow_up_about == about
     _no_canned_question(d.safety)
+
+
+@pytest.mark.parametrize("text", ["mom is not okay", "moms not okay", "mom's not okay",
+                                  "dad isn't safe", "mary is not okay"])
+def test_AA_a_bare_lower_case_word_is_asked_whose_not_dropped(text):
+    # From the ear a name or a family word comes in lower case with nothing
+    # in front of it. With the person list gone it is not dropped: the being
+    # asks whose (ruling P), and it is never the client's.
+    turn, pager = _hear(text)
+    d = turn.decision
+    assert pager.calls == []
+    assert d.safety.reason == "whose_feeling_unclear" and d.safety.follow_up == H.ASK_WHOSE
+    assert d.affect.is_self_distress is False
+
+
+@pytest.mark.parametrize("text", ["mom is not okay can you get someone",
+                                  "dad isn't safe, help him",
+                                  "my mom is not okay can you get someone",
+                                  "her mom is not okay can you get someone"])
+def test_AA_every_help_request_that_paged_with_the_list_still_pages(text):
+    # Measured on main (7891bf6) with the list: each of these paged. Without
+    # the list, each still reaches a human, because the client asked.
+    turn, pager = _hear(text)
+    assert len(pager.calls) == 1 and pager.calls[0][0].said == text
+    assert turn.decision.safety.status == "hard_block"
+
+
+@pytest.mark.parametrize("text,status,reason", [
+    ("mom wants to die", "soft_redirect", "harm_frame_subject_unclear"),
+    ("the patient wants to die", "soft_redirect", "harm_frame_subject_unclear"),
+    ("he is going to kill mom", "hard_block", "harm_threat_to_other"),
+    ("he is hurting mom", "hard_block", "harm_now_to_other"),
+])
+def test_AA_the_crisis_gate_reads_people_by_grammar_not_a_list(text, status, reason):
+    # Everett, 2026-10-29: the held copy of the person words is removed. The
+    # grammar finds the target ("kill mom"); a subject it cannot place ("mom
+    # WANTS to die") is never the client's own risk, and the being asks who.
+    from christman_voice_sdk.audio import harm_frame as HF
+    assert not hasattr(HF, "CRISIS_GATE_THIRD_PARTY_WORDS")
+    r = harm_frame_safety(text)
+    assert r.status == status and r.reason == reason, r
+
+
+def test_AA_the_clients_own_plural_stays_the_clients():
+    assert A.analyze("my feelings hurt").attribution.value != "other"
+    assert A.analyze("my legs hurt").is_self_distress is True
 
 
 def test_AA_unclear_person_and_a_help_request_still_reaches_a_human():

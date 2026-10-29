@@ -24,6 +24,21 @@ the outside engines (`say`, espeak, pyttsx3) were cut on 2026-10-17 and stay
 cut. `read_screen` and `read_document` let that typed failure through;
 `watch_screen` logs any error and stops. `subprocess` and `sys` stay: the
 scrot screen grab and the platform checks there use them.
+
+WHAT CHANGED AND WHY (2026-10-29 review) — OFFLINE, AND FAILURES THAT SPEAK
+---------------------------------------------------------------------------
+  * PaddleOCR was built as PaddleOCR(lang="en"), which downloads its models
+    on first use, with that same call as a fallback. It is now built only
+    from three local model folders (det_model_dir, rec_model_dir,
+    cls_model_dir, or CHRISTMAN_OCR_DET_MODEL_DIR / _REC_ / _CLS_). If any
+    folder or model file is missing, OCRModelMissing names each one and
+    PaddleOCR is never constructed. Nothing is downloaded.
+  * A document that could not be loaded came back as [] (an empty
+    document), and read_document then reported confidence 0.0. The loader
+    now raises DocumentLoadError with the reason; a document with no text
+    reports confidence None; pages the engine failed on are listed in
+    "errors". A failed screen grab reports its reason instead of looking
+    like an empty screen.
 """
 
 from __future__ import annotations
@@ -70,24 +85,90 @@ def _import_fitz():
 # ═════════════════════════════════════════════════════════════════════════════
 # CORE OCR ENGINE
 # ═════════════════════════════════════════════════════════════════════════════
+class OCRModelMissing(FileNotFoundError):
+    """The OCR model folders are not on this machine. Nothing is downloaded."""
+
+
+class DocumentLoadError(RuntimeError):
+    """A document could not be loaded. The reason is in the message."""
+
+
+#: Where the three PaddleOCR model folders are, when not passed in.
+OCR_MODEL_ENV = {
+    "det_model_dir": "CHRISTMAN_OCR_DET_MODEL_DIR",
+    "rec_model_dir": "CHRISTMAN_OCR_REC_MODEL_DIR",
+    "cls_model_dir": "CHRISTMAN_OCR_CLS_MODEL_DIR",
+}
+
+#: An exported Paddle inference model is a weights file and a program file.
+#: PaddleOCR 2.x writes inference.pdmodel; 3.x writes inference.json.
+_MODEL_WEIGHTS = "inference.pdiparams"
+_MODEL_PROGRAMS = ("inference.pdmodel", "inference.json")
+
+
+def ocr_model_dirs(**given: Optional[str]) -> Dict[str, str]:
+    """
+    The three local model folders, from the arguments or the environment,
+    each checked for the files PaddleOCR reads. Raises OCRModelMissing naming
+    every folder and file that is missing. Offline, Rule 6 (2026-10-29
+    review): PaddleOCR downloads any model it does not find, so it is never
+    constructed until every folder is here.
+    """
+    import os
+
+    dirs: Dict[str, str] = {}
+    missing: List[str] = []
+    for key, env in OCR_MODEL_ENV.items():
+        value = given.get(key) or os.environ.get(env)
+        if not value:
+            missing.append(f"{key}: none given (pass {key}= or set {env})")
+            continue
+        path = Path(value).expanduser()
+        if not path.is_dir():
+            missing.append(f"{key}: {path} is not a folder")
+            continue
+        if not (path / _MODEL_WEIGHTS).is_file():
+            missing.append(f"{key}: {path} has no {_MODEL_WEIGHTS}")
+            continue
+        if not any((path / p).is_file() for p in _MODEL_PROGRAMS):
+            missing.append(f"{key}: {path} has none of {', '.join(_MODEL_PROGRAMS)}")
+            continue
+        dirs[key] = str(path)
+    if missing:
+        raise OCRModelMissing(
+            "OCR is unavailable: its model files are not on this machine, and "
+            "nothing is downloaded. " + "; ".join(missing))
+    return dirs
+
+
 class ChristmanOCREngine:
-    """Singleton PaddleOCR engine, shared by every caller in the process."""
+    """
+    Singleton PaddleOCR engine, shared by every caller in the process.
+
+    Loads only from local model folders (ocr_model_dirs). It used to call
+    PaddleOCR(lang="en"), which downloads its models on first use, and fell
+    back to that if the first form raised. Both are gone.
+    """
 
     _instance: Optional["ChristmanOCREngine"] = None
 
-    def __init__(self):
-        logger.info("Initialising PaddleOCR engine...")
+    def __init__(self, det_model_dir: Optional[str] = None,
+                 rec_model_dir: Optional[str] = None,
+                 cls_model_dir: Optional[str] = None):
+        dirs = ocr_model_dirs(det_model_dir=det_model_dir, rec_model_dir=rec_model_dir,
+                              cls_model_dir=cls_model_dir)
+        logger.info("Initialising PaddleOCR engine from local model folders...")
         PaddleOCR = _import_paddleocr()
-        try:
-            self._ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-        except (TypeError, ValueError):
-            self._ocr = PaddleOCR(lang="en")
+        self._ocr = PaddleOCR(det_model_dir=dirs["det_model_dir"],
+                              rec_model_dir=dirs["rec_model_dir"],
+                              cls_model_dir=dirs["cls_model_dir"],
+                              use_angle_cls=True, lang="en", show_log=False)
         logger.info("PaddleOCR engine ready")
 
     @classmethod
-    def get(cls) -> "ChristmanOCREngine":
+    def get(cls, **model_dirs: Optional[str]) -> "ChristmanOCREngine":
         if cls._instance is None:
-            cls._instance = ChristmanOCREngine()
+            cls._instance = ChristmanOCREngine(**model_dirs)
         return cls._instance
 
     def extract(self, image) -> Dict:
@@ -141,10 +222,13 @@ class ScreenCapture:
 
     def __init__(self):
         self._last_hash: Optional[str] = None
+        #: Why the last grab returned no image, or None.
+        self.last_error: Optional[str] = None
 
     def grab(self):
-        """Return (PIL.Image, changed: bool)"""
+        """Return (PIL.Image, changed: bool). On (None, False), last_error says why."""
         ImageGrab, Image = _import_pil()
+        self.last_error = None
         try:
             screenshot = ImageGrab.grab()
             screen_hash = hashlib.md5(screenshot.tobytes()).hexdigest()
@@ -165,7 +249,8 @@ class ScreenCapture:
                     changed = screen_hash != self._last_hash
                     self._last_hash = screen_hash
                     return screenshot, changed
-            logger.warning(f"Screen capture failed: {e}")
+            self.last_error = f"{type(e).__name__}: {e}"
+            logger.error(f"Screen capture failed: {self.last_error}")
             return None, False
 
 
@@ -178,31 +263,35 @@ class DocumentLoader:
     IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
 
     def load(self, file_path: str) -> List:
-        """Load document and return list of PIL Images (one per page)."""
-        _, Image = _import_pil()
+        """
+        Load a document and return a list of PIL Images (one per page).
+
+        Rule 6 (2026-10-29 review): a file that could not be loaded used to
+        come back as [], the same as an empty document. Now it raises
+        DocumentLoadError with the reason.
+        """
         path = Path(file_path)
 
         if not path.exists():
-            logger.error(f"File not found: {file_path}")
-            return []
+            raise DocumentLoadError(f"file not found: {file_path}")
 
         if path.suffix.lower() == ".pdf":
             return self._load_pdf(file_path)
 
         if path.suffix.lower() in self.IMAGE_EXTENSIONS:
+            _, Image = _import_pil()
             try:
                 img = Image.open(file_path).convert("RGB")
-                logger.info(f"Loaded image: {path.name}")
-                return [img]
             except Exception as e:
-                logger.error(f"Failed to load image {file_path}: {e}")
-                return []
+                raise DocumentLoadError(
+                    f"could not load image {file_path}: {type(e).__name__}: {e}") from e
+            logger.info(f"Loaded image: {path.name}")
+            return [img]
 
-        logger.warning(f"Unsupported file type: {path.suffix}")
-        return []
+        raise DocumentLoadError(f"unsupported file type {path.suffix!r}: {file_path}")
 
     def _load_pdf(self, pdf_path: str) -> List:
-        """Convert PDF pages to PIL Images."""
+        """Convert PDF pages to PIL Images. Raises DocumentLoadError on failure."""
         try:
             fitz = _import_fitz()
             _, Image = _import_pil()
@@ -217,11 +306,11 @@ class DocumentLoader:
                 images.append(img)
 
             doc.close()
-            logger.info(f"Loaded PDF: {len(images)} pages from {Path(pdf_path).name}")
-            return images
         except Exception as e:
-            logger.error(f"PDF load failed: {e}")
-            return []
+            raise DocumentLoadError(
+                f"could not load PDF {pdf_path}: {type(e).__name__}: {e}") from e
+        logger.info(f"Loaded PDF: {len(images)} pages from {Path(pdf_path).name}")
+        return images
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -286,9 +375,15 @@ class ReadAloud:
 class ChristmanOCR:
     """Reads a screen or a document and speaks what it read in the caller's voice."""
 
-    def __init__(self, *, voice: Any, lexicon_path: Optional[Union[str, Path]] = None):
+    def __init__(self, *, voice: Any, lexicon_path: Optional[Union[str, Path]] = None,
+                 det_model_dir: Optional[str] = None, rec_model_dir: Optional[str] = None,
+                 cls_model_dir: Optional[str] = None):
         self._voice = ReadAloud(voice, lexicon_path)
-        self._engine = ChristmanOCREngine.get()
+        # Local model folders only; OCRModelMissing (with every missing
+        # folder named) when they are not here. Nothing is downloaded.
+        self._engine = ChristmanOCREngine.get(det_model_dir=det_model_dir,
+                                              rec_model_dir=rec_model_dir,
+                                              cls_model_dir=cls_model_dir)
         self._screen = ScreenCapture()
         self._loader = DocumentLoader()
         logger.info("OCR ready")
@@ -297,8 +392,10 @@ class ChristmanOCR:
         """Read current screen."""
         image, changed = self._screen.grab()
         if image is None:
-            logger.warning("screen capture unavailable")
-            return ChristmanOCREngine._empty_result()
+            # Rule 6: a failed capture is not "nothing on the screen".
+            reason = self._screen.last_error or "screen capture returned nothing"
+            logger.error(f"screen capture unavailable: {reason}")
+            return ChristmanOCREngine._empty_result(error=f"screen capture unavailable: {reason}")
 
         if not changed:
             logger.info("screen unchanged, skipping")
@@ -317,24 +414,30 @@ class ChristmanOCR:
     async def read_document(self, file_path: str) -> Dict:
         """Read document (image or PDF)."""
         logger.info(f"reading document → {file_path}")
+        # Rule 6 (2026-10-29 review): a document that could not be loaded
+        # used to come back as text "" with a made-up confidence of 0.0.
+        # The loader now raises DocumentLoadError with the reason, and it
+        # is let through.
         images = await asyncio.to_thread(self._loader.load, file_path)
-
-        if not images:
-            logger.error(f"could not load {file_path}")
-            return {"text": "", "pages": 0, "confidence": 0.0, "source": file_path}
 
         all_text = []
         confidences = []
+        errors = []
 
         for page_num, image in enumerate(images, 1):
             result = await asyncio.to_thread(self._engine.extract, image)
+            if result.get("error"):
+                errors.append(f"page {page_num}: {result['error']}")
             if result["text"]:
                 prefix = f"Page {page_num}. " if len(images) > 1 else ""
                 all_text.append(prefix + result["text"])
                 confidences.append(result["confidence"])
 
         full_text = "\n\n".join(all_text)
-        avg_conf = float(np.mean(confidences)) if confidences else 0.0
+        # No text read: no confidence to report (None), never a fixed 0.0.
+        avg_conf = float(np.mean(confidences)) if confidences else None
+        if errors:
+            logger.error(f"OCR failed on {len(errors)} page(s): {'; '.join(errors)}")
 
         if full_text:
             logger.info(f"{len(full_text)} chars extracted, speaking...")
@@ -347,6 +450,9 @@ class ChristmanOCR:
             "pages": len(images),
             "confidence": avg_conf,
             "source": file_path,
+            # Every page the engine failed on, with the reason. A page that
+            # failed is not a blank page.
+            "errors": errors,
         }
 
     async def watch_screen(self, interval: float = SCREEN_POLL_INTERVAL):

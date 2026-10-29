@@ -260,7 +260,8 @@ class ToneScoreCalculator:
         if tone_score is None:
             return {"mode": "unknown",
                     "description": "Tone was not measured. Do not infer a state.",
-                    "confirm_before_acting": True, "assert_nothing": True}
+                    # Ruling M: no confirm-before-acting.
+                    "assert_nothing": True}
         if tone_score > 75:
             return {"mode": "hold-space", "description": "High composite",
                     "adjustments": {"cadence": "slower", "pitch": "deeper",

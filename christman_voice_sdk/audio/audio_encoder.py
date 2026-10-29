@@ -39,7 +39,7 @@ The constructor took a checkpoint path and never read it.
 
     Every instance is a fresh random initialization. The same audio produces a
     different embedding in every process, and the layer downstream — lip-sync
-    against a nonverbal user's voice — consumes it without complaint because
+    against a nonverbal client's voice — consumes it without complaint because
     the tensor has the right shape and the right dtype.
 
     This is the same failure as the phrase generator two files over, wearing

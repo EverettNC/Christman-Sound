@@ -7,7 +7,7 @@ integration/ holds only modules that work (Lane 6, 2026-10-28).
 
 Removed, and why (the full record is in the pull request and in git history):
 
-speech_integration.py ("BROCKSTON - Speech Integration Module")
+speech_integration.py (headed with a being's name, "Speech Integration Module")
   - imported `audio.real_speech_recognition` and `audio.enhanced_speech_recognition`
     as top-level packages, which do not exist in an installed package, so both
     engines were always None;

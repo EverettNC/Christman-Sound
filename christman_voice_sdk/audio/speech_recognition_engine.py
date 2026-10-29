@@ -605,29 +605,50 @@ class SpeechRecognitionEngine:
         while self.is_listening:
             time.sleep(0.5)
 
+    #: Microphone capture and endpointing (2026-10-29 review). These were the
+    #: third-party `speech_recognition` library's, which was never declared
+    #: in pyproject. Capture is now sounddevice, which the package already
+    #: uses (the "capture" extra), and the endpointing is written here.
+    #: Chosen starting values, held until client data replaces them:
+    #:   30 ms blocks: short enough that the stop flag is seen promptly and a
+    #:     phrase's start is not clipped by more than one block.
+    #:   0.5 s of room sound to calibrate: what the old capture used.
+    #:   speech at 1.5 x the room's level: the old library's dynamic ratio, so
+    #:     a quiet speaker in a quiet room still starts a phrase.
+    #:   0.8 s of quiet ends a phrase: the old library's pause length.
+    #:   15 s at most per phrase: what the old capture used.
+    MIC_BLOCK_SECONDS = 0.03
+    MIC_CALIBRATE_SECONDS = 0.5
+    MIC_SPEECH_RATIO = 1.5
+    MIC_END_SILENCE_SECONDS = 0.8
+    MIC_PHRASE_LIMIT_SECONDS = 15.0
+
     def _microphone_loop(self) -> None:
         """
-        Live microphone capture.
+        Live microphone capture through sounddevice, with energy endpointing.
 
-        `speech_recognition` is used ONLY for capture and endpointing. All
-        transcription goes through the local backend. No recognize_* call from
-        that library is invoked anywhere in this file.
+        Capture and endpointing only. All transcription goes through the
+        local backend (`recognize_from_bytes`). A capture that cannot start
+        or that fails is fired as an unavailable or error result, with the
+        reason; nothing is retried in silence.
         """
         try:
-            import speech_recognition as sr  # the library, not this module
+            import sounddevice as sd
         except ImportError as exc:
             self._fire(
                 RecognitionResult.unavailable(
-                    f"speech_recognition not installed: {exc}", source="microphone"
+                    f"microphone capture needs sounddevice (the 'capture' extra): {exc}",
+                    source="microphone",
                 )
             )
             return
+        import numpy as np
 
-        recognizer = sr.Recognizer()
-
+        block = max(1, int(round(VOSK_SAMPLE_RATE * self.MIC_BLOCK_SECONDS)))
         try:
-            mic = sr.Microphone(
-                device_index=self.device_index, sample_rate=VOSK_SAMPLE_RATE
+            stream = sd.InputStream(
+                samplerate=VOSK_SAMPLE_RATE, channels=1, dtype="int16",
+                device=self.device_index, blocksize=block,
             )
         except Exception as exc:
             self._fire(
@@ -637,40 +658,44 @@ class SpeechRecognitionEngine:
             )
             return
 
+        def rms(chunk: np.ndarray) -> float:
+            return float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2))) if chunk.size else 0.0
+
         try:
-            with mic as src:
-                # Calibrated to the room rather than pinned at 300. A fixed
-                # threshold either clips a quiet speaker or never triggers in a
-                # noisy room, and a person who cannot repeat themselves pays
-                # for both.
-                recognizer.adjust_for_ambient_noise(src, duration=0.5)
-                recognizer.dynamic_energy_threshold = True
-                logger.info(
-                    "Microphone listening. energy_threshold=%.1f",
-                    recognizer.energy_threshold,
-                )
+            with stream:
+                # Calibrated to the room rather than pinned. A fixed threshold
+                # either clips a quiet speaker or never triggers in a noisy
+                # room, and a person who cannot repeat themselves pays for both.
+                room = []
+                for _ in range(max(1, int(self.MIC_CALIBRATE_SECONDS / self.MIC_BLOCK_SECONDS))):
+                    data, _overflow = stream.read(block)
+                    room.append(rms(np.asarray(data).reshape(-1)))
+                # Floor of 1.0 (int16 RMS): a room of digital silence must not
+                # make every sample count as speech. A chosen starting value.
+                threshold = max(float(np.mean(room)) * self.MIC_SPEECH_RATIO, 1.0)
+                logger.info("Microphone listening. speech threshold=%.1f (int16 RMS)", threshold)
 
+                end_after = max(1, int(round(self.MIC_END_SILENCE_SECONDS / self.MIC_BLOCK_SECONDS)))
+                limit = max(1, int(round(self.MIC_PHRASE_LIMIT_SECONDS / self.MIC_BLOCK_SECONDS)))
+                phrase: List[bytes] = []
+                quiet = 0
                 while self.is_listening:
-                    try:
-                        audio = recognizer.listen(src, timeout=1.0, phrase_time_limit=15.0)
-                    except sr.WaitTimeoutError:
-                        # Nothing said. Not an error, not a result — just loop
-                        # so the stop flag is checked promptly.
-                        continue
-                    except Exception as exc:
-                        self._fire(
-                            RecognitionResult.error(
-                                str(exc), source="microphone", kind="capture"
-                            )
-                        )
-                        time.sleep(0.25)  # never spin hot on a repeating fault
-                        continue
-
-                    pcm = audio.get_raw_data(
-                        convert_rate=VOSK_SAMPLE_RATE, convert_width=SAMPLE_WIDTH_BYTES
-                    )
-                    self._maybe_dump(pcm)
-                    self._fire(self.recognize_from_bytes(pcm))
+                    data, overflowed = stream.read(block)
+                    chunk = np.asarray(data, dtype=np.int16).reshape(-1)
+                    if overflowed:
+                        # Samples were lost. Said, not hidden.
+                        self._fire(RecognitionResult.error(
+                            "microphone input overflowed: audio was lost",
+                            source="microphone", kind="overflow"))
+                    loud = rms(chunk) >= threshold
+                    if loud or phrase:
+                        phrase.append(chunk.tobytes())
+                        quiet = 0 if loud else quiet + 1
+                    if phrase and (quiet >= end_after or len(phrase) >= limit):
+                        pcm = b"".join(phrase)
+                        phrase, quiet = [], 0
+                        self._maybe_dump(pcm)
+                        self._fire(self.recognize_from_bytes(pcm))
         except Exception as exc:
             self._fire(
                 RecognitionResult.error(str(exc), source="microphone", kind="mic_loop")
@@ -763,15 +788,32 @@ def reset_speech_recognition_engine(timeout: float = 15.0) -> bool:
         return True
 
 
-def list_microphones() -> List[str]:
-    """Available input device names. Empty list when capture is unavailable."""
-    try:
-        import speech_recognition as sr
+class MicrophonesUnavailable(RuntimeError):
+    """The input devices could not be listed. Not the same as "there are none"."""
 
-        return list(sr.Microphone.list_microphone_names())
+
+def list_microphones() -> List[str]:
+    """
+    Input device names. An empty list means this machine has no microphone.
+
+    Rule 6 (2026-10-29 review): "could not list" (sounddevice missing, or
+    the query failed) came back as [], the same as "no microphones". Now it
+    raises MicrophonesUnavailable with the reason. Listing goes through
+    sounddevice, which the package already uses, not the undeclared
+    `speech_recognition` library.
+    """
+    try:
+        import sounddevice as sd
+    except ImportError as exc:
+        raise MicrophonesUnavailable(
+            "cannot list microphones: sounddevice is not installed (the 'capture' extra)"
+        ) from exc
+    try:
+        devices = sd.query_devices()
     except Exception as exc:
-        logger.error("Cannot list microphones: %s", exc)
-        return []
+        raise MicrophonesUnavailable(
+            f"cannot list microphones ({type(exc).__name__}: {exc})") from exc
+    return [d["name"] for d in devices if d.get("max_input_channels", 0) > 0]
 
 
 __all__ = [
@@ -784,6 +826,7 @@ __all__ = [
     "get_speech_recognition_engine",
     "reset_speech_recognition_engine",
     "list_microphones",
+    "MicrophonesUnavailable",
 ]
 
 

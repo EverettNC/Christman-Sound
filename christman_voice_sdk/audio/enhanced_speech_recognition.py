@@ -19,7 +19,7 @@ change.
 WHAT CHANGED AND WHY
 --------------------
 
-1. It made up what the user said. Two sites, :195 and :256.
+1. It made up what the client said. Two sites, :195 and :256.
 
        sample_phrases = ["Hello, how are you today?", ...]
        recognized_text = random.choice(sample_phrases)

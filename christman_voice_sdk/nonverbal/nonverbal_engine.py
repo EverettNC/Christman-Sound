@@ -196,10 +196,16 @@ DANGER_INTENTS = frozenset({
     "attacked", "attack", "threat", "emergency",
 })
 
-#: NEEDS that also reach a human, and ARE spoken as normal (ruling I): pain,
-#: medicine. (Thirst, hunger, the bathroom and request attention are spoken
-#: and do not page here; Hand Up's request attention pages through
-#: engine_temporal's PAGING_INTENTS, ruling 5.)
+#: Signals that reach a human and ARE spoken as normal (ruling I). Everett,
+#: 2026-10-29: pain is not a need, "It's a feeling", the client's own, and
+#: it pages every time ("someone on hospice or with a chronic illness that
+#: causes pain, then hell yes, that pages the caregiver every time").
+#: Medicine is a need that pages, so the caregiver is reached. The typed
+#: words page the same way (hearing.PAIN_TERMS, ruling C). Thirst, hunger
+#: and the bathroom are spoken and page only when the client asks for help
+#: in the same turn (hearing.NEED_INTENTS). Hand Up's request attention
+#: pages through engine_temporal's PAGING_INTENTS, ruling 5, and is help,
+#: so it is the silent alarm there and never spoken, ruling I.
 NEED_PAGING_INTENTS = frozenset({"pain", "need_medicine"})
 
 DISTRESS_INTENTS = DANGER_INTENTS | NEED_PAGING_INTENTS
@@ -223,11 +229,19 @@ def is_danger(intent: Optional[str], message: Optional[str] = None) -> bool:
 #:   - a pressed symbol is the client's own word and is spoken (ruling C);
 #:   - a meaning in the client's OWN map, read from data_dir, is a meaning
 #:     learned for that client and is spoken (ruling J);
-#:   - a built-in camera, eye, face, tic or sound reading of a generic
-#:     feeling is not spoken (ruling J): the intents below;
-#:   - every other built-in meaning, the needs and the deliberate signals
-#:     (yes, no, hello, stop, choose, confirm, back, next, acknowledge, pay
-#:     attention), is spoken as before.
+#:   - THE CAMERA SPEAKS ONLY MEANINGS LEARNED FOR THAT CLIENT (Everett,
+#:     ruling J). The built-in gesture and eye-region maps carry no wording
+#:     at all (message None): a wave, a nod, a thumbs up, a held centre gaze
+#:     is reported as a reading (key, intent, confidence) and says nothing.
+#:     Until 2026-10-29's review, a built-in wave said "Hello there!", a nod
+#:     "Yes, I agree.", a thumbs up "I like this." and a centre gaze "I
+#:     select this option." for the client. Those sentences are removed;
+#:   - RULING J COVERS SOUNDS TOO (Everett, 2026-10-29): a built-in sound,
+#:     tic or click meaning speaks nothing. The built-in sound map carries
+#:     no wording; the reading is reported, and it speaks only once it is
+#:     learned for that client. (Before, only the generic-feeling intents
+#:     below were held back, and a built-in click still said "I choose this
+#:     option.") GENERIC_FEELING_INTENTS is kept for callers that read it.
 #: An older map with no such fields works exactly as before, for every
 #: meaning that is not danger.
 GENERIC_FEELING_INTENTS = frozenset({
@@ -236,6 +250,9 @@ GENERIC_FEELING_INTENTS = frozenset({
 })
 GENERIC_SILENT_REASON = ("a generic reading, not a meaning learned for this client; "
                          "observed, not spoken")
+#: A camera, eye or sound reading with no meaning learned for this client (ruling J).
+NOT_LEARNED_REASON = ("no meaning learned for this client: the reading is reported, "
+                      "not spoken")
 SILENT_ALARM_REASON = ("danger: goes to a human silently; never spoken, never "
                        "announced (silent alarm)")
 
@@ -364,16 +381,20 @@ class MapValidationError(ValueError):
 # whether a distress reading reaches a human: that happens at any confidence.
 # -----------------------------------------------------------------------------
 
+# THE CAMERA'S BUILT-IN MAPS CARRY NO WORDING (Everett, ruling J): the
+# camera speaks only meanings learned for that client. A gesture or eye
+# region here is a reading (intent, confidence, tier) with message None; the
+# client's own map in data_dir is where a spoken meaning comes from.
 DEFAULT_GESTURES: Dict[str, Dict[str, Any]] = {
-    "nod":         {"intent": "affirm",        "confidence": 0.9, "expression": "positive", "emotion_tier": "moderate", "message": "Yes, I agree."},
-    "shake":       {"intent": "deny",          "confidence": 0.9, "expression": "negative", "emotion_tier": "moderate", "message": "No, I don't want that."},
-    "point_up":    {"intent": "help",          "confidence": 0.8, "expression": "urgent",   "emotion_tier": "moderate", "message": "I need help please."},
-    "wave":        {"intent": "greet",         "confidence": 0.8, "expression": "positive", "emotion_tier": "mild",     "message": "Hello there!"},
-    "thumbs_up":   {"intent": "like",          "confidence": 0.9, "expression": "positive", "emotion_tier": "strong",   "message": "I like this."},
-    "thumbs_down": {"intent": "dislike",       "confidence": 0.9, "expression": "negative", "emotion_tier": "strong",   "message": "I don't like this."},
-    "open_palm":   {"intent": "stop",          "confidence": 0.8, "expression": "negative", "emotion_tier": "strong",   "message": "Please stop."},
-    "stimming":    {"intent": "self_regulate", "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",     "message": "I'm regulating."},
-    "rapid_blink": {"intent": "overwhelmed",   "confidence": 0.7, "expression": "negative", "emotion_tier": "urgent",   "message": "I'm overwhelmed."},
+    "nod":         {"intent": "affirm",        "confidence": 0.9, "expression": "positive", "emotion_tier": "moderate", "message": None},
+    "shake":       {"intent": "deny",          "confidence": 0.9, "expression": "negative", "emotion_tier": "moderate", "message": None},
+    "point_up":    {"intent": "help",          "confidence": 0.8, "expression": "urgent",   "emotion_tier": "moderate", "message": None},
+    "wave":        {"intent": "greet",         "confidence": 0.8, "expression": "positive", "emotion_tier": "mild",     "message": None},
+    "thumbs_up":   {"intent": "like",          "confidence": 0.9, "expression": "positive", "emotion_tier": "strong",   "message": None},
+    "thumbs_down": {"intent": "dislike",       "confidence": 0.9, "expression": "negative", "emotion_tier": "strong",   "message": None},
+    "open_palm":   {"intent": "stop",          "confidence": 0.8, "expression": "negative", "emotion_tier": "strong",   "message": None},
+    "stimming":    {"intent": "self_regulate", "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",     "message": None},
+    "rapid_blink": {"intent": "overwhelmed",   "confidence": 0.7, "expression": "negative", "emotion_tier": "urgent",   "message": None},
 }
 
 DEFAULT_SYMBOLS: Dict[str, Dict[str, Any]] = {
@@ -396,27 +417,34 @@ DEFAULT_SYMBOLS: Dict[str, Dict[str, Any]] = {
 }
 
 DEFAULT_EYE_REGIONS: Dict[str, Dict[str, Any]] = {
-    "top_left":     {"intent": "previous",  "confidence": 0.7, "expression": "neutral",     "emotion_tier": "mild",     "message": "Let's go back."},
-    "top_right":    {"intent": "next",      "confidence": 0.7, "expression": "neutral",     "emotion_tier": "mild",     "message": "Let's go forward."},
-    "bottom_left":  {"intent": "cancel",    "confidence": 0.7, "expression": "negative",    "emotion_tier": "moderate", "message": "I want to cancel."},
-    "bottom_right": {"intent": "confirm",   "confidence": 0.7, "expression": "positive",    "emotion_tier": "moderate", "message": "I confirm this choice."},
-    "center":       {"intent": "select",    "confidence": 0.8, "expression": "attentive",   "emotion_tier": "mild",     "message": "I select this option."},
-    "long_stare":   {"intent": "focus",     "confidence": 0.8, "expression": "attentive",   "emotion_tier": "strong",   "message": "I'm focused on this."},
-    "rapid_scan":   {"intent": "searching", "confidence": 0.7, "expression": "inquisitive", "emotion_tier": "moderate", "message": "I'm looking for something."},
+    "top_left":     {"intent": "previous",  "confidence": 0.7, "expression": "neutral",     "emotion_tier": "mild",     "message": None},
+    "top_right":    {"intent": "next",      "confidence": 0.7, "expression": "neutral",     "emotion_tier": "mild",     "message": None},
+    "bottom_left":  {"intent": "cancel",    "confidence": 0.7, "expression": "negative",    "emotion_tier": "moderate", "message": None},
+    "bottom_right": {"intent": "confirm",   "confidence": 0.7, "expression": "positive",    "emotion_tier": "moderate", "message": None},
+    "center":       {"intent": "select",    "confidence": 0.8, "expression": "attentive",   "emotion_tier": "mild",     "message": None},
+    "long_stare":   {"intent": "focus",     "confidence": 0.8, "expression": "attentive",   "emotion_tier": "strong",   "message": None},
+    "rapid_scan":   {"intent": "searching", "confidence": 0.7, "expression": "inquisitive", "emotion_tier": "moderate", "message": None},
 }
 
+# THE MICROPHONE'S BUILT-IN SOUND MAP CARRIES NO WORDING EITHER (Everett,
+# 2026-10-29: ruling J covers sounds too). A hum, a click, a grunt is a
+# reading (intent, confidence, tier) and says nothing; a sound meaning is
+# spoken only once it is learned for that client, in the client's own map.
+# Until this review a built-in click said "I choose this option.", a short
+# vowel "I acknowledge that." and a repeated sound "Please pay attention to
+# this." for the client. Those sentences are removed.
 DEFAULT_SOUNDS: Dict[str, Dict[str, Any]] = {
-    "hum":            {"intent": "thinking",    "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm thinking about it."},
-    "click":          {"intent": "select",      "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": "I choose this option."},
-    "distress":       {"intent": "help",        "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": "I need help right now."},
-    "soft":           {"intent": "unsure",      "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm unsure about this."},
-    "loud":           {"intent": "excited",     "confidence": 0.8, "expression": "positive", "emotion_tier": "strong", "message": "I'm excited about this!"},
-    "short_vowel":    {"intent": "acknowledge", "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": "I acknowledge that."},
-    "repeated_sound":     {"intent": "insistent",     "confidence": 0.8, "expression": "urgent",   "emotion_tier": "strong", "message": "Please pay attention to this."},
-    "grunt_distress":     {"intent": "help",          "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": "I need help right now."},
-    "grunt_acknowledge":  {"intent": "acknowledge",   "confidence": 0.8, "expression": "neutral",  "emotion_tier": "mild",   "message": "I acknowledge that."},
-    "grunt_frustration":  {"intent": "frustrated",    "confidence": 0.8, "expression": "negative", "emotion_tier": "strong", "message": "I'm getting frustrated."},
-    "vocal_stimming":     {"intent": "self_regulate", "confidence": 0.9, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm regulating."},
+    "hum":            {"intent": "thinking",    "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "click":          {"intent": "select",      "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "distress":       {"intent": "help",        "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": None},
+    "soft":           {"intent": "unsure",      "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "loud":           {"intent": "excited",     "confidence": 0.8, "expression": "positive", "emotion_tier": "strong", "message": None},
+    "short_vowel":    {"intent": "acknowledge", "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "repeated_sound":     {"intent": "insistent",     "confidence": 0.8, "expression": "urgent",   "emotion_tier": "strong", "message": None},
+    "grunt_distress":     {"intent": "help",          "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": None},
+    "grunt_acknowledge":  {"intent": "acknowledge",   "confidence": 0.8, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "grunt_frustration":  {"intent": "frustrated",    "confidence": 0.8, "expression": "negative", "emotion_tier": "strong", "message": None},
+    "vocal_stimming":     {"intent": "self_regulate", "confidence": 0.9, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
 }
 
 #: Emotional indicators per gesture. KEPT AS WRITTEN — see the header note.
@@ -469,7 +497,10 @@ def validate_map(name: str, table: Dict[str, Any], strict: bool = False) -> Dict
             conf = float(entry["confidence"])
             if not 0.0 <= conf <= 1.0:
                 raise MapValidationError(f"{name}[{key!r}] confidence {conf} outside [0,1]")
-            if not isinstance(entry["message"], str) or not entry["message"].strip():
+            # None is a reading with no wording (ruling J: the camera's
+            # built-in maps). A message that is there must not be blank.
+            if entry["message"] is not None and (
+                    not isinstance(entry["message"], str) or not entry["message"].strip()):
                 raise MapValidationError(f"{name}[{key!r}] message is empty")
         except (MapValidationError, TypeError, ValueError) as exc:
             if strict:
@@ -680,9 +711,11 @@ class NonverbalEngine:
                 emotion_tier=interp.emotion_tier,
                 confidence=interp.confidence,
                 message=None,                      # NOT spoken
+                # Ruling M: the package never holds anything for
+                # confirmation. The reading is reported; the being asks.
                 reason=(
                     f"confidence {interp.confidence} is below the "
-                    f"{self.confidence_threshold} threshold — please confirm"
+                    f"{self.confidence_threshold} threshold: reported, not spoken"
                 ),
                 threshold=self.confidence_threshold,
                 confirmed_samples=interp.confirmed_samples,
@@ -719,10 +752,13 @@ class NonverbalEngine:
         silent_reason: Optional[str] = None
         if is_danger(entry["intent"], entry["message"]):
             message, silent_reason = None, SILENT_ALARM_REASON
-        elif (modality is not Modality.SYMBOL
-              and self.map_source.get(modality) == "built_in"
-              and entry["intent"] in GENERIC_FEELING_INTENTS):
-            message, silent_reason = None, GENERIC_SILENT_REASON
+        elif (modality in (Modality.GESTURE, Modality.EYE, Modality.SOUND)
+              and (self.map_source.get(modality) != "client" or not message)):
+            # Ruling J: the camera and the microphone speak only meanings
+            # learned for that client. A built-in gesture, eye or sound
+            # reading has no wording. A pressed symbol is the client's own
+            # word and is not held here (ruling C).
+            message, silent_reason = None, NOT_LEARNED_REASON
         interp = Interpretation(
             modality=modality,
             status=Status.OK,
@@ -838,7 +874,12 @@ class NonverbalEngine:
         # message now comes from the strongest reading OF the winning intent.
         silent = any(p.silent_alarm for p in parts)
         agreeing = [p for p in usable if p.intent == best_intent]
-        winner = max(agreeing, key=lambda p: p.confidence or 0.0)
+        # Ruling J left the camera's built-in readings with no wording. Of the
+        # readings that agree, one that carries words outranks one that does
+        # not (as engine_temporal does), so a clicked choice is still said
+        # when a wordless eye reading agreed with it.
+        speaking = [p for p in agreeing if p.message]
+        winner = max(speaking or agreeing, key=lambda p: p.confidence or 0.0)
         strongest = max(usable, key=lambda p: p.confidence or 0.0)
         combined_confidence = sum(p.confidence or 0.0 for p in agreeing) / len(agreeing)
 

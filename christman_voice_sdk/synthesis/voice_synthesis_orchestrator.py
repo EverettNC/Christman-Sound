@@ -90,7 +90,6 @@ class VoiceSynthesisOrchestrator:
         self,
         config: Optional[Config] = None,
         tier: Tier = Tier.BASIC,
-        use_mfa: bool = True,
         auto_load_engine: bool = False,
     ) -> None:
         self.config = config or get_config()
@@ -98,7 +97,9 @@ class VoiceSynthesisOrchestrator:
         self.tier_features = self.config.get_tier_features(tier)
 
         self.audio_processor = AudioProcessor(config=self.config, tier=tier)
-        self.phoneme_labeler = PhonemeLabeler(use_mfa=use_mfa)
+        # 2026-10-29 review: `use_mfa` is gone with the aligner it switched
+        # (built on the recognizer Everett ruled out). See phoneme_labeler.
+        self.phoneme_labeler = PhonemeLabeler()
         self.timbre_modeler = TimbreModeler()
         self.emotion_embedder = EmotionEmbedder(tier=tier)
         self.voicepack_builder = VoicepackBuilder()
@@ -196,13 +197,19 @@ class VoiceSynthesisOrchestrator:
             raise
 
         lipsync_data = None
+        lipsync_unavailable: Optional[str] = None
         if generate_lipsync and result.audio is not None:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_path = Path(temp_file.name)
             try:
                 result.save(temp_path)
-                phonemes = self.phoneme_labeler.label_audio(temp_path, text)
-                lipsync_data = self.phoneme_labeler.phonemes_to_visemes(phonemes, fps=60)
+                labeling = self.phoneme_labeler.label_audio(temp_path, text)
+                if labeling.available:
+                    lipsync_data = self.phoneme_labeler.phonemes_to_visemes(
+                        labeling.phonemes, fps=60)
+                else:
+                    # No phonemes, no lip-sync: said, not made up.
+                    lipsync_unavailable = labeling.reason
             finally:
                 if temp_path.exists():
                     temp_path.unlink()
@@ -216,7 +223,9 @@ class VoiceSynthesisOrchestrator:
             lipsync_data=lipsync_data,
             synthesis_time=time.time() - start_time,
             quality_score=result.naturalness_mos,
-            metadata={"tier": self.tier.value, "engine": result.engine},
+            metadata={"tier": self.tier.value, "engine": result.engine,
+                      **({"lipsync_available": False, "lipsync_reason": lipsync_unavailable}
+                         if lipsync_unavailable else {})},
             degraded=bool(result.degraded) or result.audio is None,
             error_reason=result.error_reason,
         )

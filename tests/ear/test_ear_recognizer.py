@@ -1,10 +1,12 @@
 """The recognizer end to end: real model, real recorded phrases.
 
 The phrases are the golden tapes (EAR_GOLDEN, default
-~/claude-work/lane8/golden/lgraph, pcm/alphavox_*.s16: 16-bit mono PCM at
-16 kHz, recorded phrases from the AlphaVox repository's
-data/phrases/alphavox_verified; the same bytes as ear-core's
-src/lib/audio/testdata wave files). The live ear heard them as
+~/claude-work/lane8/golden/lgraph, pcm/*.s16: 16-bit mono PCM at 16 kHz, a
+being's verified recorded phrases; the same bytes as ear-core's
+src/lib/audio/testdata wave files). The tape file names on disk carry the
+name of the being whose recordings they are; the files live outside this
+repository and are named there, so the names below are their file names.
+The live ear heard them as
 "i want to go home" (i 0.00-0.09, want 0.09-0.33, to 0.33-0.39, go 0.39-0.57,
 home 0.57-0.93) and "i need help please".
 """

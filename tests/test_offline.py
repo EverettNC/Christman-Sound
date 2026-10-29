@@ -17,7 +17,9 @@ christman_ocr_shared.py. It fails on:
     urlopen, download_url_to_file, load_state_dict_from_url, torch.hub.load
   - importing huggingface_hub, requests, httpx, urllib3, aiohttp, wget, or
     urllib.request
-  - constructing PaddleOCR, which fetches its model files on first use
+  - constructing PaddleOCR without all three local model folders
+    (det_model_dir=, rec_model_dir=, cls_model_dir=): it fetches any model
+    it is not given on first use
 
 christman_sound/core.py is outside the scan: Everett's standing ruling is
 that it is never touched and never wired. It still calls from_pretrained
@@ -61,11 +63,13 @@ LOOPBACK_ONLY = {
 #: Keyed by file, not line, so an owner's edits elsewhere in the file do not
 #: break this test. A file may only go down from its count, never up. When an
 #: owner removes a download, lower the count or delete the entry.
-OPEN = {
-    "christman_ocr_shared.py":
-        (2, "not yet fixed: PaddleOCR fetches its model files on first construction; "
-            "paddleocr is not installed here, so a local-model path cannot be proven yet"),
-}
+#: 2026-10-29 review: christman_ocr_shared.py's open item is closed. PaddleOCR
+#: is built only from three local model folders, checked before it is
+#: constructed (test_ocr_* below).
+OPEN: dict = {}
+
+#: PaddleOCR is offline only when it is given every model folder it reads.
+PADDLE_LOCAL_KEYWORDS = {"det_model_dir", "rec_model_dir", "cls_model_dir"}
 
 
 def _scanned_files() -> list[Path]:
@@ -109,7 +113,10 @@ def _downloads(path: Path) -> list[tuple[int, str]]:
             elif name == "load" and isinstance(node.func, ast.Attribute) and _call_name(node.func.value) == "hub":
                 found.append((node.lineno, "torch.hub.load(...)"))
             elif name == "PaddleOCR":
-                found.append((node.lineno, "PaddleOCR(...) fetches its models on first construction"))
+                given = {k.arg for k in node.keywords}
+                if not PADDLE_LOCAL_KEYWORDS <= given:
+                    found.append((node.lineno, "PaddleOCR(...) without every local model folder "
+                                               "fetches its models on first construction"))
     return found
 
 
@@ -156,11 +163,103 @@ def test_the_scan_catches_each_kind_of_download(tmp_path):
         "M.from_pretrained('/local/dir', local_files_only=True)\n"
         "hf_hub_download('org/model', 'f')\n"
         "torch.hub.load('x', 'y')\n"
-        "PaddleOCR(lang='en')\n",
+        "PaddleOCR(lang='en')\n"
+        "PaddleOCR(det_model_dir=a, rec_model_dir=b, lang='en')\n"
+        "PaddleOCR(det_model_dir=a, rec_model_dir=b, cls_model_dir=c)\n",
         encoding="utf-8",
     )
     lines = sorted(line for line, _ in _downloads(sample))
-    assert lines == [1, 2, 3, 5, 7, 8, 9], lines
+    assert lines == [1, 2, 3, 5, 7, 8, 9, 10], lines
+
+
+# ---------------------------------------------------------------- OCR, offline
+
+def _ocr(monkeypatch):
+    import christman_ocr_shared as ocr
+
+    for env in ocr.OCR_MODEL_ENV.values():
+        monkeypatch.delenv(env, raising=False)
+
+    def no_paddle():
+        raise AssertionError("PaddleOCR was imported before its model folders were checked")
+
+    monkeypatch.setattr(ocr, "_import_paddleocr", no_paddle)
+    monkeypatch.setattr(ocr.ChristmanOCREngine, "_instance", None)
+    return ocr
+
+
+def test_ocr_with_no_model_folders_fails_loud_and_fetches_nothing(monkeypatch):
+    ocr = _ocr(monkeypatch)
+    _no_network(monkeypatch)
+    with pytest.raises(ocr.OCRModelMissing) as info:
+        ocr.ChristmanOCREngine()
+    message = str(info.value)
+    for key, env in ocr.OCR_MODEL_ENV.items():
+        assert key in message and env in message
+    assert "nothing is downloaded" in message
+
+
+def test_ocr_names_every_missing_model_file(monkeypatch, tmp_path):
+    ocr = _ocr(monkeypatch)
+    _no_network(monkeypatch)
+    det, rec = tmp_path / "det", tmp_path / "rec"
+    det.mkdir()
+    rec.mkdir()
+    (rec / "inference.pdiparams").write_bytes(b"")
+    with pytest.raises(ocr.OCRModelMissing) as info:
+        ocr.ChristmanOCREngine(det_model_dir=str(det), rec_model_dir=str(rec),
+                               cls_model_dir=str(tmp_path / "cls"))
+    message = str(info.value)
+    assert f"{det} has no inference.pdiparams" in message
+    assert "inference.pdmodel, inference.json" in message      # rec has weights, no program
+    assert f"{tmp_path / 'cls'} is not a folder" in message
+
+
+def test_ocr_with_every_model_folder_builds_paddle_from_them_only(monkeypatch, tmp_path):
+    ocr = _ocr(monkeypatch)
+    _no_network(monkeypatch)
+    dirs = {}
+    for key in ocr.OCR_MODEL_ENV:
+        d = tmp_path / key
+        d.mkdir()
+        (d / "inference.pdiparams").write_bytes(b"")
+        (d / "inference.pdmodel").write_bytes(b"")
+        dirs[key] = str(d)
+    built = []
+
+    class Recorder:
+        def __init__(self, **kwargs):
+            built.append(kwargs)
+
+    monkeypatch.setattr(ocr, "_import_paddleocr", lambda: Recorder)
+    ocr.ChristmanOCREngine(**dirs)
+    assert len(built) == 1
+    assert {k: built[0][k] for k in ocr.OCR_MODEL_ENV} == dirs
+
+
+def test_ocr_document_that_cannot_load_fails_loud(tmp_path):
+    import christman_ocr_shared as ocr
+
+    loader = ocr.DocumentLoader()
+    with pytest.raises(ocr.DocumentLoadError, match="file not found"):
+        loader.load(str(tmp_path / "missing.png"))
+    other = tmp_path / "notes.xyz"
+    other.write_text("x")
+    with pytest.raises(ocr.DocumentLoadError, match="unsupported file type"):
+        loader.load(str(other))
+
+
+def test_ocr_image_that_cannot_be_read_fails_loud(tmp_path):
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        pytest.skip("not run: Pillow is not installed here; the OCR's image loader needs it")
+    import christman_ocr_shared as ocr
+
+    broken = tmp_path / "broken.png"
+    broken.write_bytes(b"not an image")
+    with pytest.raises(ocr.DocumentLoadError, match="could not load image"):
+        ocr.DocumentLoader().load(str(broken))
 
 
 # ------------------------------------------------------------- Shorty, offline
