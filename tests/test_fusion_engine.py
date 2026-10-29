@@ -95,6 +95,76 @@ def test_plain_distress_is_still_gentle_lift():
     assert d.knows is True
 
 
+
+# -- 2026-10-29: who did what to whom reaches delivery ------------------------
+# Measured before: "she wants to die" and "he is going to kill her" came back
+# mode=standard, pace=normal. A safety hold was delivered at pace normal.
+# "I'm not okay" and "I don't feel safe" came back standard. "remind me to
+# call mom" scored 0.0 in every domain.
+
+# Everett, 2026-10-29: "Someone else at risk pages a human, the same as the
+# client's own distress. Unless it is two beings talking to each other."
+# The test this replaces pinned the opposite (soft_redirect, nobody paged).
+
+def test_someone_else_at_risk_pages_a_human_and_keeps_every_word():
+    paged = []
+    eng = _engine(crisis_callback=lambda r, c: paged.append(r) or True)
+    said = ["she wants to die", "he is going to kill her", "my mom is not okay",
+            "my moms not safe"]
+    for text in said:
+        d = eng.fuse(text)
+        assert d.mode == MODE_SAFETY_HOLD, (text, d.to_dict())
+        assert d.delivery["pace"] == "slower"
+        assert d.safety.delivered_to_human is True
+        assert d.input_text == text and d.safety.said == text
+        assert d.speakable is True       # the hold never silences the client
+        assert d.reply_held is True      # the being's own reply waits
+    assert [r.said for r in paged] == said
+
+
+def test_between_beings_someone_else_at_risk_is_flagged_not_paged():
+    paged = []
+    eng = _engine(crisis_callback=lambda r, c: paged.append(r) or True)
+    d = eng.fuse("she wants to die", live_state={"between_beings": True})
+    assert d.safety.status == "soft_redirect"
+    assert d.delivery["safety_flag"] == "harm_frame_third_party_at_risk"
+    assert d.mode == "hold-space"
+    assert paged == []
+
+
+def test_safety_hold_is_slow_and_confirms():
+    d = _engine().fuse("I want to kill myself")
+    assert d.mode == MODE_SAFETY_HOLD
+    assert d.delivery["pace"] == "slower"
+    assert d.delivery["confirm_before_acting"] is True
+
+
+def test_measured_distress_under_the_grounding_bar_holds_space():
+    for text in ("I'm not okay", "I don't feel safe"):
+        d = _engine().fuse(text)
+        assert d.mode == "hold-space", (text, d.to_dict())
+        assert d.delivery["pace"] == "slower"
+
+
+def test_grounding_bar_is_read_as_reported_not_float_noise():
+    d = _engine().fuse("i have no one")
+    assert d.mode == "gentle-lift", d.to_dict()
+
+
+def test_plain_words_steer_their_domain():
+    for text, domain in (("remind me to call mom", "memory"),
+                         ("can you read this to me", "voice"),
+                         ("breathe with me", "grounding")):
+        d = _engine().fuse(text)
+        assert d.silicon["dominant_domain"] == domain, (text, d.silicon)
+
+
+def test_ordinary_turn_stays_standard():
+    d = _engine().fuse("pass the salt")
+    assert d.mode == MODE_STANDARD
+    assert d.delivery["pace"] == "normal"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
@@ -109,3 +179,25 @@ if __name__ == "__main__":
                 failures += 1
                 print(f"ERROR {name}: {type(exc).__name__}: {exc}")
     sys.exit(1 if failures else 0)
+
+
+# -- 2026-10-29: "We never change the truth, ever. We never sanitize anything."
+
+def test_a_safety_callback_cannot_change_the_words():
+    def says_something_else(text, context):
+        return SafetyResult(status="hard_block", reason="test", said="[cleaned]")
+    paged = []
+    eng = _engine(safety_callback=says_something_else,
+                  crisis_callback=lambda r, c: paged.append(r) or True)
+    d = eng.fuse("I want to kill myself")
+    assert d.safety.said == "I want to kill myself"
+    assert paged[0].said == "I want to kill myself"   # the human gets the real words
+
+
+def test_no_rewrite_api_is_left():
+    from christman_voice_sdk.tone import tone_classifier, written_tone
+    for module in (written_tone, tone_classifier):
+        for name in ("make_incisive", "propose_rewrite", "RewriteProposal"):
+            assert not hasattr(module, name), (module.__name__, name)
+    assert "sanitized_text" not in SafetyResult.__dataclass_fields__
+

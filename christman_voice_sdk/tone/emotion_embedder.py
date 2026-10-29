@@ -64,15 +64,9 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-try:
-    from audio.config import Tier
-except ImportError:
-    class Tier(str, Enum):          # type: ignore[no-redef]
-        FREE = "free"
-        BASIC = "basic"
-        PREMIUM = "premium"
-        ELITE = "elite"
-        ULTRA = "ultra"
+# The package's own Tier. 2026-10-29: this read a top-level `audio.config`
+# that exists nowhere, so a private Tier class always stood in for it.
+from ..audio.config import Tier
 
 
 class EmotionTemplateMissing(KeyError):

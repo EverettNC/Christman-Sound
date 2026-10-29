@@ -57,6 +57,15 @@ MUST_CALL = [
     "I used to be happy but now I want to die",
     "I stopped taking my meds. I want to kill myself",
     "years ago I was fine, I want to end it all",
+    # Someone else at risk. Everett, 2026-10-29: pages a human, the same as
+    # the client's own distress, unless two beings are talking to each other.
+    "she wants to die",
+    "he is going to kill her",
+    "my mom is not okay",
+    "my moms not okay",
+    "my mom's not safe",
+    "she doesn't feel safe",
+    "my dad isn't okay",
 ]
 
 MUST_NOT_CALL = [
@@ -76,6 +85,11 @@ MUST_NOT_CALL = [
     "I am fine",
     "I lost my keys",
     "",
+    # 2026-10-29: "not okay WITH" is disagreement; a thing is not a person;
+    # a past time word is not now.
+    "my mom is not okay with it",
+    "that is not safe",
+    "yesterday my mom was not okay",
 ]
 
 # Everett's open items. Ruled 2026-10-11; one line each to overrule.
@@ -120,11 +134,23 @@ def test_grief_is_named_not_blocked():
     assert any(f.startswith("history:") for f in r.flags), r.flags
 
 
-def test_third_party_at_risk_is_flagged_not_blocked():
+def test_third_party_at_risk_pages_unless_between_beings():
     r = harm_frame_safety("she wants to die")
-    assert r.status == "soft_redirect", r
+    assert r.status == "hard_block", r
     assert r.reason == "harm_frame_third_party_at_risk"
-    assert r.sanitized_text == "she wants to die"   # never edited
+    assert r.said == "she wants to die"
+    b = harm_frame_safety("she wants to die", {"between_beings": True})
+    assert b.status == "soft_redirect", b
+    assert b.said == "she wants to die"
+    # Only True counts. A truthy string is not two beings.
+    assert harm_frame_safety("she wants to die", {"between_beings": "yes"}).status == "hard_block"
+
+
+def test_someone_else_not_okay_pages():
+    r = harm_frame_safety("my mom is not okay")
+    assert r.status == "hard_block", r
+    assert r.reason == "other_person_not_okay"
+    assert r.said == "my mom is not okay"
 
 
 def test_own_history_is_flagged_not_blocked():
@@ -133,10 +159,12 @@ def test_own_history_is_flagged_not_blocked():
     assert r.reason == "harm_frame_history_self"
 
 
-def test_hard_block_withholds_text_and_names_the_frame():
+def test_hard_block_keeps_every_word_and_names_the_frame():
+    # Everett, 2026-10-29: "We never change the truth, ever." This test used
+    # to assert the words were withheld ("") on a hard block.
     r = harm_frame_safety("I want to kill myself")
     assert r.status == "hard_block"
-    assert r.sanitized_text == ""
+    assert r.said == "I want to kill myself"
     assert "patient:speaker" in r.flags
     assert r.flagged_terms == ["kill"] or "kill" in r.flagged_terms
 
