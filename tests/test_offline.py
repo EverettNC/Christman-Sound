@@ -10,8 +10,8 @@ outside engine, no browser speech, no downloads. A model is loaded from a
 local path the caller gives, or the code raises with the reason.
 
 The scan reads the real source with the `ast` module; it imports nothing it
-scans. It covers christman_voice_sdk/, christman_sound/, scripts/ and the
-root modules. It fails on:
+scans. It covers christman_voice_sdk/, christman_sound/ and scripts/.
+It fails on:
   - `from_pretrained(...)` without `local_files_only=True`
   - hf_hub_download, snapshot_download, cached_download, urlretrieve,
     urlopen, download_url_to_file, load_state_dict_from_url, torch.hub.load
@@ -61,15 +61,11 @@ LOOPBACK_ONLY = {
 #: Keyed by file, not line, so an owner's edits elsewhere in the file do not
 #: break this test. A file may only go down from its count, never up. When an
 #: owner removes a download, lower the count or delete the entry.
-OPEN = {
-    "christman_ocr_shared.py":
-        (2, "Lane 6, not yet fixed: PaddleOCR fetches its model files on first construction; "
-            "paddleocr is not installed here, so a local-model path cannot be proven yet"),
-}
+OPEN: dict[str, tuple[int, str]] = {}
 
 
 def _scanned_files() -> list[Path]:
-    files = [ROOT / "christman_ocr_shared.py", ROOT / "crypto_bridge.py", ROOT / "_paths.py"]
+    files = []
     for pkg in ("christman_voice_sdk", "christman_sound", "scripts"):
         files.extend(sorted((ROOT / pkg).rglob("*.py")))
     core = ROOT / "christman_sound" / "core.py"  # never touched, never wired

@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "christman-sound"
 version = "1.0.0"
-description = "Christman Sound — family audio, voice, and speech SDK"
+description = "Christman Sound — audio, voice, and speech SDK"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -35,10 +35,15 @@ authors = [
 #   scipy (audio_processor, voice_capture_client, the tone engines),
 #   PyYAML (audio/config.py, imported by christman_voice_sdk/__init__.py),
 #   websockets (integration/voice_capture_client.py, whose capture and profile
-#   functions the package exports, and christman_ocr_shared.py), and
+#   functions the package exports), and
 #   werkzeug (synthesis/tts_service.py imports it by name; flask needs it too).
-# - cryptography is optional (voicepack encryption, crypto_bridge.py), so it
-#   is the "crypto" extra, not a base dependency.
+# - cryptography is optional (voicepack encryption), so it is the "crypto"
+#   extra, not a base dependency.
+# WHAT CHANGED AND WHY (2026-10-29)
+# - The root modules christman_ocr_shared.py (an OCR engine that is not
+#   sound) and crypto_bridge.py were removed from this repository, with their
+#   references here. websockets stays: voice_capture_client.py imports it
+#   inside the function that sends text to a relay.
 dependencies = [
     "numpy<2",
     "scipy",
@@ -63,9 +68,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Voicepack encryption (timbre/voicepack.py) and crypto_bridge.py.
-# crypto_bridge.py also needs a clone of Harvest-Now-Decrypt-Later at
-# ~/Harvest-Now-Decrypt-Later; that tree is not a pip package.
+# Voicepack encryption (timbre/voicepack.py).
 crypto = ["cryptography"]
 # Microphone capture (integration/voice_capture_client.capture_audio).
 capture = ["sounddevice"]
@@ -81,7 +84,7 @@ christman_voice_sdk = ["py.typed"]
 # The compiled DSP engine rides inside the package for wheel installs, if
 # scripts/build_dsp.py ran before the wheel was built; editable installs find
 # it in christman_sound/ where build_dsp.py writes it.
-christman_sound = ["*.so", "*.json"]  # *.json: alphavox_voice.json, AlphaVox's measured voice (2026-10-28)
+christman_sound = ["*.so", "*.json"]  # *.json: measured voice profiles shipped beside the code
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
