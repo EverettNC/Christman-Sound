@@ -101,7 +101,7 @@ class CompanionState(Enum):
 
 
 class Grounder:
-    """Grounding techniques for the AlphaVox voice surface."""
+    """Grounding techniques for a voice surface."""
 
     def __init__(self, companion_name: Optional[str] = None) -> None:
         """

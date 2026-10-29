@@ -8,8 +8,6 @@ Layer 3: Paralinguistics — see the note below; MOSTLY NOT IMPLEMENTED
 Layer 4: Discrete emotions — see the note below; RULE-BASED, NOT A CLASSIFIER
 Layer 5: ToneScore composite — weighted sum with chosen weights
 
-Used by: Giuseppe, Inferno, AlphaVox, Sierra
-
 WHAT CHANGED AND WHY
 --------------------
 
@@ -57,8 +55,8 @@ WHAT CHANGED AND WHY
 
 5. Duplicate class name with `tone_analyzer.py`. Renamed to
    `PraatToneAnalyzer`. (2026-10-28) tone_analyzer.py is gone and so is the
-   alias `MultiLayerToneAnalyzer`: nothing in Christman-Sound or AlphaVox
-   imported either. `ToneScoreCalculator` is defined only here now.
+   alias `MultiLayerToneAnalyzer`: nothing in Christman-Sound imported
+   either. `ToneScoreCalculator` is defined only here now.
 
 6. parselmouth was imported at module scope, so the whole module failed to
    import when it was absent. It is now optional.
@@ -76,8 +74,8 @@ WHAT CHANGED AND WHY
    instead of returning available=False; analyze_complete reports it as
    status "error" with the reason. The RMS contour and the WAV reader are the
    ones in voice_measure.py (this file's copies are gone; same arithmetic).
-   Nothing in Christman-Sound or AlphaVox calls this class; if a being does,
-   its Layer 4 hypotheses now see YIN's pitch, not Praat's.
+   A caller of this class gets Layer 4 hypotheses that see YIN's pitch, not
+   Praat's.
 """
 
 from __future__ import annotations

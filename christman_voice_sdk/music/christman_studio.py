@@ -35,7 +35,6 @@ Removed (quoted from main 8e0f0b0):
     process started in, and never wrote to it.
   - `program_beat()` gave every hit a random velocity. Velocity is now the
     caller's number.
-  - The log line said "BROCKSTON Music Studio" in the CHRISTMAN studio.
 
 What stays is what the code really does: build and keep the arrangement.
 `create_beat()` returns the arrangement, not a "mix".

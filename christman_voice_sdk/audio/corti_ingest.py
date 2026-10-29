@@ -10,15 +10,14 @@ Corti → Sound ingest.
 Corti is the ear. This file is the last inch: measurements cross. Client
 labels do not.
 
-`kind` (tick / grunt / groan / hiss / …) is exclusive to the Corti client,
-the same way stimming is exclusive to AlphaVox. This Sound goes into every
-being. A grunt label in the family stack would be a client word wearing a
-measurement's clothes. It is dropped at this boundary.
+`kind` (tick / grunt / groan / hiss / …) is exclusive to the Corti client.
+This package goes into every being. A grunt label in the package would be a
+client-side word wearing a measurement's clothes. It is dropped at this
+boundary.
 
 What crosses: duration, attack, decay, peak RMS, F0, F1/F2, ZCR, voiced,
 the tape. A missing lock stays None. A missing LPC peak (Corti writes 0)
-stays None. A dropped tail stays a dropped tail. AlphaVox cannot have holes
-filled in.
+stays None. A dropped tail stays a dropped tail. Holes are never filled in.
 
 Nothing here rewrites structural_affect or harm_frame.
 """

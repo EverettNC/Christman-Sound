@@ -82,7 +82,7 @@ class SimulationNotEnabled(RuntimeError):
 #: when unset. Checked at the moment a simulated result is built, not cached at
 #: import, so flipping it mid-process takes effect and cannot be locked on by
 #: import order.
-SIMULATION_ENV_VAR = "ALPHAVOX_SIMULATE_SPEECH"
+SIMULATION_ENV_VAR = "CHRISTMAN_SOUND_SIMULATE_SPEECH"
 
 
 def simulation_enabled() -> bool:
@@ -240,7 +240,7 @@ class RecognitionResult:
         A canned phrase for testing.
 
         Raises:
-            SimulationNotEnabled: unless ALPHAVOX_SIMULATE_SPEECH=1. Checked
+            SimulationNotEnabled: unless CHRISTMAN_SOUND_SIMULATE_SPEECH=1. Checked
                 here, at the point of construction, so no call path anywhere in
                 the stack can produce simulated output without the switch on.
         """

@@ -150,11 +150,11 @@ def test_missing_praat_is_unavailable_not_a_number(dsp, tmp_path, monkeypatch):
     assert "parselmouth" in r.notes[0]
 
 
-def test_alphavox_phrases_through_the_engine(dsp):
-    folder = os.environ.get("ALPHAVOX_PHRASES_DIR")
+def test_verified_phrases_through_the_engine(dsp):
+    folder = os.environ.get("CHRISTMAN_SOUND_TEST_RECORDINGS")
     if not folder:
-        pytest.skip("not run: needs ALPHAVOX_PHRASES_DIR (AlphaVox data/phrases/alphavox_verified, "
-                    "a fresh clone); runs on Everett's Mac")
+        pytest.skip("not run: needs CHRISTMAN_SOUND_TEST_RECORDINGS (a folder of the 26 verified "
+                    "recorded phrases); runs on Everett's Mac")
     files = sorted(Path(folder).glob("*.wav"))
     assert len(files) == 26
     engine = engine_without_classifier()

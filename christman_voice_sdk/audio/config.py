@@ -1,50 +1,20 @@
 """
 Configuration for Christman Voice SDK (ICanHearYou voice cloning system).
 
-Tier structure kept for compatibility with existing beings.
+Tier structure kept for compatibility with existing callers.
 EVERY feature is turned ON for EVERYONE. No paywalls. No restrictions.
 
-WHAT CHANGED AND WHY (2026-10-17) — OUTSIDE VOICES CUT
-------------------------------------------------------
-Everett's ruling: the AlphaVox rebuild cuts every outside speech engine.
-This file named outside synthesis models and carried their settings, though
-no code here loads F5-TTS or StyleTTS2 and GPT-SoVITS was never wired.
-Removed (quoted from main 99a6cce):
+NO OUTSIDE VOICES
+-----------------
+Every outside speech engine is cut. `synthesis_engines` is an empty list:
+the config names no outside synthesis model and claims no engine it does not
+have. The wav2vec2 model setting stays; that is the ear side, not a voice.
 
-        synthesis_engines=["gpt_sovits", "f5_tts", "style_tts2"]
-
-                "gpt_sovits_checkpoint": "models/gpt_sovits_v3.pth",
-                "f5_tts_checkpoint": "models/f5_tts.pth",
-                "style_tts2_checkpoint": "models/style_tts2.pth",
-
-            "synthesis": {
-                "max_length": 1000,
-                "temperature": 0.7,
-                "top_k": 50,
-                "top_p": 0.9,
-            },
-
-`synthesis_engines` is now an empty list: no engine is available until
-Everett's own synthesizer is wired, and the config does not claim one. The
-sampling block (temperature / top_k / top_p) was the outside models'
-generation setting; nothing in the package read it. The wav2vec2 model name
-stays — that is the ear side, not a voice.
-
-WHAT CHANGED AND WHY (2026-10-28, Lane 6) — NO FOLDERS INSIDE THE PACKAGE
--------------------------------------------------------------------------
-`Config.__init__` made models/, data/ and logs/ inside the installed package
-every time it ran, and voice_capture_client.py and christman_ocr_shared.py run
-it at import, so importing them wrote into site-packages (or the clone).
-Removed (quoted from main 1100f72):
-
-        self.models_dir = self.root_dir / "models"
-        self.data_dir = self.root_dir / "data"
-        self.logs_dir = self.root_dir / "logs"
-
-        for directory in (self.models_dir, self.data_dir, self.logs_dir):
-            directory.mkdir(parents=True, exist_ok=True)
-
-The three folders now live under the SDK's data folder,
+NO FOLDERS INSIDE THE PACKAGE
+-----------------------------
+voice_capture_client.py and christman_ocr_shared.py build a Config at import,
+so a Config that made folders would write into site-packages (or the clone).
+The three folders live under the SDK's data folder,
 `$CHRISTMAN_AI_HOME/voice_sdk` (default `~/.christman_ai/voice_sdk`, beside the
 logs, voice profiles and voice cache the SDK already keeps there). Building a
 Config creates nothing. A caller that needs one calls `config.ensure_dir(...)`,

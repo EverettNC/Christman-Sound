@@ -22,11 +22,11 @@ have broken it with no test to say so. Now:
 
 measure_voice_quality returns jitter_local_pct, shimmer_local_pct, hnr_db and
 cpp_db. VoiceProfile carries the same names. tests/test_timbre_modeler.py
-runs it on AlphaVox's verified phrases, so a renamed key fails a test.
+runs it on a folder of verified recorded phrases, so a renamed key fails a test.
 
 WHAT CHANGED AND WHY (2026-10-28) — REAL MEASUREMENTS, OR A REFUSAL
 --------------------------------------------------------------------
-Measured on AlphaVox's 26 recorded phrases (Reviewer A, 2026-10-28), this
+Measured on 26 recorded phrases (Reviewer A, 2026-10-28), this
 module returned fake numbers on every recording:
 
 1. It loaded the C library from christman_voice_sdk/ or the repository root,

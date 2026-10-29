@@ -499,7 +499,7 @@ class PresenceGuide:
 def get_presence_principles_for_sharing() -> Dict[str, Any]:
     """Export the principles as a serializable dict."""
     return {
-        "module": "alphavox.voice_stack.presence_guide",
+        "module": "christman_voice_sdk.utils.presence_guide",
         "purpose": "Guard the voice surface against toxic positivity / premature fixing",
         "core_lesson": (
             "Not every problem needs solving. Not every pain needs fixing. "

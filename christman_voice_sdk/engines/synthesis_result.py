@@ -1,44 +1,21 @@
 """
 Synthesis result contract — the neutral home for what every speaking path returns.
 
-WHAT CHANGED AND WHY (2026-10-17)
----------------------------------
-Everett's ruling: the AlphaVox rebuild cuts every outside speech engine. The
-being speaks in its own voice through Christman-Sound, or it does not speak
-and says so with a typed failure.
+Every outside speech engine is cut. A caller speaks in its own voice through
+Christman-Sound, or it does not speak and says so with a typed failure.
 
-`SynthesisResult` and `DegradedSynthesisError` lived in
-`engines/base_synthesizer.py`, the abstract base of the Coqui XTTS and
-GPT-SoVITS engines. They were imported elsewhere:
+`SynthesisResult` is what every speaking path returns.
 
-    voice_synthesis.py:            from ..engines.base_synthesizer import DegradedSynthesisError
-    voice_synthesis_orchestrator.py: from ..engines.base_synthesizer import SynthesisResult  # noqa: F401
+`SynthesisUnavailable` is the one typed failure a caller raises when there is
+no voice to speak with. It carries `available = False` and the real reason,
+so a caller can show the client a plain notice. It is never a plausible
+default and never silence pretending to be success.
 
-so they move here first, unchanged, before base_synthesizer.py goes to
-quarantine/2026-10_outside_voices/ with the engines it served. The class
-bodies below are copied from base_synthesizer.py as they stood on main
-99a6cce; nothing in them was altered.
-
-`SynthesisUnavailable` is new. It is the one typed failure every caller that
-used to reach an outside engine now raises. It carries `available = False`
-and the real reason, so a caller can show the client a plain notice. It is
-never a plausible default and never silence pretending to be success.
-
-(2026-10-18) THE SOVEREIGN MOUTH SAVES WITHOUT NUMPY OR SOUNDFILE
------------------------------------------------------------------
-`SpeechSynthesisEngine._render` now returns the samples christman_synth made,
-as the `array('f')` that christman_sound.synth hands back. Two lines here
-would have dragged numpy and soundfile into that path, against Everett's
-ruling that the voice is C plus the Python standard library:
-
-    import numpy as np                       (at the top of this module)
-    import soundfile as sf; sf.write(...)    (in SynthesisResult.save)
-
-So numpy is now only named for type checkers, and `save()` writes an
-`array.array` with christman_sound.synth.write_wav (stdlib `wave`, 16-bit
-PCM, refuses to clip). For any other audio object — a numpy array from an
-older caller — `save()` runs exactly the lines it ran before, soundfile and
-all. Nothing else in the class changed.
+`save()` writes an `array.array` (what christman_sound.synth hands back) with
+christman_sound.synth.write_wav: stdlib `wave`, 16-bit PCM, refuses to clip.
+The voice is C plus the Python standard library, so numpy is named for type
+checkers only. Any other audio object (a numpy array from an older caller)
+is written with soundfile, as before.
 """
 
 from __future__ import annotations

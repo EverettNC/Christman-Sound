@@ -59,7 +59,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -284,26 +284,29 @@ class EmotionEmbedder:
 
     # -- Integrations ---------------------------------------------------------
 
-    #: Sierra's vocabulary -> this module's. EXPLICIT. An unmapped name raises.
-    SIERRA_MAP: Dict[str, EmotionalState] = {
-        "grief": EmotionalState.SAD,
-        "trauma": EmotionalState.FEARFUL,
-        "healing": EmotionalState.HAPPY,
-        "anger": EmotionalState.ANGRY,
-        "neutral": EmotionalState.NEUTRAL,
-    }
-
-    def from_sierra_signal(
-        self, sierra_emotion: str, sierra_intensity: float
+    def from_signal(
+        self,
+        name: str,
+        intensity: float,
+        mapping: Mapping[str, Union[EmotionalState, str]],
     ) -> EmotionEmbedding:
-        """Convert a Sierra signal. Unmapped names raise rather than neutral."""
-        state = self.SIERRA_MAP.get(str(sierra_emotion).lower())
-        if state is None:
+        """
+        Convert a caller's emotion signal through the caller's own vocabulary.
+
+        `mapping` is the caller's: its names (matched lower-case) to this
+        module's EmotionalState, or to an EmotionalState value string. The
+        package carries no caller's vocabulary. An unmapped name raises
+        UnknownEmotion rather than falling to neutral.
+        """
+        key = str(name).lower()
+        lowered = {str(k).lower(): v for k, v in mapping.items()}
+        if key not in lowered:
             raise UnknownEmotion(
-                f"Sierra emotion {sierra_emotion!r} has no mapping. Known: "
-                f"{sorted(self.SIERRA_MAP)}."
+                f"emotion {name!r} has no mapping. Known: {sorted(lowered)}."
             )
-        return self.embed_emotion(state.value, sierra_intensity)
+        target = lowered[key]
+        state = target.value if isinstance(target, EmotionalState) else str(target)
+        return self.embed_emotion(state, intensity)
 
     #: Classifier output -> this module's states. Includes the SHORT forms the
     #: real model emits ('neu','hap','ang','sad') — see emotion_labels.py. The

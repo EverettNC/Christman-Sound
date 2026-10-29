@@ -2,14 +2,14 @@
 © The Christman AI Project | Luma Cognify AI. All rights reserved. Patent pending.
 No license — express or implied — is granted without prior written permission.
 
-AlphaVox Voice Stack — Written-Tone Classifier.
+Christman Voice SDK — Written-Tone Classifier.
 
 Distinguishes *aggressive* from *incisive* writing, and offers a rewrite that
 strips the attack without softening the message.
 
-Why this matters for AlphaVox: AAC users frequently want their voice to land
-*firmly*, not politely-by-default. This exists so the surface can ask "is this
-firm-and-clear, or is it venting at someone?" and the USER decides.
+Why this matters: AAC clients frequently want their voice to land *firmly*,
+not politely-by-default. This exists so the surface can ask "is this
+firm-and-clear, or is it venting at someone?" and the CLIENT decides.
 
 NON-CLAIMS (Cardinal Rule #13: no fabricated engines):
 

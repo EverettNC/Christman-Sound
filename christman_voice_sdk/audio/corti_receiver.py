@@ -14,7 +14,7 @@ corti_ingest strips the client `kind` at that boundary.
 
 What this is:
   - A localhost-only HTTP receiver. It binds 127.0.0.1 and nothing else.
-    Audio of a vulnerable user does not leave the device; a bind address
+    Audio of a vulnerable client does not leave the device; a bind address
     is how that promise is kept, not a comment.
   - One POST route. The body is one closed Corti VocalEvent card
     (durationMs, peakRms, f0, tape, …).
@@ -53,15 +53,13 @@ from .hearing import Hearing, HearingTurn
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-# Corti-in-the-being (AlphaVox launcher, port 5487). 8080 is the lab
-# (THEATHANOR) — it does not post cards here. Extra origins via
-# CORTI_ALLOWED_ORIGINS, comma-separated.
-DEFAULT_ALLOWED_ORIGINS = (
-    "http://localhost:5487",
-    "http://127.0.0.1:5487",
-)
+# The package knows no caller's port, so it allows no browser origin by
+# default. The caller names the origins that post cards here in
+# CORTI_ALLOWED_ORIGINS, comma-separated. A request with no Origin header
+# (not from a browser) is not an origin question and is accepted.
+DEFAULT_ALLOWED_ORIGINS: Tuple[str, ...] = ()
 
-DEFAULT_PORT = 5486  # AlphaVox acoustic keys live on 5485; the card lives next door.
+DEFAULT_PORT = 5486  # This receiver's own port. CHRISTMAN_SOUND_PORT or port= replaces it.
 BIND_HOST = "127.0.0.1"  # Not configurable. Offline-first is a bind address.
 MAX_BODY_BYTES = 2 * 1024 * 1024  # A 360-frame tape is ~20 KB. 2 MB is already generous.
 EVENT_PATH = "/api/sound/corti-event"
@@ -250,7 +248,7 @@ def start_in_thread(
     hearing: Optional[Hearing] = None,
     on_turn: Optional[Callable[[HearingTurn], None]] = None,
 ) -> Tuple[ThreadingHTTPServer, CortiReceiver, threading.Thread]:
-    """For embedding in a being or a test. Caller owns server.shutdown()."""
+    """For embedding in a caller or a test. Caller owns server.shutdown()."""
     server, receiver = create_receiver(port=port, hearing=hearing, on_turn=on_turn)
     thread = threading.Thread(
         target=server.serve_forever, name="corti-receiver", daemon=True
@@ -266,7 +264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     host, port = server.server_address[0], server.server_address[1]
     logger.info("Corti wire listening on http://%s:%d%s", host, port, EVENT_PATH)
     logger.info("health: http://%s:%d%s", host, port, HEALTH_PATH)
-    logger.info("allowed browser origins: %s", ", ".join(allowed_origins()))
+    logger.info("allowed browser origins: %s", ", ".join(allowed_origins()) or "none (set CORTI_ALLOWED_ORIGINS)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
