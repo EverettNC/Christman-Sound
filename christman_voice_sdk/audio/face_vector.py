@@ -7,6 +7,12 @@
 """
 The 8-dim face vector. Christman-Sound -> Soul Mirror.
 
+Everett, 2026-10-29 (ruling AC): this is a reading of the carbon (the client
+and the people the client speaks of), carried as data with whose feeling it
+is and the clauses it came from. It is not a being's face moving with a
+feeling, and no avatar or face-rendering work is done in this package until
+"avatars get better".
+
 This replaces the stub `Carbon` in `core/fusion_engine.py`, which produced the
 vector driving every visual state — FACS units, breath physics, the manifold,
 the mesh — out of six keyword checks:
@@ -288,7 +294,7 @@ def build_face_vector(
                                                      Attribution.IMPERSONAL):
         notes.append(
             f"affect is attributed {affect.attribution.value} — this is not the "
-            "speaker's own state and must not drive their face"
+            "speaker's own state and must not be read as theirs"
         )
 
     # -- Voice side: arousal only ---------------------------------------------

@@ -62,7 +62,7 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `structural_affect.py` — Clause-level affect. Structure decides
 - `harm_frame.py` — Who did what to whom. Grief is not crisis
 - `fusion_engine.py` — Carbon and silicon signals fused: decide, or unknown
-- `face_reading.py` — What Sound hands the face: structure and arousal, no emotion names
+- `face_reading.py` — A reading of the carbon (the client and the people they speak of): whose feeling it is, the clause that moved it, and arousal; data only, no emotion names, no face rendered
 - `face_vector.py` — The 8-dim face vector Sound hands the Soul Mirror, with its measured mask and the clauses it came from
 - `body_signals.py` — The body-signal input contract
 - `speech_recognition_engine.py` — Local speech recognition through `christman_sound.ear`. Audio never leaves the machine
