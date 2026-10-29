@@ -70,19 +70,12 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-try:
-    from structural_affect import NEGATORS, SCOPE_BREAKERS
-except ImportError:  # keep this module usable standalone
-    NEGATORS = frozenset({
-        "not", "no", "never", "none", "nothing", "nobody", "cannot", "without",
-        "hardly", "barely", "don't", "dont", "doesn't", "doesnt", "didn't",
-        "didnt", "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt",
-        "won't", "wont", "ain't", "aint",
-    })
-    SCOPE_BREAKERS = frozenset({
-        "but", "however", "although", "though", "yet", "because", "since",
-        "while", "and", "or", "so", "then",
-    })
+# One negation set for the whole package. 2026-10-29: this read a top-level
+# `structural_affect` module that exists nowhere, so the ImportError branch
+# always ran and a private copy of NEGATORS (missing "nobody", "neither",
+# "nor", "hardly", "barely", "ain't" in places) silently diverged from the
+# reader's own.
+from ..audio.structural_affect import NEGATORS, SCOPE_BREAKERS
 
 _WORD = re.compile(r"[a-z']+")
 

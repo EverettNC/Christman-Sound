@@ -48,7 +48,8 @@ original implementation is gone, and here is what was wrong with it:
    That capitalizes Every Word Over Three Letters In The Sentence. It was meant
    to remove ALL-CAPS shouting; it retitled the whole message. It also carried
    a hardcoded phrase table ("Your code is garbage" -> "This code has issues")
-   that only fired on those exact strings.
+   that only fired on those exact strings. 2026-10-29: removed entirely —
+   nothing in this package rewrites a client's words.
 
 5. It returned `"score": 50` for the neutral case — a number with no
    derivation, sitting in the same field as computed scores.
@@ -60,16 +61,16 @@ import warnings
 from typing import Any, Dict
 
 from .written_tone import (
-    RewriteProposal,
     ToneBreakdown,
     ToneCategory,
     analyze_tone_breakdown as _breakdown,
-    propose_rewrite,
 )
 
+# 2026-10-29: make_incisive and propose_rewrite are removed. They changed a
+# client's words. Nothing in this package changes what a person said.
 __all__ = [
-    "classify_written_tone", "analyze_tone_breakdown", "make_incisive",
-    "propose_rewrite", "ToneCategory", "ToneBreakdown", "RewriteProposal",
+    "classify_written_tone", "analyze_tone_breakdown",
+    "ToneCategory", "ToneBreakdown",
 ]
 
 _DEPRECATION = (
@@ -125,22 +126,6 @@ def analyze_tone_breakdown(text: str) -> Dict[str, Any]:
     warnings.warn(_DEPRECATION, DeprecationWarning, stacklevel=2)
     return _breakdown(text).to_dict()
 
-
-def make_incisive(text: str, redact_profanity: bool = False) -> str:
-    """
-    DEPRECATED, twice over.
-
-    Superseded by `written_tone.propose_rewrite`, which returns the user's own
-    words unless the rewrite is explicitly accepted. This returns edited text
-    with no consent step.
-    """
-    warnings.warn(
-        _DEPRECATION + " And prefer propose_rewrite(): this returns edited "
-        "text with no record that it was edited.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return propose_rewrite(text, redact_profanity=redact_profanity).proposed
 
 
 # ==============================================================================
