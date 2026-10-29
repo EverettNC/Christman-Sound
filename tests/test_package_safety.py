@@ -10,8 +10,8 @@ Three safety fixes, each proven against the real code (Lane 6, 2026-10-28).
    symlinks are refused before anything is extracted.
 2. audio/config.py: building a Config creates no folder, inside the package
    or anywhere. Folders are made under the SDK's data folder when asked.
-3. audio/word_ear_receiver.py: no default port, and never AlphaVox's
-   launcher port 5487 or the other ports the voice system already holds.
+3. audio/word_ear_receiver.py: no default port, never the package's own
+   corti_receiver port, and never a port the caller names as held.
 """
 
 from __future__ import annotations
@@ -184,15 +184,37 @@ def test_word_ear_has_no_default_port(monkeypatch):
         wer.resolve_port(None)
 
 
-@pytest.mark.parametrize("port", [5485, 5486, 5487, 5497, 5173])
-def test_word_ear_refuses_ports_the_voice_system_holds(port, monkeypatch):
+def test_word_ear_refuses_the_package_own_corti_port(monkeypatch):
+    from christman_voice_sdk.audio import corti_receiver as cr
     from christman_voice_sdk.audio import word_ear_receiver as wer
 
-    with pytest.raises(ValueError, match="is taken by"):
-        wer.resolve_port(port)
-    monkeypatch.setenv(wer.PORT_ENV, str(port))
-    with pytest.raises(ValueError, match="is taken by"):
+    monkeypatch.delenv(wer.REFUSED_PORTS_ENV, raising=False)
+    assert set(wer.PACKAGE_PORTS) == {cr.DEFAULT_PORT}
+    with pytest.raises(ValueError, match="is taken by corti_receiver"):
+        wer.resolve_port(cr.DEFAULT_PORT)
+    monkeypatch.setenv(wer.PORT_ENV, str(cr.DEFAULT_PORT))
+    with pytest.raises(ValueError, match="is taken by corti_receiver"):
         wer.resolve_port(None)
+
+
+def test_word_ear_refuses_the_ports_the_caller_names(monkeypatch):
+    from christman_voice_sdk.audio import word_ear_receiver as wer
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        held = s.getsockname()[1]
+    monkeypatch.delenv(wer.REFUSED_PORTS_ENV, raising=False)
+    assert wer.resolve_port(held) == held  # the package itself does not hold it
+    with pytest.raises(ValueError, match=r"is taken by the caller \(refused_ports=\)"):
+        wer.resolve_port(held, refused=[held])
+    monkeypatch.setenv(wer.REFUSED_PORTS_ENV, f" {held} ,")
+    with pytest.raises(ValueError, match="is taken by the caller"):
+        wer.resolve_port(held)
+    with pytest.raises(ValueError, match="is taken by the caller"):
+        wer.create_receiver(port=held)
+    monkeypatch.setenv(wer.REFUSED_PORTS_ENV, "not-a-port")
+    with pytest.raises(ValueError, match="not a port number"):
+        wer.resolve_port(held)
 
 
 def test_word_ear_takes_the_port_it_is_given(monkeypatch):
@@ -204,7 +226,8 @@ def test_word_ear_takes_the_port_it_is_given(monkeypatch):
     with pytest.raises(ValueError, match="not a port number"):
         wer.resolve_port(70000)
 
-    with socket.socket() as s:  # a free loopback port, not one of the reserved ones
+    monkeypatch.delenv(wer.REFUSED_PORTS_ENV, raising=False)
+    with socket.socket() as s:  # a free loopback port, not one of the refused ones
         s.bind(("127.0.0.1", 0))
         free = s.getsockname()[1]
     monkeypatch.setenv(wer.PORT_ENV, str(free))
@@ -217,7 +240,7 @@ def test_word_ear_takes_the_port_it_is_given(monkeypatch):
     server, _receiver = wer.create_receiver(port=0, engine=NoEngine())
     try:
         host, bound = server.server_address[:2]
-        assert host == "127.0.0.1" and bound not in wer.RESERVED_PORTS and bound != 0
+        assert host == "127.0.0.1" and bound not in wer.refused_ports() and bound != 0
     finally:
         server.server_close()
 

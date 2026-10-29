@@ -7,9 +7,9 @@ christman_voice_sdk.tone.voice_measure: the one pitch tracker (christman_yin
 through christman_sound.dsp) and the one jitter, shimmer and HNR (Praat).
 
 Every measurement is checked against a signal whose answer is known before it
-is measured, and against AlphaVox's own 26 verified phrases (AlphaVox's voice,
-24 kHz; never Everett's). The phrase checks need ALPHAVOX_PHRASES_DIR pointing
-at a fresh clone's data/phrases/alphavox_verified; without it they are NOT RUN.
+is measured, and against 26 verified recorded phrases (a being's voice, 24 kHz;
+never Everett's). The phrase checks need CHRISTMAN_SOUND_TEST_RECORDINGS pointing at
+that folder; without it they are NOT RUN.
 """
 
 from __future__ import annotations
@@ -266,22 +266,22 @@ def test_tone_analyzer_is_gone_and_each_class_name_is_defined_once():
     }, seen
 
 
-# ------------------------------------------------ AlphaVox's verified phrases
+# ------------------------------------------------------ verified phrases
 
 
 def _phrases():
-    folder = os.environ.get("ALPHAVOX_PHRASES_DIR")
+    folder = os.environ.get("CHRISTMAN_SOUND_TEST_RECORDINGS")
     if not folder:
-        pytest.skip("not run: needs ALPHAVOX_PHRASES_DIR (AlphaVox data/phrases/alphavox_verified, "
-                    "a fresh clone); runs on Everett's Mac")
+        pytest.skip("not run: needs CHRISTMAN_SOUND_TEST_RECORDINGS (a folder of the 26 verified "
+                    "recorded phrases); runs on Everett's Mac")
     files = sorted(Path(folder).glob("*.wav"))
-    assert len(files) == 26, f"{folder} holds {len(files)} phrases, not AlphaVox's 26"
+    assert len(files) == 26, f"{folder} holds {len(files)} phrases, not 26"
     return files
 
 
-def test_alphavox_phrases_pitch_matches_the_measured_profile(dsp):
+def test_verified_phrases_pitch_matches_the_measured_profile(dsp):
     """
-    alphavox_voice.json's F0 median, 149.3 Hz over 932 frames, was measured
+    The profile's F0 median, 149.3 Hz over 932 frames, was measured
     with christman_yin through christman_sound.formants (10 kHz, loud voiced
     frames inside Vosk's words). Read here at the files' own 24 kHz over every
     voiced frame, the median lands within 1 Hz of it: 149.1 Hz over 940.
@@ -300,7 +300,7 @@ def test_alphavox_phrases_pitch_matches_the_measured_profile(dsp):
     assert 900 < len(voiced) < 980
 
 
-def test_alphavox_phrases_voice_quality_is_praats_reading():
+def test_verified_phrases_voice_quality_is_praats_reading():
     """
     sdk-review B (2026-10-28) measured these 26 files with Praat and reported
     jitter 1.97 to 5.94 %, shimmer 6.73 to 16.83 %, HNR 4.08 to 12.73 dB. The

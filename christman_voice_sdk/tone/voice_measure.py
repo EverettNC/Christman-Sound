@@ -50,15 +50,15 @@ frame, Praat's "undefined") is None and the reason says so.
 
 Chosen values (each a starting value, held until client data replaces it):
   F0 range 50-500 Hz, YIN threshold 0.15, 40 ms frames every 10 ms. The same
-      values christman_sound/formants.py uses to read AlphaVox's recordings
-      for alphavox_voice.json, so the two read pitch the same way. 40 ms is
+      values christman_sound/formants.py uses to read recordings for a voice
+      profile, so the two read pitch the same way. 40 ms is
       the shortest frame in which YIN can see a 50 Hz period twice.
   Praat: period floor 75 Hz and ceiling 600 Hz, shortest period 0.1 ms,
       longest 20 ms, maximum period factor 1.3, maximum amplitude factor
       1.6; harmonicity 10 ms step, 75 Hz floor, silence threshold 0.1,
       1.0 period per window. These are Praat's own default arguments for
-      these commands, and the settings sdk-review B measured AlphaVox's
-      recordings with (its numbers are reproduced exactly by this file).
+      these commands, and the settings sdk-review B measured its recordings
+      with (its numbers are reproduced exactly by this file).
 """
 
 from __future__ import annotations

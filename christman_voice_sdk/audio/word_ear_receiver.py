@@ -22,7 +22,7 @@ What this is:
 
 What this is not:
   - Not Corti. No VocalEvent card is read here.
-  - Not a cloud mill. There is no xAI path and no Whisper path.
+  - Not a cloud mill. There is no outside recognizer path.
   - Not a decoder for webm/mp3. The mic already writes WAV. If the
     body is not WAV, the turn says so instead of pretending.
 
@@ -37,14 +37,20 @@ Failure behaviour (Rule 6):
 Nothing is constructed at import. Build a receiver with `create_receiver`
 or run `python3 -m christman_voice_sdk.audio.word_ear_receiver --port N`.
 
-PORTS (2026-10-28, Lane 6)
-The default was 5487, "next door" to Corti's 5486. But 5487 is AlphaVox's
-launcher, the origin Corti-in-the-being posts from (corti_receiver.py names
-it), so starting the word-ear with no port took the launcher's port. There is
-no default now. The port comes from the caller: `create_receiver(port=...)`,
-`--port` on the command line, or CHRISTMAN_WORD_EAR_PORT. With none of them,
-it raises and says so. Ports another part of the voice system already uses are
-refused by name (RESERVED_PORTS). Port 0 asks the system for a free port.
+PORTS
+The package knows no caller's ports, so the word-ear has no default port.
+The port comes from the caller: `create_receiver(port=...)`, `--port` on the
+command line, or CHRISTMAN_WORD_EAR_PORT. With none of them, it raises and
+says so. The one port the package itself holds, corti_receiver's own
+(PACKAGE_PORTS), is refused by name. Ports the caller's system already holds
+are the caller's to name: `refused_ports=` on resolve_port / create_receiver,
+`--refuse` on the command line, or CHRISTMAN_WORD_EAR_REFUSED_PORTS
+(comma-separated). Port 0 asks the system for a free port.
+
+ORIGINS
+No browser origin is allowed by default; the package knows no caller's front
+end. The caller names them in WORD_EAR_ALLOWED_ORIGINS, comma-separated. A
+request with no Origin header (not from a browser) is accepted.
 """
 
 from __future__ import annotations
@@ -59,7 +65,7 @@ import wave
 from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs
 
 from .recognition_result import RecognitionResult, RecognitionStatus
@@ -68,23 +74,13 @@ from .speech_recognition_engine import SpeechRecognitionEngine
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-DEFAULT_ALLOWED_ORIGINS = (
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-)
+DEFAULT_ALLOWED_ORIGINS: Tuple[str, ...] = ()
 
-#: Ports already taken elsewhere in the voice system. The word-ear never binds them.
-RESERVED_PORTS = {
-    5173: "a browser front end that posts here (see DEFAULT_ALLOWED_ORIGINS)",
-    5485: "AlphaVox's acoustic keys",
-    5486: "corti_receiver (Corti cards)",
-    5487: "the AlphaVox launcher (Corti-in-the-being posts from it)",
-    5497: "in use on Everett's Mac, not to be taken (2026-10-28)",
+#: The one port this package holds itself: corti_receiver's own default.
+PACKAGE_PORTS = {
+    5486: "corti_receiver, this package's card receiver",
 }
+REFUSED_PORTS_ENV = "CHRISTMAN_WORD_EAR_REFUSED_PORTS"
 PORT_ENV = "CHRISTMAN_WORD_EAR_PORT"
 BIND_HOST = "127.0.0.1"  # Not configurable. Offline-first is a bind address.
 MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -328,19 +324,44 @@ def _make_handler(receiver: WordEarReceiver) -> type:
     return Handler
 
 
-def resolve_port(port: Optional[int] = None) -> int:
+def refused_ports(extra: Optional[Iterable[int]] = None) -> Dict[int, str]:
+    """
+    Every port the word-ear will not bind: the package's own (PACKAGE_PORTS),
+    the ones the caller passes, and the ones in CHRISTMAN_WORD_EAR_REFUSED_PORTS.
+    """
+    refused: Dict[int, str] = dict(PACKAGE_PORTS)
+    raw = os.environ.get(REFUSED_PORTS_ENV, "")
+    for item in (p.strip() for p in raw.split(",")):
+        if not item:
+            continue
+        try:
+            refused.setdefault(int(item), f"the caller ({REFUSED_PORTS_ENV})")
+        except ValueError:
+            raise ValueError(f"{REFUSED_PORTS_ENV}={raw!r} holds {item!r}, not a port number") from None
+    for item in extra or ():
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError(f"refused port {item!r} is not a port number")
+        refused.setdefault(item, "the caller (refused_ports=)")
+    return refused
+
+
+def resolve_port(
+    port: Optional[int] = None,
+    refused: Optional[Iterable[int]] = None,
+) -> int:
     """
     The port to bind: the one passed, else CHRISTMAN_WORD_EAR_PORT.
 
     Raises ValueError when neither is given, when it is not a port number, or
-    when it is one of RESERVED_PORTS (named with what holds it).
+    when it is a refused port (named with what holds it). See refused_ports().
     """
+    held = refused_ports(refused)
     if port is None:
         raw = os.environ.get(PORT_ENV)
         if raw is None or not raw.strip():
             raise ValueError(
                 "word-ear has no default port: pass port=, --port, or set "
-                f"{PORT_ENV} (it may not be one of {sorted(RESERVED_PORTS)})"
+                f"{PORT_ENV} (it may not be one of {sorted(held)})"
             )
         try:
             port = int(raw)
@@ -348,9 +369,9 @@ def resolve_port(port: Optional[int] = None) -> int:
             raise ValueError(f"{PORT_ENV}={raw!r} is not a port number") from None
     if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
         raise ValueError(f"word-ear port {port!r} is not a port number")
-    if port in RESERVED_PORTS:
+    if port in held:
         raise ValueError(
-            f"word-ear port {port} is taken by {RESERVED_PORTS[port]}; choose another"
+            f"word-ear port {port} is taken by {held[port]}; choose another"
         )
     return port
 
@@ -358,8 +379,9 @@ def resolve_port(port: Optional[int] = None) -> int:
 def create_receiver(
     port: Optional[int] = None,
     engine: Optional[SpeechRecognitionEngine] = None,
+    refused: Optional[Iterable[int]] = None,
 ) -> Tuple[ThreadingHTTPServer, WordEarReceiver]:
-    port = resolve_port(port)
+    port = resolve_port(port, refused=refused)
     receiver = WordEarReceiver(engine=engine)
     server = ThreadingHTTPServer((BIND_HOST, port), _make_handler(receiver))
     return server, receiver
@@ -368,8 +390,9 @@ def create_receiver(
 def start_in_thread(
     port: Optional[int] = None,
     engine: Optional[SpeechRecognitionEngine] = None,
+    refused: Optional[Iterable[int]] = None,
 ) -> Tuple[ThreadingHTTPServer, WordEarReceiver, threading.Thread]:
-    server, receiver = create_receiver(port=port, engine=engine)
+    server, receiver = create_receiver(port=port, engine=engine, refused=refused)
     thread = threading.Thread(
         target=server.serve_forever, name="word-ear-receiver", daemon=True
     )
@@ -383,9 +406,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Word-ear receiver (127.0.0.1 only)")
     parser.add_argument("--port", type=int, default=None,
                         help=f"port to bind; else {PORT_ENV}. There is no default.")
+    parser.add_argument("--refuse", type=int, action="append", default=[],
+                        help=f"a port the caller's system holds; repeatable. Also {REFUSED_PORTS_ENV}.")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server, receiver = create_receiver(port=args.port)
+    server, receiver = create_receiver(port=args.port, refused=args.refuse)
     host, port = server.server_address[0], server.server_address[1]
     logger.info("Word-ear listening on http://%s:%d%s", host, port, EVENT_PATH)
     logger.info("health: http://%s:%d%s", host, port, HEALTH_PATH)
@@ -408,7 +433,9 @@ __all__ = [
     "main",
     "EVENT_PATH",
     "HEALTH_PATH",
-    "RESERVED_PORTS",
+    "PACKAGE_PORTS",
+    "REFUSED_PORTS_ENV",
+    "refused_ports",
     "resolve_port",
     "pcm_from_wav",
 ]

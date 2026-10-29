@@ -98,8 +98,10 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 #: Set to "1" to keep a copy of processed audio on disk. OFF by default: these
-#: are recordings of a user's voice.
-AUDIO_CACHE_ENV = "ALPHAVOX_CACHE_AUDIO"
+#: are recordings of a client's voice.
+AUDIO_CACHE_ENV = "CHRISTMAN_SOUND_CACHE_AUDIO"
+#: Where the copies go when AUDIO_CACHE_ENV is on. Default ~/.christman_ai/audio_cache.
+AUDIO_CACHE_DIR_ENV = "CHRISTMAN_SOUND_AUDIO_CACHE_DIR"
 
 MAX_RECENT_PHRASES = 5
 LOOP_INTERVAL_SECONDS = 0.1
@@ -291,8 +293,8 @@ class EnhancedSpeechRecognition:
         try:
             if self._audio_cache_dir is None:
                 base = os.getenv(
-                    "ALPHAVOX_AUDIO_CACHE_DIR",
-                    os.path.join(os.path.expanduser("~"), ".alphavox", "audio_cache"),
+                    AUDIO_CACHE_DIR_ENV,
+                    os.path.join(os.path.expanduser("~"), ".christman_ai", "audio_cache"),
                 )
                 os.makedirs(base, mode=0o700, exist_ok=True)
                 self._audio_cache_dir = base

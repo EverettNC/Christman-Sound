@@ -5,10 +5,10 @@
 # ==============================================================================
 
 """
-Live acoustic key from the Corti client into AlphaVox.
+Live acoustic key from the Corti client into the caller.
 
 This module does NOT measure F0, attack, or porosity. That measurement
-already happened on the metal in Corti's alphavox-router. What arrives
+already happened on the metal in the Corti client. What arrives
 here is a KEY. This file looks the key up. It does not re-guess it.
 
 grunt_distress is not guessed here. The client measured elevation, attack,

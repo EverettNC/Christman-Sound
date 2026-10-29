@@ -1,7 +1,7 @@
 """
 timbre_modeler measures a voice through the SDK's one measuring path
 (christman_voice_sdk.tone.voice_measure and christman_sound.formants), under
-the same key names, on AlphaVox's own verified phrases (AlphaVox's voice;
+the same key names, on a folder of verified recorded phrases (a being's voice,
 never Everett's).
 
 Why this file exists: Lane 2 renamed Praat's keys to jitter_local_pct,
@@ -9,8 +9,8 @@ shimmer_local_pct and hnr_db, and nothing ran timbre_modeler on a recording,
 so a key it read could vanish with the suite still green. These tests run it
 on real recordings, so a renamed or dropped key fails here.
 
-The phrase tests need ALPHAVOX_PHRASES_DIR pointing at AlphaVox's
-data/phrases/alphavox_verified; without it they are NOT RUN, and say so.
+The phrase tests need CHRISTMAN_SOUND_TEST_RECORDINGS pointing at that folder of
+verified phrases; without it they are NOT RUN, and say so.
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ MODULE = ROOT / "christman_voice_sdk" / "timbre" / "timbre_modeler.py"
 
 
 def _phrases():
-    folder = os.environ.get("ALPHAVOX_PHRASES_DIR")
+    folder = os.environ.get("CHRISTMAN_SOUND_TEST_RECORDINGS")
     if not folder or not Path(folder).is_dir():
-        pytest.skip("not run: needs ALPHAVOX_PHRASES_DIR (AlphaVox data/phrases/alphavox_verified, "
-                    "AlphaVox's 26 verified phrases)")
+        pytest.skip("not run: needs CHRISTMAN_SOUND_TEST_RECORDINGS (a folder of the 26 verified "
+                    "recorded phrases)")
     wavs = sorted(Path(folder).glob("*.wav"))
     if not wavs:
         pytest.skip(f"not run: no .wav in {folder}")

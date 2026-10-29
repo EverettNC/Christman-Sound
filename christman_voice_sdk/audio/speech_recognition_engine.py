@@ -275,7 +275,7 @@ class SpeechRecognitionEngine:
     Modes:
         microphone — live capture from the selected input device (default)
         file       — recognize a configured test file once (device_index == -1)
-        simulate   — canned phrases; requires ALPHAVOX_SIMULATE_SPEECH=1
+        simulate   — canned phrases; requires CHRISTMAN_SOUND_SIMULATE_SPEECH=1
 
     Callbacks receive a single RecognitionResult. The old three-argument
     (text, confidence, metadata) signature let a failure arrive shaped exactly
@@ -295,14 +295,14 @@ class SpeechRecognitionEngine:
             backend: A local ASR backend. When None, one is built from
                 VOSK_MODEL_PATH; if that fails the engine is constructed in an
                 unavailable state that reports itself rather than pretending.
-            simulate: Canned-phrase mode. Requires ALPHAVOX_SIMULATE_SPEECH=1.
+            simulate: Canned-phrase mode. Requires CHRISTMAN_SOUND_SIMULATE_SPEECH=1.
 
         Raises:
             RuntimeError: if simulate=True without the environment opt-in.
         """
         if simulate and not simulation_enabled():
             raise RuntimeError(
-                "simulate=True requires ALPHAVOX_SIMULATE_SPEECH=1. Simulated "
+                "simulate=True requires CHRISTMAN_SOUND_SIMULATE_SPEECH=1. Simulated "
                 "recognition is never enabled implicitly."
             )
 

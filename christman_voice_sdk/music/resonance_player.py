@@ -27,8 +27,8 @@ default is the engine and the default is the only path that ships.
 
 WHAT THIS PLAYER DOES
 ---------------------
-It plays audio someone else chose — the caregiver's selection, or what
-AlphaVox has measured calming this client before. It does not choose the
+It plays audio someone else chose — the caregiver's selection, or what the
+caller has measured calming this client before. It does not choose the
 sound and it does not decide when to play.
 
 Every buffer goes through `limit()` before it can reach the engine:

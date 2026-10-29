@@ -137,8 +137,8 @@ def test_backend_crash_is_counted_not_silent():
 def test_ws_only_to_loopback():
     assert require_local_or_tls("ws://localhost:8000/ws") == "ws://localhost:8000/ws"
     assert require_local_or_tls("ws://127.0.0.1:8000/ws") == "ws://127.0.0.1:8000/ws"
-    assert require_local_or_tls("wss://derek.example.net/ws") == "wss://derek.example.net/ws"
-    for bad in ("ws://derek.example.net/ws", "ws://10.0.0.5:8000", "http://localhost", "localhost:8000"):
+    assert require_local_or_tls("wss://voice.example.net/ws") == "wss://voice.example.net/ws"
+    for bad in ("ws://voice.example.net/ws", "ws://10.0.0.5:8000", "http://localhost", "localhost:8000"):
         try:
             require_local_or_tls(bad)
         except ValueError:

@@ -95,7 +95,6 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `emotion_embedder.py` — Maps emotional states to voice parameters
 - `emotion_labels.py` — Labels from model.config.id2label
 - `analyze_emotion.py` — Emotional tagging for a memory file
-- `speech_personality.py` — Phrasing for spoken responses
 - `tone_manager.py` — Communication adjustments after tone is read
 - `tone_classifier.py` — Superseded; delegates to `written_tone.py`
 - `written_tone.py` — Tone analysis for text

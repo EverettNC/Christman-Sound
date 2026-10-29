@@ -6,23 +6,18 @@
 """
 The body-signal input contract.
 
-WHAT CHANGED AND WHY
---------------------
-New file, 2026-10-13. Everett's ruling: the body signals named in
-`face_reading.py` (lines 40-42) — breath_freq, breath_amp, eye_jitter,
-stare_lock, tremor — are the INPUT CONTRACT. The file that measures them
-arrives later. This module defines what crosses into the family stack and
-consumes it. It measures nothing itself and it classifies nothing.
+WHAT THIS IS
+------------
+The body signals named in `face_reading.py` — breath_freq, breath_amp,
+eye_jitter, stare_lock, tremor — are the INPUT CONTRACT. The file that
+measures them arrives later. This module defines what crosses into the
+package and how it is consumed. It measures nothing itself and it
+classifies nothing.
 
-The prediction side lives in AlphaVox and reads the types defined here.
-Keeping the contract in Christman-Sound means every being reads the same
-shape, the same way Corti cards are read through corti_ingest.
-
-Taken from the Platform console session of 2026-10-13 and brought in with
-one change: the GazeSample adapter that read from christman_sound/core.py
-section 12 is removed. core.py is not used by anything and is not an
-input. Gaze arrives through the same contract as everything else when the
-file that measures it lands.
+Prediction happens in the caller, which reads the types defined here.
+Keeping the contract in Christman-Sound means every caller reads the same
+shape, the same way Corti cards are read through corti_ingest. Gaze arrives
+through the same contract when the file that measures it lands.
 
 RULES THIS FILE ENFORCES
 ------------------------
@@ -191,7 +186,7 @@ class BodySignalWindow:
     Trends across a run of frames.
 
     Measurements and their direction only. Whether a trend means anything
-    is decided by the prediction side in AlphaVox, not here.
+    is decided by the caller's prediction side, not here.
     """
 
     n_frames: int
