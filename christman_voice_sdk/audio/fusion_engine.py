@@ -51,8 +51,11 @@ WHAT CHANGED IN THIS REWRITE
    it had read it and chosen to be gentle.
 
    Unknown still carries care in `delivery`: slower pace, silence allowed, no
-   rush, and `confirm_before_acting=True`. Not knowing is a reason to move
-   carefully, not a reason to do nothing.
+   rush, assert nothing. Not knowing is a reason to move carefully, not a
+   reason to do nothing. (Until the 2026-10-29 review it also carried
+   `confirm_before_acting=True`. Everett's ruling M: no confirm-before-acting.
+   The being asks through the ask marks; the package never holds an action
+   for confirmation. The field is gone from every delivery.)
 
 3. AEGIS NO LONGER REWRITES WHAT THE PERSON SAID.
 
@@ -786,8 +789,9 @@ class FusionEngine:
         Delivery constraints.
 
         MODE_UNKNOWN is a careful posture, not a passive one: slower, silence
-        permitted, no rush, and confirm before acting. Not knowing is a reason
-        to move carefully rather than a reason to do nothing.
+        permitted, no rush, assert nothing. Not knowing is a reason to move
+        carefully rather than a reason to do nothing. Nothing is held for
+        confirmation (ruling M): the being asks through the ask marks.
 
         Every delivery carries `affect_reading` (the analyzer's certainty),
         `response_mode_source` and `live_state_rejected`, so a `standard`
@@ -807,7 +811,6 @@ class FusionEngine:
                 "allow_silence": True,
                 "needs_grounding": False,
                 "no_rush": True,
-                "confirm_before_acting": True,
                 "assert_nothing": True,
                 # The reason must name what ACTUALLY produced the unknown.
                 "reason": unknown_reason or (
@@ -824,22 +827,19 @@ class FusionEngine:
         # client's own distress is delivered, so this is main's (e35fe46)
         # delivery, and the question is written for Everett.
         #
-        # Ruling M (Everett, 2026-10-29): a safety hold carries no "confirm
-        # before acting" at all. The page has already gone (see fuse); this
-        # is only how the being speaks afterward, and it never sits in front
-        # of the page.
+        # Ruling M (Everett, 2026-10-29): no confirm-before-acting, in any
+        # mode. The page has already gone (see fuse); this is only how the
+        # being speaks afterward, and it never sits in front of the page.
         delivery = {
             "pace": constraints.get("pace", "normal"),
             "warmth": constraints.get("warmth", "balanced"),
             "allow_silence": constraints.get("allow_silence", True),
             "needs_grounding": constraints.get("needs_grounding", False),
             "no_rush": mode in {MODE_HOLD_SPACE, MODE_GENTLE_LIFT, MODE_SAFETY_HOLD},
-            "confirm_before_acting": False,
             "assert_nothing": False,
             **provenance,
         }
         if mode == MODE_SAFETY_HOLD:
-            del delivery["confirm_before_acting"]
             delivery["page_sent_first"] = bool(safety is not None and safety.delivered_to_human)
         return delivery
 

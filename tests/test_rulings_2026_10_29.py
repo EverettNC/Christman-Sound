@@ -1184,6 +1184,32 @@ def test_M_the_human_is_reached_before_and_without_the_reply(kwargs, monkeypatch
     assert turn.decision.delivery["page_sent_first"] is True
 
 
+@pytest.mark.parametrize("text", ["thank you, I'm scared", "my teacher is sad", "mary is scared",
+                                  "it hurts", "I'm happy today", "I want to kill myself"])
+def test_M_no_delivery_holds_anything_for_confirmation(text):
+    # 2026-10-29 review: the unknown mode still carried confirm_before_acting
+    # True. Ruling M: the being asks through the ask marks; the package never
+    # holds an action for confirmation.
+    turn, _ = _hear(text)
+    assert not any("confirm" in k for k in turn.decision.delivery), turn.decision.delivery
+
+
+def test_M_no_confirm_before_acting_or_please_confirm_left_in_the_package():
+    import christman_voice_sdk
+    pkg = Path(christman_voice_sdk.__file__).resolve().parent
+    found = []
+    for path in pkg.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for needle in ('"confirm_before_acting": True', "please confirm"):
+            if needle in text:
+                found.append(f"{path.relative_to(pkg)}: {needle}")
+    assert found == []
+    from christman_voice_sdk.tone.tonescore_analyzer import ToneScoreCalculator
+    from christman_voice_sdk.tone.tonescore_engine import ToneScoreEngine
+    assert "confirm_before_acting" not in ToneScoreEngine.adaptive_response_mode(None)
+    assert "confirm_before_acting" not in ToneScoreCalculator.get_response_mode(None)
+
+
 @pytest.mark.parametrize("text", ["I want to kill myself", "I'm not okay", "he is choking me"])
 def test_M_nothing_after_the_gate_can_hold_the_page(text, monkeypatch):
     from christman_voice_sdk.audio import fusion_engine as fe

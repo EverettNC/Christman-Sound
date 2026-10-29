@@ -530,7 +530,8 @@ class ToneScoreEngine:
             return {
                 "mode": "unknown",
                 "description": "Tone was not measured. Do not infer a state.",
-                "confirm_before_acting": True,
+                # Ruling M (2026-10-29 review): no confirm-before-acting; the
+                # package never holds an action for confirmation.
                 "assert_nothing": True,
             }
         if tone_score > 75:
