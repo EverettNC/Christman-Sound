@@ -259,13 +259,21 @@ MODAL_PATTERNS: Tuple[Tuple[str, Modality], ...] = (
 
 #: What precedes a predicate when it is history rather than a live statement.
 #:
-#: Everett's ruling, 2026-10-11: "I used to want to kill myself" and "the
-#: hitting stopped years ago" must NOT call a human; "he choked me yesterday"
-#: MUST (my ruling on his open item — strangulation by someone still in the
-#: person's life is not history). So the distancing markers are the ones
-#: that put a stop between then and now: "used to", "years ago", "back
-#: then", "when I was". "yesterday" and "last night" are not on this list
-#: on purpose.
+#: The distancing markers are the ones that put a stop between then and
+#: now: "used to", "years ago", "back then", "when I was". A frame they
+#: precede is read as history (past_tense), not as a live statement.
+#: "yesterday" and "last night" are not on this list on purpose.
+#:
+#: CORRECTED 2026-10-29 (review). This comment used to say "I used to want
+#: to kill myself" must NOT call a human. Everett's ruling A (2026-10-29)
+#: says it does: the client's own history of harm reaches a human
+#: (hearing.harm_frame_safety, reason "harm_frame_history_self"). Being
+#: history changes the reason, not whether a human is reached.
+#:
+#: "he choked me yesterday" pages today: "yesterday" is not a distancing
+#: marker, so the frame is read as live. That is current behavior, pending
+#: Everett's decision on it; it is not his ruling. (The comment used to
+#: call it Claude's "ruling on his open item".)
 _PAST_BEFORE = re.compile(
     r"\b(?:used to|tried to|almost|once|back then|long ago|a long time ago|"
     r"years? ago|months? ago|when i was|as a (?:kid|child|teenager)|"
