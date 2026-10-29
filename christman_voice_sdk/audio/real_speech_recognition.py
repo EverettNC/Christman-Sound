@@ -48,7 +48,7 @@ WHAT CHANGED AND WHY
                understand it."
        confidence = min(max(avg_energy / (self.silence_threshold * 4), 0.1), 0.9)
 
-   A fixed sentence in the text slot, delivered as the user's utterance, with a
+   A fixed sentence in the text slot, delivered as the client's utterance, with a
    confidence derived from LOUDNESS. Volume is not certainty. A shout of
    nonsense scored higher than a clear quiet sentence. Both are gone: this
    module now emits audio segments and activity events, never words, and the
@@ -491,7 +491,7 @@ class VoiceActivityDetector:
 
         With no recognizer, emits UNAVAILABLE carrying the segment's
         measurements. It does NOT emit "I detected speech but need a speech
-        recognition API to understand it." as something the user said — that
+        recognition API to understand it." as something the client said — that
         sentence, in the text slot, is the defect this module was rewritten to
         remove.
         """

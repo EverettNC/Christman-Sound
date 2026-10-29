@@ -35,7 +35,7 @@ Worse, the branch structure meant this ran even with a real engine attached:
 Whenever no real detection was pending — the common case, most of the time —
 control fell to `else` and the service fabricated one.
 
-For a nonverbal user, an invented distress signal is not a glitch in a demo.
+For a nonverbal client, an invented distress signal is not a glitch in a demo.
 Either someone is dispatched to a person who never called, or the alerts get
 noised out and a real one is ignored later. Both outcomes are produced by the
 same three lines.
@@ -562,7 +562,7 @@ class SoundRecognitionService:
 
         Accepts a RecognitionResult rather than the old (text, confidence,
         metadata) triple, so a failure can no longer arrive looking like an
-        utterance. Anything that is not real user speech is ignored.
+        utterance. Anything that is not real client speech is ignored.
         """
         if not isinstance(result, RecognitionResult):
             logger.error(
@@ -609,7 +609,7 @@ class SoundRecognitionService:
         errors do not cost the same thing:
 
         - SELECT is tuned to avoid false positives. A wrongly-fired select
-          performs an action the user did not ask for, and there is no undo
+          performs an action the client did not ask for, and there is no undo
           path in this stack. Silence is the safer error.
         - DISTRESS is tuned to avoid false negatives. A missed help request from
           someone who cannot repeat it is the worst outcome available here, so
