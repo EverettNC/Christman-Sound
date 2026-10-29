@@ -44,6 +44,7 @@ import datetime as _dt
 import hashlib
 import json
 import math
+import os
 import shutil
 import statistics
 import subprocess
@@ -116,6 +117,23 @@ def _words(model_dir: str, p: Path) -> List[dict]:
 
 #: Aperiodicity scales tried when calibrating the renderer to the recordings.
 CALIBRATION_SCALES = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.8, 1.0)
+
+#: Sentences the stitched calibration speaks. Everyday things a client asks
+#: for, none of them a verified phrase and none of them one of the 24 test
+#: sentences in tests/test_voice_fidelity.py (measure.py's), so the test
+#: judges sentences the calibration never saw.
+CALIBRATION_SENTENCES = (
+    "i need to rest now", "please bring me my shoes", "the music is too loud", "can we eat dinner soon",
+    "i like the blue one", "where did you put my phone", "my friend is coming over", "i am happy to see you",
+    "it is too hot in here", "please read me a story", "can you help me stand up", "i want a cup of tea",
+    "the window is open", "i did not sleep well", "let us go for a walk", "my hands are cold",
+    "please turn the music down", "who is at the door", "i want to sit down", "the food is very good",
+    "can you call the doctor", "i miss my family", "please close the curtains", "how was your day",
+)
+#: Voiced aperiodicities tried for stitched speech: from the resynthesis value
+#: down. Joins, time scaling and range scaling add roughness of their own, so
+#: stitched speech needs less breath noise than a recording rendered whole.
+STITCHED_APERIODICITIES = (0.005, 0.01, 0.015, 0.02, 0.03, 0.045)
 
 
 def _iqr(xs: Sequence[float]) -> float:
@@ -325,6 +343,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         "jitter_carried": best["carried"]["jitter"],
         "shimmer_carried": best["carried"]["shimmer"],
     }
+
+    # Stitched calibration. A new sentence is spoken from units of many
+    # recordings, joined, rescaled in time and in pitch range; rendered with
+    # the whole-recording values above it came out rougher and noisier than
+    # the recordings (AlphaVox, 2026-10-28: jitter 3.56%, shimmer 13.3%, HNR
+    # 7.5 dB, CPPS 7.3 dB). So the same calibration is run on stitched speech:
+    # for each aperiodicity in STITCHED_APERIODICITIES the CALIBRATION_SENTENCES
+    # are spoken by the mouth itself (christman_sound.synth.synthesize) with no
+    # jitter or shimmer added (what stitched frames carry), then with the
+    # difference added, and measured by the same Praat path; the one whose
+    # jitter, shimmer, HNR and CPPS come closest to the recordings' is kept.
+    from christman_sound.stitch import FrameVoice, StitchRefused
+    from christman_sound.synth import synthesize
+
+    def speak_all(tmp: Path, ap: float, jc: float, sc: float, tag: str) -> dict:
+        m = {**measures, "stitched_aperiodicity": ap, "stitched_jitter_carried": jc, "stitched_shimmer_carried": sc}
+        voice = FrameVoice(name=args.name, path=out, bank=bank, measures=m, spoken_as=spoken_as)
+        got = {"jitter": [], "shimmer": [], "hnr_db": [], "cpp_db": []}
+        for i, sentence in enumerate(CALIBRATION_SENTENCES):
+            try:
+                made = synthesize(sentence, voice=voice, lexicon=lex)
+            except StitchRefused as exc:
+                sys.exit(f"stitched calibration: the voice cannot say {sentence!r}: {exc}")
+            wav = tmp / f"{tag}_{i}.wav"
+            made.write_wav(wav)
+            r = _quality(str(wav))
+            for k in got:
+                if r.get(k) is not None:
+                    got[k].append(r[k])
+        return {k: _median(v) for k, v in got.items()}
+
+    stitched_table = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for ap in STITCHED_APERIODICITIES:
+            # carried: told the frames already carry the recordings' values, the mouth adds nothing
+            carried = speak_all(Path(tmp), ap, target["jitter"], target["shimmer"], f"sc{ap}")
+            got = speak_all(Path(tmp), ap, carried["jitter"], carried["shimmer"], f"sr{ap}")
+            score = sum(abs(got[k] - target[k]) / spread[k] for k in got)
+            stitched_table.append({"aperiodicity": ap, "carried": carried, "rendered": got, "score": score})
+            print(f"stitched calibration {ap}: score {score:.3f} " + " ".join(f"{k} {v:.4f}" for k, v in got.items()),
+                  flush=True)
+    sbest = min(stitched_table, key=lambda r: r["score"])
+    measures["stitched_aperiodicity"] = sbest["aperiodicity"]
+    measures["stitched_jitter_carried"] = sbest["carried"]["jitter"]
+    measures["stitched_shimmer_carried"] = sbest["carried"]["shimmer"]
     cw = Path(args.codecwar).expanduser()
     cw_commit = subprocess.run(["git", "-C", str(cw), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     doc = {
@@ -351,6 +414,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                                                    "calibrated aperiodicity",
                 "voiced_aperiodicity": "the frames' mean aperiodicity below 4 kHz in voiced frames, times the "
                                        "calibration scale (see aperiodicity)",
+                "stitched_aperiodicity, stitched_jitter_carried, stitched_shimmer_carried":
+                    "the stitched calibration: the calibration sentences spoken by the mouth, measured by the same "
+                    "Praat path (see stitched_calibration)",
             },
             "per_recording": {"jitter": quality["jitter"], "shimmer": quality["shimmer"], "hnr_db": quality["hnr_db"],
                               "cpp_db": quality["cpp_db"], "phrase_range_st": phrase_ranges},
@@ -360,10 +426,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                                     "as measured the voice comes back noisier than the recordings. The scale whose "
                                     "renderings measure closest to the recordings (jitter, shimmer, HNR, CPPS, by Praat) "
                                     "is kept."},
+            "stitched_calibration": {"sentences": list(CALIBRATION_SENTENCES), "table": stitched_table,
+                                     "kept": sbest["aperiodicity"],
+                                     "why": "joins, time scaling and range scaling make stitched speech rougher and "
+                                            "noisier than a recording rendered whole; the aperiodicity whose spoken "
+                                            "calibration sentences measure closest to the recordings (jitter, "
+                                            "shimmer, HNR, CPPS, by Praat) is kept, with what those sentences carry "
+                                            "before any jitter or shimmer is added."},
             "sources": sources,
         },
     }
-    (out / "voice.json").write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    # Written beside and renamed over, so a mouth loading the voice never reads half a file.
+    tmp_voice = out / "voice.json.tmp"
+    tmp_voice.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    os.replace(tmp_voice, out / "voice.json")
     size = sum(f.stat().st_size for f in out.iterdir() if f.is_file())
     print(json.dumps({k: (round(v, 4) if isinstance(v, float) else "96 points") for k, v in measures.items()}))
     print(f"voice {args.name}: {out} ({size / 1e6:.1f} MB, {len(bank.units)} units)")

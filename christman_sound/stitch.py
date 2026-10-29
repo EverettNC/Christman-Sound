@@ -96,7 +96,7 @@ REACH = {"breath": 1.0, "intonation": 1.0, "jitter": 1.0, "shimmer": 1.0, "proso
          "cadence": 0.25}
 CLAMP_RANGE = (0.5, 2.0)
 CLAMP_TIME = (0.6, 1.6)
-CLAMP_AP = (0.25, 4.0)
+CLAMP_AP = (0.01, 4.0)
 CLAMP_LTAS_DB = 6.0
 CLAMP_LEVEL_DB = 12.0
 RESONANCE_WARP = {"chest": 0.96, "mid": 1.0, "head": 1.04}
@@ -104,6 +104,7 @@ TIMBRE_DB_PER_OCT = 6.0
 RATE_RANGE = (0.6, 1.6)
 F0_RANGE = (60.0, 400.0)
 LOCAL_PER_SD = 2.0 / math.sqrt(math.pi)
+CONTOUR_HALF = 4
 
 NEUTRAL_CONTROLS: Dict[str, Any] = {
     "cadence": 0.5,
@@ -123,6 +124,7 @@ CONTROL_NAMES = tuple(NEUTRAL_CONTROLS)
 MEASURE_NAMES = (
     "f0_median_hz", "phrase_range_st", "syllable_rate", "voiced_aperiodicity", "ltas_db", "level_db",
     "jitter", "shimmer", "jitter_carried", "shimmer_carried", "hnr_db", "cpp_db",
+    "stitched_aperiodicity", "stitched_jitter_carried", "stitched_shimmer_carried",
 )
 
 
@@ -559,7 +561,7 @@ def check_controls(c: Dict[str, Any]) -> Dict[str, Any]:
     if c["affect"] != "neutral":
         raise StitchRefused(
             f'affect "{c["affect"]}" is not applied: this mouth has no affect input of its own, and mapping an '
-            "emotion onto pitch or rate here would be an invented mapping (Everett's call). Set the named "
+            "emotion onto pitch or rate here would be an invented mapping (the project's ruling). Set the named "
             'controls the affect stands for and pass affect "neutral".', ["affect"])
     return c
 
@@ -597,7 +599,7 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
     cad = _span(c["cadence"], REACH["cadence"])
     want_rate = m["syllable_rate"] * c["rate"] * cad
     time_factor = _clamp(rate / want_rate, *CLAMP_TIME)
-    consonant = _span(c["articulation"], REACH["articulation"] / 2)
+    consonant = _span(c["articulation"], REACH["articulation"])
     stretch = [1 / cad if p == "SIL" else time_factor if p in vowel_set else time_factor * consonant for p in phones]
     t, phones, rec_of = _resample(t, phones, rec_of, stretch, ne, nb)
     applied.append(_applied("rate", m["syllable_rate"], c["rate"],
@@ -615,11 +617,13 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
     range_factor = _clamp(want_range / rng, *CLAMP_RANGE) if len(st0) > 1 and rng > 0 else 1
     centre_hz = c["f0"] if c["f0"] is not None else m["f0_median_hz"]
     centre = 12 * math.log2(centre_hz)
+    smooth = smooth_contour(t.f0, CONTOUR_HALF)
     for i in range(t.n):
         if t.f0[i] > 0:
-            t.f0[i] = 2 ** ((centre + (12 * math.log2(t.f0[i]) - med) * range_factor) / 12)
+            t.f0[i] = 2 ** ((centre + (smooth[i] - med) * range_factor + (12 * math.log2(t.f0[i]) - smooth[i])) / 12)
     applied.append(_applied("intonation", m["phrase_range_st"], c["intonation"],
-                            f"pitch range {rng:.2f} st x{range_factor:.3f} (the recordings' own movement, scaled)", range_factor))
+                            f"pitch range {rng:.2f} st x{range_factor:.3f} (the recordings' own movement, scaled; "
+                            f"movement within +-{CONTOUR_HALF} frames kept)", range_factor))
     applied.append(_applied("f0", m["f0_median_hz"], c["f0"], f"median {2 ** (med / 12):.1f} -> {centre_hz:.1f} Hz", centre_hz))
 
     # Breath.
@@ -629,16 +633,16 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
             for b in range(AP_LOW_BANDS):
                 ap_sum += t.ap[i * nb + b]
                 ap_n += 1
-    ap_now = ap_sum / ap_n if ap_n else m["voiced_aperiodicity"]
-    ap_want = m["voiced_aperiodicity"] * _span(c["breath"], REACH["breath"])
+    ap_now = ap_sum / ap_n if ap_n else m["stitched_aperiodicity"]
+    ap_want = m["stitched_aperiodicity"] * _span(c["breath"], REACH["breath"])
     ap_factor = _clamp(ap_want / ap_now, *CLAMP_AP) if ap_now > 0 else 1
     for i in range(t.n):
         if t.f0[i] > 0:
             for b in range(nb):
                 t.ap[i * nb + b] = min(1.0, t.ap[i * nb + b] * ap_factor)
-    applied.append(_applied("breath", m["voiced_aperiodicity"], c["breath"],
-                            f"voiced aperiodicity {ap_now:.3f} x{ap_factor:.3f} (recordings: HNR {m['hnr_db']:.1f} dB, "
-                            f"CPP {m['cpp_db']:.1f} dB)", ap_factor))
+    applied.append(_applied("breath", m["stitched_aperiodicity"], c["breath"],
+                            f"voiced aperiodicity {ap_now:.3f} x{ap_factor:.3f} to {ap_want:.4f} (calibrated for stitched "
+                            f"speech; recordings: HNR {m['hnr_db']:.1f} dB, CPP {m['cpp_db']:.1f} dB)", ap_factor))
 
     # Resonance and timbre.
     corrs: List[List[float]] = []
@@ -709,9 +713,14 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
     # Jitter and shimmer.
     def perturb(name: str, measured: float, carried: float, control: float) -> float:
         want = measured * _span(control, REACH[name])
-        if want < carried:
+        if want < carried and control < 0.5:
             raise StitchRefused(f"{name} {want:.4f} is below the {carried:.4f} the voice's own frames carry; "
                                 "it cannot be rendered lower", [name])
+        if want <= carried:
+            applied.append(_applied(name, measured, control,
+                                    f"{carried:.4f} carried by the frames, at or above the {want:.4f} wanted: nothing "
+                                    "added (the frames cannot be made steadier)", 0))
+            return 0.0
         sd = math.sqrt(want ** 2 - carried ** 2) / LOCAL_PER_SD
         if sd > 0.2:
             raise StitchRefused(f"{name} {want:.4f} is beyond what the renderer takes (per-cycle sd 0.2)", [name])
@@ -719,11 +728,38 @@ def apply_voice(st: Stitched, measures: Dict[str, Any], controls: Dict[str, Any]
                                 f"{carried:.4f} carried by the frames; per-cycle sd {sd:.4f} added for {want:.4f}", sd))
         return sd
 
-    jit = perturb("jitter", m["jitter"], m["jitter_carried"], c["jitter"])
-    shim = perturb("shimmer", m["shimmer"], m["shimmer_carried"], c["shimmer"])
+    jit = perturb("jitter", m["jitter"], m["stitched_jitter_carried"], c["jitter"])
+    shim = perturb("shimmer", m["shimmer"], m["stitched_shimmer_carried"], c["shimmer"])
     applied.append(_applied("affect", "none: affect is carried by the named controls", c["affect"],
                             "neutral: the voice as measured", 0))
     return Voiced(track=t, phones=phones, jitter=jit, shimmer=shim, applied=applied)
+
+
+def smooth_contour(f0: Sequence[float], half: int) -> List[float]:
+    """
+    Each voiced frame's pitch in semitones, averaged over +-half frames of its
+    own voiced run (never across unvoiced frames); unvoiced frames read 0.
+    stitch.ts smoothContour, summed in the same order.
+    """
+    n = len(f0)
+    st = [12 * math.log2(f) if f > 0 else 0.0 for f in f0]
+    out = [0.0] * n
+    i = 0
+    while i < n:
+        if not f0[i] > 0:
+            i += 1
+            continue
+        j = i
+        while j < n and f0[j] > 0:
+            j += 1
+        for k in range(i, j):
+            a, b = max(i, k - half), min(j, k + half + 1)
+            s = 0.0
+            for q in range(a, b):
+                s += st[q]
+            out[k] = s / (b - a)
+        i = j
+    return out
 
 
 def _resample(t: Track, phones: List[str], rec_of: List[int], stretch: List[float], ne: int, nb: int):

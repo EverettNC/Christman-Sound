@@ -81,6 +81,9 @@ SENTENCES_24 = [
     "where are my glasses", "i am tired", "give me the book", "what time is it",
 ]
 EAR = "http://127.0.0.1:4850/stt"
+#: Seconds one ear call may take. 180: the Filament is shared, and under another
+#: lane's measurement it took 112 s for one short phrase (2026-10-29); 60 timed out.
+EAR_TIMEOUT_S = 180
 LTAS_RESYNTH_DB = 2.0
 WORDS_RESYNTH = 0.95
 WORDS_NEW = {"filament": 0.75, "vosk": 0.85}
@@ -121,7 +124,7 @@ def _ears():
 
     def hear(wav_bytes: bytes):
         req = urllib.request.Request(EAR, data=wav_bytes, method="POST", headers={"Content-Type": "audio/wav"})
-        body = json.loads(opener.open(req, timeout=60).read().decode())
+        body = json.loads(opener.open(req, timeout=EAR_TIMEOUT_S).read().decode())
         words = body.get("words") or []
         fil = " ".join(str(w.get("raw") or w.get("text") or "") for w in words).strip().lower() or (body.get("text") or "").strip().lower()
         with wave.open(io.BytesIO(wav_bytes), "rb") as w:
