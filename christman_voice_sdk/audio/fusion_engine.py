@@ -156,17 +156,15 @@ class Silicon:
     """
     Structured / logical layer.
 
-    Live system state is preferred; domain priors only fill gaps.
+    Live system state is preferred. There is no built-in steering table
+    (Everett's ruling N, 2026-10-29 review): the fixed DOMAIN_PRIORS table
+    (safety, voice, memory, grounding, distress, connection, each a fixed
+    word list) that picked a "dominant domain" for every turn is removed,
+    with the domain scores, the dominant domain, `Decision.coherence` (the
+    dominant domain's score) and `last_domain`, which all came from it.
+    Which category a client's words belong to is the being's to learn with
+    that client. How affect words are read is unchanged.
     """
-
-    DOMAIN_PRIORS: Dict[str, List[str]] = {
-        "safety": ["safe", "calm", "plan", "confirm", "steady", "ground"],
-        "voice": ["speak", "say", "read", "listen", "voice", "hear"],
-        "memory": ["remember", "remind", "schedule", "recall"],
-        "grounding": ["breathe", "feet", "here", "now", "present", "slow"],
-        "distress": ["scared", "hurt", "overwhelmed", "stop", "alone"],
-        "connection": ["love", "care", "help", "together", "please"],
-    }
 
     #: Distress intensity that calls for grounding. A threshold, not a
     #: measurement — named so it can be argued with.
@@ -223,31 +221,14 @@ class Silicon:
             response_mode = MODE_STANDARD
             source = "none"
 
-        # Domain scoring runs on surviving affect terms — terms structure
-        # cancelled (negated, volitional, impersonal) must not steer the domain
-        # either. The old version scored the raw word vector.
-        #
-        # Everett, 2026-10-29 (ruling N): the handoff added a fixed list of
-        # plain words ("remind", "breathe", "read" and the rest, at half a
-        # feeling word's weight) that steered the domain. Taken out: "It ain't
-        # up to Replit how the being behaves. The being has to get to know the
-        # client first before it can even put words in that category. It's
-        # the learned everyday words that the being learns by being with the
-        # client." Everyday words steer only from what is learned for that
-        # client; until that exists, this is main's (e35fe46) scoring.
-        live_terms = {
-            h.term: abs(h.final_weight)
-            for h in affect.hits
-            if h.final_weight != 0.0
-        }
-        domain_scores = {
-            domain: _overlap(live_terms, words)
-            for domain, words in self.DOMAIN_PRIORS.items()
-        }
-        best = max(domain_scores.values()) if domain_scores else 0.0
-        dominant = (
-            max(domain_scores, key=lambda k: domain_scores[k]) if best > 0.0 else None
-        )
+        # NO DOMAIN STEERING. Everett, 2026-10-29 (ruling N): the handoff
+        # added a fixed list of plain words that steered the domain, and it
+        # was taken out: "It ain't up to Replit how the being behaves. The
+        # being has to get to know the client first before it can even put
+        # words in that category. It's the learned everyday words that the
+        # being learns by being with the client." The 2026-10-29 review found
+        # main's own fixed DOMAIN_PRIORS table still steering every turn; by
+        # ruling N it is removed too. Nothing here picks a domain.
 
         # Grounding is gated on a MEASURED, self-attributed, negative reading.
         # An ambiguous reading does not qualify — an unresolved structure is not
@@ -272,9 +253,6 @@ class Silicon:
             "crisis_flag": crisis_flag,
             "nonverbal_active": nonverbal_active,
             "allow_silence": allow_silence,
-            "dominant_domain": dominant,
-            "dominant_domain_known": dominant is not None,
-            "domain_scores": {k: round(v, 4) for k, v in domain_scores.items()},
             "pace": "slower" if response_mode in {MODE_HOLD_SPACE, MODE_GENTLE_LIFT}
                     else "normal",
             "warmth": (
@@ -283,15 +261,6 @@ class Silicon:
                 else "balanced"
             ),
         }
-
-
-def _overlap(terms: Dict[str, float], domain_words: List[str]) -> float:
-    """Weighted share of a domain's vocabulary present in the surviving terms."""
-    if not terms:
-        return 0.0
-    hit = sum(w for t, w in terms.items() if t in domain_words)
-    total = sum(terms.values()) or 1.0
-    return hit / total
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +475,8 @@ class Decision:
     affect: AffectReading
     silicon: Dict[str, Any]
     reconciliation: Optional[Reconciliation]
-    coherence: Optional[float]
+    # `coherence` (the dominant domain's score) is removed with the steering
+    # table it came from (ruling N).
     delivery: Dict[str, Any]
     #: The client's words, exactly as said. Never edited, never withheld.
     input_text: str
@@ -573,8 +543,6 @@ class Decision:
             "reconciliation": (
                 self.reconciliation.to_dict() if self.reconciliation else None
             ),
-            "coherence": self.coherence,
-            "coherence_known": self.coherence is not None,
             "delivery": dict(self.delivery),
             "input_text": self.input_text,
             "carbon": self.carbon,
@@ -641,8 +609,8 @@ class FusionEngine:
         # THE PAGE FIRES FIRST (Everett, 2026-10-29, ruling M). "That slowing
         # down and confirming is enough time for a veteran to shoot
         # themselves in the head, or for an assailant to stab a victim."
-        # Aegis hands a hard block to a human here, before the domain is
-        # retrieved, before the mode, the delivery or any reply exists, and
+        # Aegis hands a hard block to a human here, before the constraints
+        # are retrieved, before the mode, the delivery or any reply exists, and
         # nothing after this line can delay it or take it back. Nothing in
         # the crisis path waits on a confirmation, a reply, or a pace.
         safety = self.aegis.check(
@@ -664,19 +632,12 @@ class FusionEngine:
 
         delivery = self._delivery(mode, constraints, rec, affect, safety, unknown_reason)
 
-        dominant = constraints.get("dominant_domain")
-        coherence = (
-            round(constraints["domain_scores"][dominant], 4)
-            if dominant is not None else None
-        )
-
         self._update_shared_state({
             "last_mode": mode,
             "last_valence": affect.valence,
             "last_intensity": affect.intensity,
             "last_certainty": affect.certainty.value,
             "last_safety": safety.status,
-            "last_domain": dominant,
             "last_agreement": rec.agreement.value,
         })
 
@@ -686,7 +647,6 @@ class FusionEngine:
             affect=affect,
             silicon=constraints,
             reconciliation=rec,
-            coherence=coherence,
             delivery=delivery,
             input_text=user_input or "",
         )

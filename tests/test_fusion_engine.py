@@ -179,11 +179,29 @@ def test_no_built_in_plain_word_list_steers_the_domain():
 
     assert not hasattr(fe.Silicon, "PLAIN_WORD_WEIGHT")
     assert not hasattr(fe.Silicon, "_surviving_terms")
+    # 2026-10-29 review: main's own fixed DOMAIN_PRIORS table is gone too, with
+    # everything built on it (ruling N: no built-in steering table).
+    assert not hasattr(fe.Silicon, "DOMAIN_PRIORS")
+    assert not hasattr(fe, "_overlap")
     for text in ("remind me to call mom", "can you read this to me", "breathe with me",
-                 "please speak to me", "schedule it", "listen"):
+                 "please speak to me", "schedule it", "listen", "I'm scared and alone",
+                 "I love you, please help", "I feel calm and safe"):
         d = _engine().fuse(text)
-        assert d.silicon["dominant_domain"] is None, (text, d.silicon)
-        assert set(d.silicon["domain_scores"].values()) == {0.0}, (text, d.silicon)
+        assert not any("domain" in k for k in d.silicon), (text, d.silicon)
+        out = d.to_dict()
+        assert "coherence" not in out and "coherence_known" not in out
+    assert "last_domain" not in _engine().get_shared_state()
+
+
+def test_removing_the_steering_table_did_not_change_how_affect_words_are_read():
+    # Ruling N removes the table without changing the reading of affect words.
+    from christman_voice_sdk.audio.structural_affect import StructuralAffectAnalyzer
+
+    for text in ("I'm scared and alone", "I'm happy today", "I love you, please help",
+                 "I feel calm and safe", "I want to kill myself"):
+        d = _engine().fuse(text)
+        direct = StructuralAffectAnalyzer().analyze(text)
+        assert d.affect.to_dict() == direct.to_dict(), text
 
 
 def test_ordinary_turn_stays_standard():
