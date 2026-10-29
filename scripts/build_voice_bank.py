@@ -19,8 +19,9 @@ on a Mac: afconvert -f WAVE -d LEI16@22050 -c 1 in.mp3 out.wav). Only the
 voice's own recordings go in: never another being's, never a person's.
 
 What it does, in order:
-  1. Words and their times: Everett's Vosk (the --vosk-model, full model) on
-     every recording, with each word's confidence.
+  1. Words and their times: christman_sound.ear, this package's own ear, on
+     the --vosk-model folder (the full model), on every recording resampled
+     to 16 kHz, with each word's confidence.
   2. Phones of each word: christman_sound.lexicon (the --lexicon), as Booth ids.
   3. Frames and units: Codec War's own frames.ts, align.ts, bank.ts and
      stitch.ts, run under node by scripts/voice_bank_driver.mjs (--codecwar).
@@ -95,24 +96,46 @@ def _sha256(p: Path) -> str:
     return h.hexdigest()
 
 
-def _words(model_dir: str, p: Path) -> List[dict]:
-    import vosk
+#: The rate christman_sound.ear hears; its Recognizer refuses any other.
+EAR_SR = 16000
 
-    vosk.SetLogLevel(-1)
-    if not hasattr(_words, "_model"):
-        _words._model = vosk.Model(model_dir)  # type: ignore[attr-defined]
+
+def _words(model_dir: str, p: Path) -> List[dict]:
+    """
+    Words, their times (seconds from the start of the file) and confidences,
+    heard by christman_sound.ear, this package's own ear, on the model folder
+    at `model_dir`.
+
+    2026-10-29 (Everett's ruling): the old recognizer is removed. This used
+    to run the `vosk` package's recognizer, which is the old one. The ear
+    reads the same model folder with this package's code and hears 16 kHz,
+    so a recording at another rate (the bank's are 22050 Hz) is resampled to
+    16 kHz with scipy's polyphase filter first. Word times are in seconds,
+    so they point at the same place in the recording either way.
+    """
+    from math import gcd
+
+    import numpy as np
+    from scipy.signal import resample_poly
+
+    from christman_sound.ear import Ear, load_model
+
+    if getattr(_words, "_model_dir", None) != model_dir:
+        _words._model = load_model(model_dir)  # type: ignore[attr-defined]
+        _words._model_dir = model_dir  # type: ignore[attr-defined]
     with wave.open(str(p), "rb") as w:
-        rec = vosk.KaldiRecognizer(_words._model, w.getframerate())  # type: ignore[attr-defined]
-        rec.SetWords(True)
-        words: List[dict] = []
-        while True:
-            data = w.readframes(4000)
-            if not data:
-                break
-            if rec.AcceptWaveform(data):
-                words += json.loads(rec.Result()).get("result", [])
-        words += json.loads(rec.FinalResult()).get("result", [])
-    return words
+        if (w.getsampwidth(), w.getnchannels()) != (2, 1):
+            raise ValueError(f"{p}: the ear takes 16-bit mono PCM "
+                             f"(is {8 * w.getsampwidth()}-bit, {w.getnchannels()} channel(s))")
+        sr = w.getframerate()
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+    if sr != EAR_SR:
+        g = gcd(sr, EAR_SR)
+        pcm = np.clip(np.round(resample_poly(pcm.astype(np.float64), EAR_SR // g, sr // g)),
+                      -32768, 32767).astype("<i2")
+    ear = Ear(_words._model, sample_rate=EAR_SR, words=True)  # type: ignore[attr-defined]
+    return [{"word": x.word, "start": x.start, "end": x.end, "conf": x.conf}
+            for heard in ear.hear(pcm) for x in heard.words]
 
 
 #: Aperiodicity scales tried when calibrating the renderer to the recordings.
@@ -174,7 +197,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--vosk-model", required=True)
     ap.add_argument("--lexicon", required=True)
     ap.add_argument("--min-conf", type=float, default=0.9,
-                    help="lowest Vosk confidence a word may have to be cut into units (0.9: the words the ear is sure of)")
+                    help="lowest ear confidence a word may have to be cut into units (0.9: the words the ear is sure of)")
     ap.add_argument("--spoken-as", action="append", default=[], metavar='WORD="WORDS"',
                     help="a word the recordings say as other words, a name the lexicon lacks, said as words it has")
     ap.add_argument("--node", default=shutil.which("node") or "node")

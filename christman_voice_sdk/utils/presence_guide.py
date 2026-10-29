@@ -66,18 +66,15 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-try:
-    from structural_affect import NEGATORS, SCOPE_BREAKERS
-except ImportError:
-    NEGATORS = frozenset({
-        "not", "no", "never", "none", "nothing", "cannot", "without",
-        "don't", "dont", "doesn't", "doesnt", "didn't", "didnt",
-        "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt", "won't", "wont",
-    })
-    SCOPE_BREAKERS = frozenset({
-        "but", "however", "although", "though", "yet", "because", "since",
-        "while", "and", "or", "so", "then",
-    })
+# One negation set for the whole package. 2026-10-29: this read a top-level
+# `structural_affect` module that exists nowhere, so the ImportError branch
+# always ran and a private copy of NEGATORS (missing "nobody", "neither",
+# "nor", "hardly", "barely", "ain't" in places) silently diverged from the
+# reader's own.
+# Everett, 2026-10-29 (ruling AE): the shared reading words, with every
+# correction ruled today, are the starting point; a client's learned words
+# extend or override them through ReadingWords.for_client.
+from ..audio.structural_affect import SHARED_READING_WORDS, ReadingWords
 
 _WORD = re.compile(r"[a-z']+")
 CLAUSE_BOUNDARY = "\x00"
@@ -174,15 +171,16 @@ def _tokens(text: str) -> List[str]:
     return out
 
 
-def _negated_at(tokens: Sequence[str], index: int) -> bool:
+def _negated_at(tokens: Sequence[str], index: int,
+                words: ReadingWords = SHARED_READING_WORDS) -> bool:
     for back in range(1, NEGATION_WINDOW + 1):
         j = index - back
         if j < 0:
             return False
         tok = tokens[j]
-        if tok in NEGATORS:
+        if tok in words.negators:
             return True
-        if tok == CLAUSE_BOUNDARY or tok in SCOPE_BREAKERS:
+        if tok == CLAUSE_BOUNDARY or tok in words.scope_breakers:
             return False
     return False
 
@@ -231,7 +229,10 @@ class PresenceGuide:
         HumanState.CONFUSED: 2,
     }
 
-    def __init__(self) -> None:
+    def __init__(self, reading_words: Optional[ReadingWords] = None) -> None:
+        # Ruling AE: the shared reading words, or this client's learned layer
+        # over them (ReadingWords.for_client).
+        self.words = reading_words or SHARED_READING_WORDS
         self.principles = PresencePrinciples()
 
     # -- Detection ------------------------------------------------------------
@@ -263,7 +264,7 @@ class PresenceGuide:
         negated: List[str] = []
 
         for state, markers in groups:
-            live, neg = self._match(tokens, set(markers))
+            live, neg = self._match(tokens, set(markers), self.words)
             negated.extend(neg)
             if live:
                 matched[state.value] = live
@@ -306,7 +307,7 @@ class PresenceGuide:
         """
         ambiguous: List[str] = []
         for i, tok in enumerate(tokens):
-            if tok != "lost" or _negated_at(tokens, i):
+            if tok != "lost" or _negated_at(tokens, i, self.words):
                 continue
             after = tokens[i + 1:i + 3]
             before = tokens[max(0, i - 2):i]
@@ -324,7 +325,8 @@ class PresenceGuide:
 
     @staticmethod
     def _match(
-        tokens: Sequence[str], markers: Set[str]
+        tokens: Sequence[str], markers: Set[str],
+        words: ReadingWords = SHARED_READING_WORDS,
     ) -> Tuple[List[str], List[str]]:
         """Word-boundary matching with negation scope."""
         live: List[str] = []
@@ -335,7 +337,7 @@ class PresenceGuide:
             if len(parts) == 1:
                 for i, tok in enumerate(tokens):
                     if tok == marker:
-                        (negated if _negated_at(tokens, i) else live).append(marker)
+                        (negated if _negated_at(tokens, i, words) else live).append(marker)
                         break
             elif f" {marker} " in f" {joined} ":
                 idx = next(
@@ -344,7 +346,7 @@ class PresenceGuide:
                     None,
                 )
                 if idx is not None:
-                    (negated if _negated_at(tokens, idx) else live).append(marker)
+                    (negated if _negated_at(tokens, idx, words) else live).append(marker)
         return live, negated
 
     # -- Guidance -------------------------------------------------------------

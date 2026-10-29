@@ -9,7 +9,7 @@
 """
 Nonverbal intent engine — gestures, symbols, eye regions, vocalizations.
 
-For a nonverbal user this module IS their voice. Everything below follows from
+For a nonverbal client this module IS their voice. Everything below follows from
 that: it may report what it recognized, or report that it recognized nothing.
 It may not invent a sentence.
 
@@ -51,9 +51,9 @@ WHAT CHANGED AND WHY
        self.confidence_threshold = 0.6
 
    One occurrence in 938 lines — the assignment. Nothing was ever gated on it
-   and there was no way for the user to reject or undo a reading. It is now
+   and there was no way for the client to reject or undo a reading. It is now
    enforced in one place, `_gate()`, which every public entry point passes
-   through, and `reject_last()` gives the user an undo that also records the
+   through, and `reject_last()` gives the client an undo that also records the
    correction.
 
 4. THE LEARNING SYSTEM WAS INERT, NOT DECAYING.
@@ -121,6 +121,7 @@ compute them. Family Sound does not carry `kind`.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import tempfile
@@ -158,15 +159,103 @@ SECTION: Dict[Modality, str] = {
 VALID_TIERS = ("mild", "moderate", "strong", "urgent")
 
 #: Interactions with a CONFIRMED outcome required before confidence moves.
+#: 10: a chosen starting value, held until client data replaces it. Reason:
+#: one bad day of 3 or 4 misreads must not retrain a signal.
 MIN_CONFIRMED_SAMPLES = 10
 
 #: How far confidence may move in one update. Stated, not emergent.
+#: 0.05: a chosen starting value, held until client data replaces it. Reason:
+#: a 0.9 symbol needs 6 confirmed-wrong updates to fall below the 0.6 floor,
+#: so one update can never silence a signal.
 CONFIDENCE_STEP = 0.05
 
 #: Floor and ceiling on a learned confidence. A prior may not learn its way to
 #: certainty, and it may not decay to unusable either.
+#: 0.20 and 0.95: chosen starting values, held until client data replaces
+#: them. Reason: 0.20 keeps a decayed signal on record to relearn instead of
+#: deleting it; 0.95 leaves room for "maybe I misread" on every signal.
 CONFIDENCE_FLOOR = 0.20
 CONFIDENCE_CEILING = 0.95
+
+#: Intents that mean a person needs a human. Everett, 2026-10-29: "A
+#: nonverbal client's distress is just as important as a verbal client's."
+#: So the grunt, the help, pain and medicine symbols reach the crisis gate
+#: and a human. The grunt key, the
+#: "distress" sound and the point_up gesture map to "help"; the symbols map
+#: to need_help, pain and need_medicine. A fixed list of intents: add an
+#: intent here and it pages. (The quotation is Everett's own words, as he
+#: gave them 2026-10-29, ruling AF; the handoff's wording is replaced.)
+#: DANGER. Everett, 2026-10-29 (ruling I, the silent alarm): a danger
+#: signal (help, scared, being attacked, "I'm scared for my safety"), from any
+#: channel, is NEVER spoken aloud and NEVER announced. It goes straight to a
+#: human, silently. His reason: saying it out loud can get the client hurt
+#: worse and the device taken. These intents are danger; so is any learned
+#: entry whose words speak of fear, danger or attack (DANGER_WORDS).
+DANGER_INTENTS = frozenset({
+    "help", "need_help", "danger", "scared", "afraid", "fear", "unsafe",
+    "attacked", "attack", "threat", "emergency",
+})
+
+#: NEEDS that also reach a human, and ARE spoken as normal (ruling I): pain,
+#: medicine. (Thirst, hunger, the bathroom and request attention are spoken
+#: and do not page here; Hand Up's request attention pages through
+#: engine_temporal's PAGING_INTENTS, ruling 5.)
+NEED_PAGING_INTENTS = frozenset({"pain", "need_medicine"})
+
+DISTRESS_INTENTS = DANGER_INTENTS | NEED_PAGING_INTENTS
+
+#: Words in a map entry's message that make it a danger meaning, whatever its
+#: intent is called. Matched as words.
+DANGER_WORDS = re.compile(
+    r"\b(?:scared|afraid|frightened|terrified|danger|dangerous|unsafe|attack|"
+    r"attacked|attacking|safety)\b", re.I)
+
+
+def is_danger(intent: Optional[str], message: Optional[str] = None) -> bool:
+    """A danger meaning: it pages a human and is never spoken (ruling I)."""
+    return (intent or "") in DANGER_INTENTS or bool(DANGER_WORDS.search(message or ""))
+
+
+#: SILENT OR VOCAL (Everett, 2026-10-29, rulings I, J and L). A map entry
+#: carries its meaning, not a fixed speak/silent flag: "every situation is
+#: conditional, to be either kept silent or vocal." The conditions:
+#:   - danger is silent (ruling I; for a nonverbal channel, always);
+#:   - a pressed symbol is the client's own word and is spoken (ruling C);
+#:   - a meaning in the client's OWN map, read from data_dir, is a meaning
+#:     learned for that client and is spoken (ruling J);
+#:   - a built-in camera, eye, face, tic or sound reading of a generic
+#:     feeling is not spoken (ruling J): the intents below;
+#:   - every other built-in meaning, the needs and the deliberate signals
+#:     (yes, no, hello, stop, choose, confirm, back, next, acknowledge, pay
+#:     attention), is spoken as before.
+#: An older map with no such fields works exactly as before, for every
+#: meaning that is not danger.
+GENERIC_FEELING_INTENTS = frozenset({
+    "self_regulate", "overwhelmed", "thinking", "unsure", "excited",
+    "frustrated", "focus", "searching",
+})
+GENERIC_SILENT_REASON = ("a generic reading, not a meaning learned for this client; "
+                         "observed, not spoken")
+SILENT_ALARM_REASON = ("danger: goes to a human silently; never spoken, never "
+                       "announced (silent alarm)")
+
+
+def distress_readings(readings: "List[Interpretation]") -> "List[Interpretation]":
+    """
+    The readings that must reach a human.
+
+    Everett, 2026-10-29: "A nonverbal client's distress is just as important
+    as a verbal client's." A recognized distress reading counts at ANY confidence: the
+    confidence bar never decides whether help comes. The bar decides only
+    whether the engine may put words in someone's mouth for a reading it
+    could have got wrong. Unrecognized input never counts — nothing is
+    invented.
+    """
+    return [
+        r for r in readings
+        if r.status in (Status.OK, Status.BELOW_THRESHOLD)
+        and (r.intent in DISTRESS_INTENTS or r.silent_alarm)
+    ]
 
 
 class Status(str, Enum):
@@ -202,6 +291,8 @@ class Interpretation:
     threshold: Optional[float] = None
     confirmed_samples: int = 0
     interaction_id: Optional[str] = None
+    #: A danger meaning: it pages a human and is never spoken (ruling I).
+    silent_alarm: bool = False
 
     @property
     def speakable(self) -> bool:
@@ -224,6 +315,7 @@ class Interpretation:
             "confirmed_samples": self.confirmed_samples,
             "interaction_id": self.interaction_id,
             "speakable": self.speakable,
+            "silent_alarm": self.silent_alarm,
         }
 
 
@@ -234,6 +326,42 @@ class MapValidationError(ValueError):
 # -----------------------------------------------------------------------------
 # Default maps. Confidence values are PRIORS — how much this system trusts the
 # mapping itself, not a measurement of any particular input.
+#
+# EVERY NUMBER BELOW IS A CHOSEN STARTING VALUE, NOT A MEASUREMENT. Each is
+# held until client data replaces it. They were in these tables before
+# 2026-10-29 with no reason written; the reasons are written now (Everett's
+# ruling, 2026-10-29: every fixed number gets its reason beside it):
+#
+#   0.9  a deliberate signal with one meaning: a pressed symbol ("pain",
+#        "help"), a nod, a shake, a thumbs up/down, the distress sound keys.
+#        Highest, so a call for help clears the 0.6 floor with room to spare.
+#   0.8  a deliberate signal with more than one everyday meaning: a wave
+#        (hello or goodbye), pointing up, an open palm, a held centre gaze,
+#        a loud sound (excited or upset).
+#   0.7  a signal that is often made without meaning to: stimming, rapid
+#        blinking, corner glances, a click, a short vowel.
+#   0.6  a sound that often carries no message at all: a hum, a soft sound.
+#        Set AT the floor: it still speaks (the test is "below 0.6"), and it
+#        loses any vote against a stronger reading.
+#
+# Checked entry by entry (2026-10-29). These do not fit the reasons above,
+# and no reason of their own was ever written, so they are listed here as
+# they stand for Everett to give the reason or change the value:
+#   symbols at 0.8: question, tired, play, music, book, outside (each a
+#     pressed symbol with one meaning, which the 0.9 reason would cover).
+#   sounds at 0.8: repeated_sound, grunt_acknowledge, grunt_frustration.
+#   eye region at 0.8: long_stare. At 0.7: rapid_scan.
+#   vocal_stimming at 0.9, while the stimming gesture is 0.7.
+#
+# THE SYMBOLS' NUMBERS ARE NOT A SPEAKING GATE (Everett's ruling C,
+# 2026-10-29: a symbol or key the client pressed counts like a spoken
+# word). The bar
+# (confidence_threshold) is for readings this package could get wrong: a
+# camera's gesture, an eye region, a sound the microphone classified. A
+# pressed symbol is not a guess, so its number never decides whether it
+# speaks (see NonverbalEngine._gate). The number stays on the reading and
+# still weighs in a multimodal vote. And no number, on any channel, decides
+# whether a distress reading reaches a human: that happens at any confidence.
 # -----------------------------------------------------------------------------
 
 DEFAULT_GESTURES: Dict[str, Dict[str, Any]] = {
@@ -293,6 +421,9 @@ DEFAULT_SOUNDS: Dict[str, Dict[str, Any]] = {
 
 #: Emotional indicators per gesture. KEPT AS WRITTEN — see the header note.
 #: `stimming` reads as self-regulation above anxiety and overwhelm on purpose.
+#: The values are a rank order, not measurements: 0.9 is the first reading of
+#: that signal, 0.8 the second, 0.7/0.6/0.5 the less likely ones. Chosen
+#: starting values, held until client data replaces them.
 EMOTIONAL_INDICATORS: Dict[str, Dict[str, float]] = {
     "nod":         {"agreement": 0.9, "acceptance": 0.8, "interest": 0.6},
     "shake":       {"disagreement": 0.9, "rejection": 0.8, "frustration": 0.5},
@@ -357,7 +488,7 @@ def _atomic_write_json(path: str, payload: Any) -> None:
 
     The predecessor opened the target and wrote in place. A crash mid-write
     left a truncated file, and the loader caught only JSONDecodeError — so on
-    the next start the user's learned map silently reverted to defaults with a
+    the next start the client's learned map silently reverted to defaults with a
     warning nobody was watching.
     """
     directory = os.path.dirname(os.path.abspath(path))
@@ -388,7 +519,11 @@ class NonverbalEngine:
 
     def __init__(
         self,
-        data_dir: str = "data/learning",
+        data_dir: Optional[str] = "data/learning",
+        # 0.6: a chosen starting value, not a measurement. Held until client
+        # data replaces it. Reason: above the 0.5 coin-flip line, and below
+        # every deliberate signal in the maps (0.7-0.9), so the floor stops
+        # guesses without silencing a pressed symbol.
         confidence_threshold: float = 0.6,
         strict_maps: bool = False,
     ) -> None:
@@ -396,7 +531,8 @@ class NonverbalEngine:
         Args:
             data_dir: where learned maps and stats live. NOT created here —
                 only inside an explicit save. Importing this module and
-                constructing the engine touch no disk.
+                constructing the engine touch no disk. None means no disk at
+                all: built-in maps, nothing read, `save` refuses.
             confidence_threshold: readings below this are returned as
                 BELOW_THRESHOLD and are not speakable.
             strict_maps: raise on a malformed map entry instead of dropping it.
@@ -413,12 +549,19 @@ class NonverbalEngine:
         # them, with nothing between the two.
         self._lock = threading.RLock()
 
-        self.maps: Dict[Modality, Dict[str, Dict[str, Any]]] = {
-            Modality.GESTURE: validate_map("gestures", self._load("gestures") or DEFAULT_GESTURES, self.strict_maps),
-            Modality.SYMBOL:  validate_map("symbols", self._load("symbols") or DEFAULT_SYMBOLS, self.strict_maps),
-            Modality.EYE:     validate_map("eye_regions", self._load("eye_regions") or DEFAULT_EYE_REGIONS, self.strict_maps),
-            Modality.SOUND:   validate_map("sound_patterns", self._load("sound_patterns") or DEFAULT_SOUNDS, self.strict_maps),
-        }
+        #: Where each map came from: "client" (the client's own map, read
+        #: from data_dir: meanings learned for that client) or "built_in".
+        self.map_source: Dict[Modality, str] = {}
+        self.maps: Dict[Modality, Dict[str, Dict[str, Any]]] = {}
+        for modality, name, default in (
+            (Modality.GESTURE, "gestures", DEFAULT_GESTURES),
+            (Modality.SYMBOL, "symbols", DEFAULT_SYMBOLS),
+            (Modality.EYE, "eye_regions", DEFAULT_EYE_REGIONS),
+            (Modality.SOUND, "sound_patterns", DEFAULT_SOUNDS),
+        ):
+            loaded = self._load(name)
+            self.map_source[modality] = "client" if loaded else "built_in"
+            self.maps[modality] = validate_map(name, loaded or default, self.strict_maps)
 
         self.usage_stats: Dict[str, Any] = self._load_stats()
         self.history: Deque[Interpretation] = deque(maxlen=100)
@@ -442,6 +585,8 @@ class NonverbalEngine:
 
     def _load(self, name: str) -> Optional[Dict[str, Any]]:
         """Load a map. Never writes. Returns None when there is nothing usable."""
+        if self.data_dir is None:
+            return None
         path = self._path(f"{name}_model")
         if not os.path.exists(path):
             return None
@@ -462,9 +607,11 @@ class NonverbalEngine:
             return None
 
     def _load_stats(self) -> Dict[str, Any]:
-        path = self._path("usage_stats")
         blank = {s: {} for s in SECTION.values()}
         blank["last_updated"] = None
+        if self.data_dir is None:
+            return blank
+        path = self._path("usage_stats")
         if not os.path.exists(path):
             return blank
         try:
@@ -485,6 +632,8 @@ class NonverbalEngine:
 
         Returns the paths written.
         """
+        if self.data_dir is None:
+            raise ValueError("this engine was built with data_dir=None; it has no disk")
         written: List[str] = []
         with self._lock:
             for modality, table in self.maps.items():
@@ -512,6 +661,15 @@ class NonverbalEngine:
         """
         if interp.status is not Status.OK:
             return interp
+        # A PRESSED SYMBOL IS NOT UNDER THE BAR (Everett's ruling C, 2026-10-29:
+        # a symbol or key the client pressed counts like a spoken word). The bar
+        # exists for readings this package could get wrong: a camera's
+        # gesture, an eye region, a sound the microphone classified. A symbol
+        # is not a reading; the client chose it. So the typed confidence in
+        # the symbol map never decides whether a pressed symbol speaks. It is
+        # still carried on the reading, and still weighs in a multimodal vote.
+        if interp.modality is Modality.SYMBOL:
+            return interp
         if interp.confidence is None or interp.confidence < self.confidence_threshold:
             return Interpretation(
                 modality=interp.modality,
@@ -529,6 +687,7 @@ class NonverbalEngine:
                 threshold=self.confidence_threshold,
                 confirmed_samples=interp.confirmed_samples,
                 interaction_id=interp.interaction_id,
+                silent_alarm=interp.silent_alarm,
             )
         return interp
 
@@ -554,6 +713,16 @@ class NonverbalEngine:
                 threshold=self.confidence_threshold,
             )
 
+        # What may be said (rulings I and J). The meaning itself is kept on
+        # the reading either way: a silent danger reading still pages.
+        message: Optional[str] = entry["message"]
+        silent_reason: Optional[str] = None
+        if is_danger(entry["intent"], entry["message"]):
+            message, silent_reason = None, SILENT_ALARM_REASON
+        elif (modality is not Modality.SYMBOL
+              and self.map_source.get(modality) == "built_in"
+              and entry["intent"] in GENERIC_FEELING_INTENTS):
+            message, silent_reason = None, GENERIC_SILENT_REASON
         interp = Interpretation(
             modality=modality,
             status=Status.OK,
@@ -562,10 +731,12 @@ class NonverbalEngine:
             expression=entry["expression"],
             emotion_tier=entry["emotion_tier"],
             confidence=entry["confidence"],     # the prior, unjittered
-            message=entry["message"],
+            message=message,
+            reason=silent_reason,
             threshold=self.confidence_threshold,
             confirmed_samples=confirmed,
             interaction_id=self._next_id(),
+            silent_alarm=silent_reason == SILENT_ALARM_REASON,
         )
         interp = self._gate(interp)
         self._record(interp)
@@ -619,7 +790,10 @@ class NonverbalEngine:
             return {
                 "status": "no_usable_reading",
                 "primary": None,
+                "silent_alarm": any(p.silent_alarm for p in parts),
                 "all_results": [p.to_dict() for p in parts],
+                # Below the speaking bar is not below the paging bar.
+                "distress": [p.to_dict() for p in distress_readings(parts)],
                 "speakable": False,
                 "note": (
                     "No modality produced a reading at or above the confidence "
@@ -631,6 +805,12 @@ class NonverbalEngine:
 
         # Eye input is weighted below the others; that weighting is a stated
         # choice, not a measurement.
+        # 0.8 for eye: a chosen starting value, held until client data
+        # replaces it. Reason: a glance is more often unintended than a
+        # pressed symbol, a gesture or a sound, so an eye reading must not tie
+        # one of those at equal confidence. 0.8 x 0.9 = 0.72 still clears the
+        # 0.6 floor, so a deliberate eye choice on its own is never silenced.
+        # 1.0 for the others: no reason yet to rank them against each other.
         WEIGHT = {Modality.GESTURE: 1.0, Modality.SYMBOL: 1.0,
                   Modality.SOUND: 1.0, Modality.EYE: 0.8}
 
@@ -642,11 +822,24 @@ class NonverbalEngine:
             # Tier is guaranteed valid by validate_map — no KeyError path.
             tier_votes[p.emotion_tier or "mild"] += w
 
-        best_intent = max(intent_votes, key=lambda k: intent_votes[k])
+        # Distress is not outvoted. 2026-10-29, measured before: gesture
+        # "nod" + sound "grunt_distress" spoke "Yes, I agree." and nothing
+        # else. A person who needs help and also nodded needs help.
+        distress_votes = {k: v for k, v in intent_votes.items() if k in DISTRESS_INTENTS}
+        votes = distress_votes or intent_votes
+        best_intent = max(votes, key=lambda k: votes[k])
         best_tier = max(tier_votes, key=lambda k: tier_votes[k])
-        primary = max(usable, key=lambda p: p.confidence or 0.0)
 
+        # 2026-10-29: the message came from the single strongest reading
+        # overall, and was dropped whenever that reading had lost the vote.
+        # Measured before: gesture "wave" + eye "center" + sound "click" —
+        # "select" won the vote, "wave" was strongest, message None,
+        # speakable False. The person was understood and silenced. The
+        # message now comes from the strongest reading OF the winning intent.
+        silent = any(p.silent_alarm for p in parts)
         agreeing = [p for p in usable if p.intent == best_intent]
+        winner = max(agreeing, key=lambda p: p.confidence or 0.0)
+        strongest = max(usable, key=lambda p: p.confidence or 0.0)
         combined_confidence = sum(p.confidence or 0.0 for p in agreeing) / len(agreeing)
 
         key = "+".join(sorted(p.input_data or "" for p in usable))
@@ -654,20 +847,26 @@ class NonverbalEngine:
 
         return {
             "status": "ok",
-            "primary": primary.to_dict(),
+            "primary": winner.to_dict(),
+            "strongest_overall": strongest.to_dict(),
             "intent": best_intent,
             "emotion_tier": best_tier,
             "confidence": combined_confidence,
             "confidence_is_prior": True,
-            "message": primary.message if primary.intent == best_intent else None,
+            "message": None if silent else winner.message,
             "modalities": [p.modality.value for p in usable],
             "all_results": [p.to_dict() for p in parts],
-            "speakable": bool(primary.message and primary.intent == best_intent),
+            "distress": [p.to_dict() for p in distress_readings(parts)],
+            "speakable": bool(winner.message) and not silent,
+            # A danger reading anywhere in the input: the whole input is
+            # silent (ruling I). The danger still reaches a human through
+            # "distress".
+            "silent_alarm": silent,
             "threshold": self.confidence_threshold,
         }
 
 
-    # -- Interaction record + the user's undo ---------------------------------
+    # -- Interaction record + the client's undo -------------------------------
 
     def _next_id(self) -> str:
         with self._lock:
@@ -701,7 +900,7 @@ class NonverbalEngine:
 
     def reject_last(self, interaction_id: Optional[str] = None) -> bool:
         """
-        The user's undo. Marks the reading wrong and trains confidence down.
+        The client's undo. Marks the reading wrong and trains confidence down.
 
         The predecessor had no override or undo path of any kind — a wrong
         reading was simply spoken and there was no way to say so.
@@ -776,6 +975,9 @@ class NonverbalEngine:
 
     def start_learning(self, interval_seconds: float = 300.0) -> bool:
         """Persist learned priors periodically. Off by default."""
+        if self.data_dir is None:
+            logger.error("start_learning refused: data_dir=None, nothing to persist to")
+            return False
         if self._learning.is_set():
             return False
         self._learning.set()
@@ -869,6 +1071,8 @@ __all__ = [
     "DEFAULT_GESTURES", "DEFAULT_SYMBOLS", "DEFAULT_EYE_REGIONS",
     "DEFAULT_SOUNDS", "EMOTIONAL_INDICATORS", "VALID_TIERS",
     "MIN_CONFIRMED_SAMPLES", "CONFIDENCE_STEP",
+    "DISTRESS_INTENTS", "distress_readings", "DANGER_INTENTS", "NEED_PAGING_INTENTS",
+    "is_danger", "DANGER_WORDS", "GENERIC_FEELING_INTENTS",
 ]
 
 # ==============================================================================

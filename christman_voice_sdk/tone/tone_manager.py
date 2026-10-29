@@ -60,25 +60,16 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-try:
-    from structural_affect import NEGATORS, SCOPE_BREAKERS
-except ImportError:
-    NEGATORS = frozenset({
-        "not", "no", "never", "none", "nothing", "cannot", "without",
-        "don't", "dont", "doesn't", "doesnt", "didn't", "didnt",
-        "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt", "won't", "wont",
-    })
-    SCOPE_BREAKERS = frozenset({
-        "but", "however", "although", "though", "yet", "because", "since",
-        "while", "and", "or", "so", "then",
-    })
+# One negation set for the whole package. 2026-10-29: this read a top-level
+# `structural_affect` module that exists nowhere, so the ImportError branch
+# always ran and a private copy of NEGATORS (missing "nobody", "neither",
+# "nor", "hardly", "barely", "ain't" in places) silently diverged from the
+# reader's own.
+# Everett, 2026-10-29 (ruling AE): the shared reading words, with every
+# correction ruled today, are the starting point; a client's learned words
+# extend or override them through ReadingWords.for_client.
+from ..audio.structural_affect import SHARED_READING_WORDS, ReadingWords
 
-try:
-    from tone_engine import ResponseMode, ToneContext, ToneEngine, ToneProfile
-    _tone_engine_ok = True
-except ImportError:
-    ResponseMode = ToneContext = ToneEngine = ToneProfile = None
-    _tone_engine_ok = False
 
 _WORD = re.compile(r"[a-z']+")
 CLAUSE_BOUNDARY = "\x00"
@@ -116,20 +107,22 @@ def _tokens(text: str) -> List[str]:
     return out
 
 
-def _negated_at(tokens: Sequence[str], index: int) -> bool:
+def _negated_at(tokens: Sequence[str], index: int,
+                words: ReadingWords = SHARED_READING_WORDS) -> bool:
     for back in range(1, NEGATION_WINDOW + 1):
         j = index - back
         if j < 0:
             return False
         tok = tokens[j]
-        if tok in NEGATORS:
+        if tok in words.negators:
             return True
-        if tok == CLAUSE_BOUNDARY or tok in SCOPE_BREAKERS:
+        if tok == CLAUSE_BOUNDARY or tok in words.scope_breakers:
             return False
     return False
 
 
-def _live_matches(tokens: Sequence[str], markers: Set[str]) -> List[str]:
+def _live_matches(tokens: Sequence[str], markers: Set[str],
+                  words: ReadingWords = SHARED_READING_WORDS) -> List[str]:
     """Markers present and NOT inside a negation. Word-boundary matched."""
     found: List[str] = []
     joined = " ".join(tokens)
@@ -137,7 +130,7 @@ def _live_matches(tokens: Sequence[str], markers: Set[str]) -> List[str]:
         parts = marker.split()
         if len(parts) == 1:
             for i, tok in enumerate(tokens):
-                if tok == marker and not _negated_at(tokens, i):
+                if tok == marker and not _negated_at(tokens, i, words):
                     found.append(marker)
                     break
         elif f" {marker} " in f" {joined} ":
@@ -146,7 +139,7 @@ def _live_matches(tokens: Sequence[str], markers: Set[str]) -> List[str]:
                  if list(tokens[i:i + len(parts)]) == parts),
                 None,
             )
-            if idx is not None and not _negated_at(tokens, idx):
+            if idx is not None and not _negated_at(tokens, idx, words):
                 found.append(marker)
     return found
 
@@ -157,7 +150,7 @@ class ToneReading:
 
     emotion_state: str = "unknown"
     cues: List[str] = field(default_factory=list)
-    source: str = "none"                 # tone_engine | keyword_fallback | none
+    source: str = "none"                 # caller_profile | keyword_fallback | none
     missing_fields: List[str] = field(default_factory=list)
     matched_markers: Dict[str, List[str]] = field(default_factory=dict)
 
@@ -183,39 +176,39 @@ class ToneManager:
     #: Optional caller-supplied phrasing. EMPTY by default — nothing is
     #: prepended to a reply unless someone configures it. The predecessor
     #: injected fixed sentences into the being's voice.
-    def __init__(self, intro_phrases: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, intro_phrases: Optional[Dict[str, str]] = None,
+                 reading_words: Optional[ReadingWords] = None) -> None:
+        # Ruling AE: the shared reading words, or this client's learned layer
+        # over them (ReadingWords.for_client).
+        self.words = reading_words or SHARED_READING_WORDS
         self.intro_phrases: Dict[str, str] = dict(intro_phrases or {})
         self.profile: Dict[str, Any] = dict(DEFAULT_PROFILE)
         self.reading = ToneReading()
 
     # -- Interpretation -------------------------------------------------------
 
-    def analyze_user_input(self, text: str, prior_misread: bool = False) -> ToneReading:
+    def analyze_user_input(self, text: str) -> ToneReading:
         """
         Interpret input and update delivery settings.
 
         Returns a ToneReading rather than a bare string, so the caller can see
         which analyzer ran and whether any expected field was missing.
+
+        2026-10-29: this tried a top-level `tone_engine` module first. No such
+        module exists in this package or anywhere it ships, so the keyword
+        reader always ran. That is now said plainly instead of tried. A caller
+        holding a real tone profile passes it to `apply_profile`.
         """
-        if _tone_engine_ok:
-            reading = self._from_tone_engine(text, prior_misread)
-        else:
-            reading = self._from_keywords(text)
+        reading = self._from_keywords(text)
         self.reading = reading
         return reading
 
-    def _from_tone_engine(self, text: str, prior_misread: bool) -> ToneReading:
-        try:
-            engine = ToneEngine()
-            profile = engine.analyze(
-                ToneContext(user_said=text, prior_misread=prior_misread,
-                            explicit_state=None)
-            )
-            mode = engine.choose_mode(profile)
-        except Exception as exc:
-            logger.error("ToneEngine failed: %s", exc, exc_info=True)
-            return self._from_keywords(text)
+    def apply_profile(self, profile: Any, mode: Any) -> ToneReading:
+        """
+        Delivery settings from a tone profile the caller already has.
 
+        Missing fields are reported, never read as 0.0.
+        """
         missing = [f for f in REQUIRED_PROFILE_FIELDS if not hasattr(profile, f)]
         if missing:
             # The predecessor defaulted these to 0.0, so a profile without
@@ -224,8 +217,9 @@ class ToneManager:
                 "ToneProfile is missing %s. These are NOT treated as zero.",
                 missing,
             )
-
-        return self._apply_profile(profile, mode, missing)
+        reading = self._apply_profile(profile, mode, missing)
+        self.reading = reading
+        return reading
 
     def _apply_profile(
         self, profile: Any, mode: Any, missing: List[str]
@@ -294,7 +288,7 @@ class ToneManager:
             }.get(mode_name, "neutral")
 
         return ToneReading(
-            emotion_state=state, cues=cues, source="tone_engine",
+            emotion_state=state, cues=cues, source="caller_profile",
             missing_fields=missing,
         )
 
@@ -325,7 +319,7 @@ class ToneManager:
         best: Optional[Tuple[int, str]] = None
 
         for name, (markers, label, weight) in groups.items():
-            hits = _live_matches(tokens, markers)
+            hits = _live_matches(tokens, markers, self.words)
             if hits:
                 matched[name] = hits
                 cues.append(name)

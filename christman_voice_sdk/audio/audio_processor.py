@@ -91,15 +91,9 @@ try:
 except ImportError:
     nr = None
 
-try:
-    from timbre.logger import get_logger
-except ImportError:
-    def get_logger(name: str) -> logging.Logger:  # type: ignore[misc]
-        lg = logging.getLogger(name)
-        lg.addHandler(logging.NullHandler())
-        return lg
-
-logger = get_logger(__name__)
+# 2026-10-29: this read a top-level `timbre.logger` that exists nowhere.
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 #: Frame geometry for the energy analysis.
 FRAME_SECONDS = 0.025

@@ -70,19 +70,15 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-try:
-    from structural_affect import NEGATORS, SCOPE_BREAKERS
-except ImportError:  # keep this module usable standalone
-    NEGATORS = frozenset({
-        "not", "no", "never", "none", "nothing", "nobody", "cannot", "without",
-        "hardly", "barely", "don't", "dont", "doesn't", "doesnt", "didn't",
-        "didnt", "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt",
-        "won't", "wont", "ain't", "aint",
-    })
-    SCOPE_BREAKERS = frozenset({
-        "but", "however", "although", "though", "yet", "because", "since",
-        "while", "and", "or", "so", "then",
-    })
+# One negation set for the whole package. 2026-10-29: this read a top-level
+# `structural_affect` module that exists nowhere, so the ImportError branch
+# always ran and a private copy of NEGATORS (missing "nobody", "neither",
+# "nor", "hardly", "barely", "ain't" in places) silently diverged from the
+# reader's own.
+# Everett, 2026-10-29 (ruling AE): the shared reading words, with every
+# correction ruled today, are the starting point; a client's learned words
+# extend or override them through ReadingWords.for_client.
+from ..audio.structural_affect import SHARED_READING_WORDS, ReadingWords
 
 _WORD = re.compile(r"[a-z']+")
 
@@ -184,22 +180,24 @@ def _tokens(text: str) -> List[str]:
     return out
 
 
-def _negated_at(tokens: Sequence[str], index: int) -> bool:
+def _negated_at(tokens: Sequence[str], index: int,
+                words: ReadingWords = SHARED_READING_WORDS) -> bool:
     """Is the token at `index` inside a negation's scope? Bounded lookback."""
     for back in range(1, NEGATION_WINDOW + 1):
         j = index - back
         if j < 0:
             return False
         tok = tokens[j]
-        if tok in NEGATORS:
+        if tok in words.negators:
             return True
-        if tok == CLAUSE_BOUNDARY or tok in SCOPE_BREAKERS:
+        if tok == CLAUSE_BOUNDARY or tok in words.scope_breakers:
             return False
     return False
 
 
 def _find_markers(
-    tokens: Sequence[str], markers: Set[str]
+    tokens: Sequence[str], markers: Set[str],
+    words: ReadingWords = SHARED_READING_WORDS,
 ) -> Tuple[List[str], List[str]]:
     """
     Word-boundary marker search.
@@ -216,7 +214,7 @@ def _find_markers(
         if len(parts) == 1:
             for i, tok in enumerate(tokens):
                 if tok == marker:
-                    (negated if _negated_at(tokens, i) else live).append(marker)
+                    (negated if _negated_at(tokens, i, words) else live).append(marker)
                     break
         else:
             # phrase: locate the run, then test negation at its first token
@@ -227,7 +225,7 @@ def _find_markers(
                     None,
                 )
                 if idx is not None:
-                    (negated if _negated_at(tokens, idx) else live).append(marker)
+                    (negated if _negated_at(tokens, idx, words) else live).append(marker)
     return live, negated
 
 
@@ -240,7 +238,10 @@ class EmotionAnalysisService:
     character, mental state, or intent.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, reading_words: Optional[ReadingWords] = None) -> None:
+        # Ruling AE: the shared reading words, or this client's learned layer
+        # over them (ReadingWords.for_client).
+        self.words = reading_words or SHARED_READING_WORDS
         self.baseline_stress = 0.03
         self.baseline_coherence = 0.90
         self.recent_assessments: List[EmotionalMetrics] = []
@@ -316,7 +317,7 @@ class EmotionAnalysisService:
         "stress_level" was never zero and carried a constant into every
         comparison. Negated markers do not contribute.
         """
-        live, negated = _find_markers(tokens, set(self.stress_markers))
+        live, negated = _find_markers(tokens, set(self.stress_markers), self.words)
         score = sum(self.stress_markers[m] for m in live)
 
         counts: Dict[str, int] = {}
@@ -361,7 +362,7 @@ class EmotionAnalysisService:
         best: Optional[Tuple[int, int, EmotionalTone]] = None
 
         for name, (markers, tone, weight) in groups.items():
-            live, negated = _find_markers(tokens, markers)
+            live, negated = _find_markers(tokens, markers, self.words)
             negated_all.extend(negated)
             if live:
                 matches[name] = live
@@ -395,7 +396,7 @@ class EmotionAnalysisService:
         false alarm are not symmetric costs. The negation is reported instead,
         so a human sees the context rather than guessing at it.
         """
-        live, negated = _find_markers(tokens, self.crisis_phrases)
+        live, negated = _find_markers(tokens, self.crisis_phrases, self.words)
         hits = sorted(set(live) | set(negated))
         if hits:
             logger.warning(

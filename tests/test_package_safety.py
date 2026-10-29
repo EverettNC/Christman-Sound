@@ -21,6 +21,7 @@ import socket
 import stat
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -153,18 +154,52 @@ def test_importing_the_capture_client_writes_nothing_into_the_package(tmp_path):
     package = ROOT / "christman_voice_sdk"
     before = {p.name for p in package.iterdir()}
     env = {"CHRISTMAN_AI_HOME": str(tmp_path / "home"), "PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
-    proc = subprocess.run(
-        [sys.executable, "-c",
-         f"import sys; sys.path.insert(0, {str(ROOT)!r}); "
-         "import christman_voice_sdk.integration.voice_capture_client"],
-        capture_output=True, text=True, env=env, timeout=120,
-    )
+    # 2026-10-29: this failed once in a full run and passed on rerun, with no
+    # message saying why. Every failure now says which check failed, the
+    # return code, how long the import took, and the import's own stderr.
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c",
+             f"import sys; sys.path.insert(0, {str(ROOT)!r}); "
+             "import christman_voice_sdk.integration.voice_capture_client"],
+            capture_output=True, text=True, env=env, timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"TIMEOUT after {time.monotonic() - started:.1f}s; "
+                    f"stderr so far: {(exc.stderr or b'')[-2000:]!r}")
+    elapsed = time.monotonic() - started
+    seen = f"rc={proc.returncode} elapsed={elapsed:.1f}s stderr={proc.stderr[-2000:]!r}"
+    # THE ONE FAILURE (2026-10-29). It failed once in a full run "with no
+    # message saying why". Every other way this test can fail carries a
+    # message: a timeout names itself, a Python error prints a traceback on
+    # stderr, and the two file checks print what was created. The one path
+    # with nothing to say was `assert proc.returncode == 0, proc.stderr`
+    # with an EMPTY stderr: the child Python ended without a word, either
+    # killed by a signal (a negative return code, no traceback) or stopped
+    # inside native code with no message (measured 2026-10-29 on children
+    # ending each way: a Python error, a timeout and the file checks all
+    # print a reason; SIGKILL, SIGSEGV and a silent native exit print
+    # nothing). That run's return code was not kept, so which of these, and
+    # what caused it, is not known. It says nothing about the package
+    # writing files: the import never finished. So it is named as what it
+    # is. (This reasoning rests on the handoff's own words, "no message
+    # saying why"; the failing run's output was not kept.)
+    if proc.returncode < 0:
+        import signal as _signal
+        try:
+            name = _signal.Signals(-proc.returncode).name
+        except ValueError:
+            name = f"signal {-proc.returncode}"
+        pytest.fail(f"KILLED BY {name}: the import was stopped from outside before it finished, so "
+                    f"nothing was learned about what it writes. " + seen)
     if proc.returncode != 0 and "No module named" in proc.stderr:
         pytest.skip(f"not run: a dependency of voice_capture_client is missing here: {proc.stderr.strip()[-200:]}")
-    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.returncode == 0, "RETURN CODE: " + seen
     after = {p.name for p in package.iterdir()}
-    assert after - before - {"__pycache__"} == set(), f"import created {sorted(after - before)}"
-    assert not (tmp_path / "home").exists(), "import created the SDK's data folder"
+    assert after - before - {"__pycache__"} == set(), f"CREATED IN PACKAGE {sorted(after - before)}: " + seen
+    assert not (tmp_path / "home").exists(), (
+        f"CREATED DATA FOLDER {sorted(str(p) for p in (tmp_path / 'home').rglob('*'))}: " + seen)
 
 
 def test_no_default_model_id_in_the_config():

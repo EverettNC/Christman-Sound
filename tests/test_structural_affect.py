@@ -68,9 +68,20 @@ def test_had_enough_to_eat_is_a_meal():
 
 
 def test_curly_apostrophe_negates_like_straight():
+    # Plain negation cancels the same way with either apostrophe.
+    straight = A.analyze("I don't feel happy")
+    curly = A.analyze("I don’t feel happy")
+    assert straight.valence == curly.valence == 0.0, (straight.to_dict(), curly.to_dict())
+    # "not safe" is felt danger, not cancelled (Everett, ruling A,
+    # 2026-10-29); both apostrophes read it the same way.
     straight = A.analyze("I don't feel safe")
     curly = A.analyze("I don’t feel safe")
-    assert straight.valence == curly.valence == 0.0, (straight.to_dict(), curly.to_dict())
+    assert straight.valence == curly.valence == -0.7, (straight.to_dict(), curly.to_dict())
+    # Someone else's, with either apostrophe, is read the same way.
+    straight = A.analyze("she doesn't feel safe")
+    curly = A.analyze("she doesn’t feel safe")
+    assert straight.valence == curly.valence, (straight.to_dict(), curly.to_dict())
+    assert [h.term for h in straight.hits] == [h.term for h in curly.hits] == ["not safe"]
 
 
 def test_empty_and_no_signal():

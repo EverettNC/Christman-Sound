@@ -5,7 +5,17 @@
 # ==============================================================================
 
 """
-What Christman-Sound hands the face. Structure and arousal — no emotion names.
+A reading of the carbon: the client, and the people the client speaks of.
+Structure and arousal — no emotion names.
+
+WHAT THIS IS (Everett, 2026-10-29, ruling AC)
+---------------------------------------------
+Data only. It carries whose feeling it is and the exact clause that moved
+it: "my mama's scared" is never the client's. It is NOT a being's face
+moving with a feeling, and nothing here renders a face or drives an
+avatar. Everett: avatar work is "not where it needs to be until avatars
+get better"; it is not done in this package. Below, "the face" means
+whatever later reads this data, and the rules are what it must respect.
 
 WHY THERE IS NO 8-DIM VECTOR HERE
 ---------------------------------
@@ -46,9 +56,9 @@ and stops. It does not map to physics: those constants are Everett's, they
 belong to the face, and inventing them here would be the same error one layer
 down.
 
-WHAT THE FACE MUST GATE ON
---------------------------
-    `speaker_state_known`  — False means do not move the face off baseline.
+WHAT ANY READER OF THIS MUST GATE ON
+------------------------------------
+    `speaker_state_known`  — False means nothing is known of the speaker's state.
     `defer_to_human`       — words and voice disagree; do not act confidently.
     `attribution`          — only SELF is the speaker's own state. Someone
                              else's pain, or an impersonal topic, must not
@@ -242,12 +252,12 @@ def build_face_reading(
         if affect.certainty is AffectCertainty.AMBIGUOUS:
             notes.append(
                 "structure did not resolve — mixed affect with no contrast "
-                "marker. No valence is reported and the face must not guess."
+                "marker. No valence is reported and nothing is guessed."
             )
         if affect.attribution in (Attribution.OTHER, Attribution.IMPERSONAL):
             notes.append(
                 f"affect is attributed {affect.attribution.value} — not the "
-                "speaker's own state; it must not drive their face."
+                "speaker's own state and must not be read as theirs."
             )
         if affect.requests:
             notes.append(
@@ -275,7 +285,7 @@ def build_face_reading(
 
     rec: Reconciliation = reconcile(valence, self_distress_gate, prosody)
     if rec.defer_to_human:
-        notes.append("CHANNELS DISAGREE — face holds baseline, surface to a human.")
+        notes.append("CHANNELS DISAGREE — nothing is concluded; surface to a human.")
     notes.extend(rec.notes)
 
     known = bool(objects) or arousal is not None
@@ -286,9 +296,9 @@ def build_face_reading(
     elif attribution == Attribution.OTHER.value:
         stance = STANCE_EMPATHY
         notes.append(
-            "stance=empathy — this is someone else's state. The face should "
-            "move and the response should acknowledge it; it must not be "
-            "recorded as the speaker's own distress."
+            "stance=empathy — this is someone else's state, theirs and not "
+            "the client's. The response should acknowledge it; it must not "
+            "be recorded as the speaker's own distress."
         )
     else:
         stance = STANCE_NONE

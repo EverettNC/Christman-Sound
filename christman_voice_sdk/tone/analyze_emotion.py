@@ -59,18 +59,15 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-try:
-    from structural_affect import NEGATORS, SCOPE_BREAKERS
-except ImportError:
-    NEGATORS = frozenset({
-        "not", "no", "never", "none", "nothing", "cannot", "without",
-        "don't", "dont", "doesn't", "doesnt", "didn't", "didnt",
-        "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt", "won't", "wont",
-    })
-    SCOPE_BREAKERS = frozenset({
-        "but", "however", "although", "though", "yet", "because", "since",
-        "while", "and", "or", "so", "then",
-    })
+# One negation set for the whole package. 2026-10-29: this read a top-level
+# `structural_affect` module that exists nowhere, so the ImportError branch
+# always ran and a private copy of NEGATORS (missing "nobody", "neither",
+# "nor", "hardly", "barely", "ain't" in places) silently diverged from the
+# reader's own.
+# Everett, 2026-10-29 (ruling AE): the shared reading words, with every
+# correction ruled today, are the starting point; a client's learned words
+# extend or override them through ReadingWords.for_client.
+from ..audio.structural_affect import SHARED_READING_WORDS, ReadingWords
 
 _WORD = re.compile(r"[a-z']+")
 CLAUSE_BOUNDARY = "\x00"
@@ -118,15 +115,16 @@ def _tokens(text: str) -> List[str]:
     return out
 
 
-def _negated_at(tokens: Sequence[str], index: int) -> bool:
+def _negated_at(tokens: Sequence[str], index: int,
+                words: ReadingWords = SHARED_READING_WORDS) -> bool:
     for back in range(1, NEGATION_WINDOW + 1):
         j = index - back
         if j < 0:
             return False
         tok = tokens[j]
-        if tok in NEGATORS:
+        if tok in words.negators:
             return True
-        if tok == CLAUSE_BOUNDARY or tok in SCOPE_BREAKERS:
+        if tok == CLAUSE_BOUNDARY or tok in words.scope_breakers:
             return False
     return False
 
@@ -161,7 +159,11 @@ class EmotionalTagger:
     must not be read as one.
     """
 
-    def __init__(self, memory_path: str, tags_map: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, memory_path: str, tags_map: Optional[Dict[str, str]] = None,
+                 reading_words: Optional[ReadingWords] = None) -> None:
+        # Ruling AE: the shared reading words, or this client's learned layer
+        # over them (ReadingWords.for_client).
+        self.words = reading_words or SHARED_READING_WORDS
         self.memory_path = memory_path
         self.tags_map = dict(tags_map or TAGS_MAP)
 
@@ -203,7 +205,7 @@ class EmotionalTagger:
         found: Set[str] = set()
         for i, tok in enumerate(tokens):
             tag = self.tags_map.get(tok)
-            if tag and not _negated_at(tokens, i):
+            if tag and not _negated_at(tokens, i, self.words):
                 found.add(tag)
         return found
 
@@ -227,7 +229,7 @@ class EmotionalTagger:
             tokens = _tokens(combined)
             negated = sum(
                 1 for i, tok in enumerate(tokens)
-                if tok in self.tags_map and _negated_at(tokens, i)
+                if tok in self.tags_map and _negated_at(tokens, i, self.words)
             )
             report.negated_skipped += negated
 

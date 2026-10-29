@@ -211,7 +211,16 @@ class SpeakerBaseline:
     sample_count: int = 0
 
     #: Events required before a baseline is trusted. A baseline built from
-    #: three utterances is a guess with a schema.
+    #: three utterances is a guess with a schema. Everett, 2026-10-29 (ruling
+    #: AB): keep the speaker's own measured baseline: "That's exactly how the
+    #: carbon mind works: always comparing what's currently happening to
+    #: what's been happening. That's how you get to know people."
+    #: 30 is a CHOSEN STARTING VALUE, held until client data replaces it.
+    #: Reason: the conventional "n of 30" rule of thumb for a sample large
+    #: enough to describe its own middle and spread (the median and quartiles
+    #: used here); it was not measured on any client. With fewer events the
+    #: analyzer says plainly that there is no baseline yet (see
+    #: `ProsodyAnalyzer._no_baseline_note`); it never fills one in.
     MIN_SAMPLES: int = 30
 
     @property
@@ -221,6 +230,63 @@ class SpeakerBaseline:
             and self.f0_median is not None
             and self.rms_rest is not None
         )
+
+
+def _median_iqr(values: List[float]) -> "tuple[Optional[float], Optional[float]]":
+    if len(values) < SpeakerBaseline.MIN_SAMPLES:
+        return None, None
+    ordered = sorted(values)
+    q = statistics.quantiles(ordered, n=4, method="inclusive")
+    return statistics.median(ordered), q[2] - q[0]
+
+
+def build_speaker_baseline(events: List[VocalEvent], speaker_id: str) -> SpeakerBaseline:
+    """
+    Measure one speaker's baseline from their own closed events.
+
+    The shape existed; nothing filled it, so every utterance arrived cold.
+    This fills it, and only from measurements:
+
+      - `speaker_id` is required. A baseline that belongs to nobody is
+        somebody else's.
+      - At least MIN_SAMPLES (30) events with signal, or ValueError naming
+        the count. It never returns a partial baseline as if it were whole.
+      - Each feature is the median of THAT feature's measured values, and
+        needs 30 of them on its own. An F0 that locked 12 times out of 40
+        leaves f0_median None, and `is_populated` stays False — the analyzer
+        keeps reading against the recent window and says so. A missing lock
+        is never filled in.
+      - `rms_rest` is the median PEAK RMS of the speaker's events. Corti
+        cards carry no rest level; the name is kept so `ProsodyAnalyzer`
+        compares like with like (event peak against typical peak).
+    """
+    if not speaker_id or not str(speaker_id).strip():
+        raise ValueError("speaker_id is required — a baseline must belong to someone")
+    with_signal = [e for e in events if e.has_signal()]
+    if len(with_signal) < SpeakerBaseline.MIN_SAMPLES:
+        raise ValueError(
+            f"{len(with_signal)} event(s) with signal; a baseline needs "
+            f"{SpeakerBaseline.MIN_SAMPLES}. Not built."
+        )
+
+    def vals(name: str) -> List[float]:
+        return [float(getattr(e, name)) for e in with_signal
+                if getattr(e, name) is not None]
+
+    f0_median, f0_iqr = _median_iqr(vals("median_f0"))
+    rms_rest, rms_iqr = _median_iqr(vals("peak_rms"))
+    f1_seat, _ = _median_iqr(vals("f1"))
+    f2_seat, _ = _median_iqr(vals("f2"))
+    zcr_median, _ = _median_iqr(vals("mean_zcr"))
+    attack_median, _ = _median_iqr(vals("attack"))
+    return SpeakerBaseline(
+        speaker_id=str(speaker_id).strip(),
+        f0_median=f0_median, f0_iqr=f0_iqr,
+        rms_rest=rms_rest, rms_iqr=rms_iqr,
+        f1_seat=f1_seat, f2_seat=f2_seat,
+        zcr_median=zcr_median, attack_median=attack_median,
+        sample_count=len(with_signal),
+    )
 
 
 @dataclass(frozen=True)
@@ -356,6 +422,16 @@ class ProsodyAnalyzer:
 
     # -- References -----------------------------------------------------------
 
+    def _no_baseline_note(self) -> str:
+        """Ruling AB: with fewer events than the baseline needs, say so
+        plainly, with the count, rather than falling back in silence."""
+        return (
+            f"No speaker baseline yet: {self.baseline.sample_count} of "
+            f"{SpeakerBaseline.MIN_SAMPLES} events measured for this speaker"
+            + (f" ({self.baseline.speaker_id!r})" if self.baseline.speaker_id else "")
+            + ". Nothing here is compared with this person's own normal."
+        )
+
     def _against_ring(self, event: VocalEvent) -> ProsodyReading:
         """Compare against the last N events. A window, not a person."""
         n = len(self._ring)
@@ -369,7 +445,7 @@ class ProsodyAnalyzer:
                 notes=[
                     f"only {n} reference event(s); {MIN_REFERENCE_EVENTS} "
                     "required. No arousal reported.",
-                    "No speaker baseline exists — every utterance arrives cold.",
+                    self._no_baseline_note(),
                 ],
             )
 
@@ -403,6 +479,7 @@ class ProsodyAnalyzer:
             reference="recent_window",
             n_reference=n,
             notes=[
+                self._no_baseline_note(),
                 "Reference is the last few utterances in this session, NOT a "
                 "speaker baseline. Do not read this as speaker-normalized.",
             ],
@@ -692,6 +769,7 @@ __all__ = [
     "VocalEvent",
     "EventKind",
     "SpeakerBaseline",
+    "build_speaker_baseline",
     "ProsodyAnalyzer",
     "ProsodyReading",
     "ProsodyCertainty",

@@ -16,8 +16,15 @@ What this is:
   - A localhost-only HTTP receiver. It binds 127.0.0.1 and nothing else.
     Audio of a vulnerable client does not leave the device; a bind address
     is how that promise is kept, not a comment.
-  - One POST route. The body is one closed Corti VocalEvent card
-    (durationMs, peakRms, f0, tape, …).
+  - POST /api/sound/corti-event. The body is one closed Corti VocalEvent
+    card (durationMs, peakRms, f0, tape, …).
+  - POST /api/nonverbal/acoustic. The body is {"key": "<acoustic key>"},
+    exactly what the Corti client's postAcousticKey sends after its router
+    measured grunt_distress / grunt_acknowledge / grunt_frustration /
+    vocal_stimming. Point the client's acoustic URL setting here.
+    The key is looked up (acoustic_live); a distress key goes to the crisis
+    gate and a human. 2026-10-29: before this, the key had no receiver in
+    this package at all.
 
 What this is not:
   - Not a SoundDetectorBackend. The ear measures; nothing here classifies.
@@ -48,6 +55,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
+from .fusion_engine import CrisisNotDelivered
 from .hearing import Hearing, HearingTurn
 
 logger = logging.getLogger(__name__)
@@ -63,6 +71,12 @@ DEFAULT_PORT = 5486  # This receiver's own port. CHRISTMAN_SOUND_PORT or port= r
 BIND_HOST = "127.0.0.1"  # Not configurable. Offline-first is a bind address.
 MAX_BODY_BYTES = 2 * 1024 * 1024  # A 360-frame tape is ~20 KB. 2 MB is already generous.
 EVENT_PATH = "/api/sound/corti-event"
+ACOUSTIC_PATH = "/api/nonverbal/acoustic"
+# 64: a chosen starting value, not a measurement, held until real keys say
+# otherwise. Reason: the longest live key ("grunt_acknowledge") is 17
+# characters; 64 leaves room for keys not yet named and still refuses a body
+# that is not a key at all. A refused key is a 400 with the reason, never a guess.
+MAX_KEY_CHARS = 64
 HEALTH_PATH = "/health"
 RING_SIZE = 64
 
@@ -78,6 +92,7 @@ class ReceiverState:
     """Counters the /health route reports. Every number here was counted, not styled."""
 
     received: int = 0
+    keys_received: int = 0
     rejected: int = 0
     callback_failures: int = 0
     last_event_at: Optional[float] = None
@@ -120,11 +135,28 @@ class CortiReceiver:
                     self.state.callback_failures += 1
         return turn
 
+    def take_key(self, key: str) -> HearingTurn:
+        """One acoustic key in, one turn out. A distress key pages a human."""
+        turn = self.hearing.hear(acoustic_key=key)
+        with self.state.lock:
+            self.state.keys_received += 1
+            self.state.ring.appendleft(turn)
+        if self.on_turn is not None:
+            try:
+                self.on_turn(turn)
+            except Exception:
+                logger.exception("corti_receiver consumer callback raised")
+                with self.state.lock:
+                    self.state.callback_failures += 1
+        return turn
+
     def health(self) -> Dict[str, Any]:
         with self.state.lock:
             return {
                 "status": "alive",
                 "seat": "Hearing.hear(corti_event, text=None)",
+                "acoustic_seat": "Hearing.hear(acoustic_key=key)",
+                "keys_received": self.state.keys_received,
                 "received": self.state.received,
                 "rejected": self.state.rejected,
                 "callback_failures": self.state.callback_failures,
@@ -188,7 +220,7 @@ def _make_handler(receiver: CortiReceiver) -> type:
             self._send_json(200, receiver.health())
 
         def do_POST(self) -> None:
-            if self.path != EVENT_PATH:
+            if self.path not in (EVENT_PATH, ACOUSTIC_PATH):
                 self._reject(404, f"no such route: {self.path}")
                 return
             if not self._origin_allowed():
@@ -213,6 +245,31 @@ def _make_handler(receiver: CortiReceiver) -> type:
                 return
             if not isinstance(card, dict):
                 self._reject(400, f"card must be a JSON object, got {type(card).__name__}")
+                return
+
+            if self.path == ACOUSTIC_PATH:
+                key = card.get("key")
+                if not isinstance(key, str) or not key.strip() or len(key) > MAX_KEY_CHARS:
+                    self._reject(400, 'body must be {"key": "<acoustic key>"}')
+                    return
+                try:
+                    turn = receiver.take_key(key)
+                except CrisisNotDelivered as err:
+                    # Distress was read and no human was reached. That is a
+                    # 503 with the reason, never a 200.
+                    logger.error("acoustic key %r: crisis not delivered: %s", key, err)
+                    self._send_json(503, {"error": "crisis_not_delivered",
+                                          "detail": str(err), "key": key})
+                    return
+                if turn.decision is not None and turn.decision.safety.silent_alarm:
+                    # THE SILENT ALARM (Everett, 2026-10-29, ruling I): the
+                    # danger went to a human. The answer to the device that
+                    # sent the key says nothing about it, so nothing on that
+                    # device announces it. The page itself is in the turn the
+                    # receiver keeps (ring, on_turn), not in this reply.
+                    self._send_json(200, {"received": True})
+                    return
+                self._send_json(200, turn.to_dict())
                 return
 
             turn = receiver.take_card(card)
@@ -263,6 +320,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     server, receiver = create_receiver()
     host, port = server.server_address[0], server.server_address[1]
     logger.info("Corti wire listening on http://%s:%d%s", host, port, EVENT_PATH)
+    logger.info("acoustic keys: http://%s:%d%s", host, port, ACOUSTIC_PATH)
     logger.info("health: http://%s:%d%s", host, port, HEALTH_PATH)
     logger.info("allowed browser origins: %s", ", ".join(allowed_origins()) or "none (set CORTI_ALLOWED_ORIGINS)")
     try:
@@ -280,6 +338,7 @@ __all__ = [
     "start_in_thread",
     "main",
     "EVENT_PATH",
+    "ACOUSTIC_PATH",
     "HEALTH_PATH",
     "DEFAULT_PORT",
 ]

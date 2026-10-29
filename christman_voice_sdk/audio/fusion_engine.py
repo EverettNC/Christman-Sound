@@ -60,11 +60,17 @@ WHAT CHANGED IN THIS REWRITE
 
        "I'm about to [redirect] this motherfucker."
 
-   For a nonverbal user this pipeline IS their voice, so editing their words
+   For a nonverbal client this pipeline IS their voice, so editing their words
    before speaking them is putting words in their mouth — the same failure as a
    phrase generator, from the other direction. Flagged terms are now reported
-   in `flags` and `flagged_terms`; `sanitized_text` is the person's own text,
+   in `flags` and `flagged_terms`; `said` is the person's own words,
    unmodified.
+
+   Everett's ruling, 2026-10-29 (in the coordinator's words, not his): never
+   change the truth; nothing sanitizes what a person said. The field was named `sanitized_text`, and a hard block set it
+   to "" — the words were withheld from everything after the gate. The field
+   is now `said`, Aegis sets it to the exact words on every result (a
+   callback cannot change it), and a safety hold never withholds them.
 
 4. PROSODY IS AN INPUT, AND IT NEVER DECIDES ALONE.
 
@@ -130,10 +136,13 @@ class Carbon:
         self.analyzer = analyzer or StructuralAffectAnalyzer()
 
     def encode(
-        self, text: str, prosody_features: Optional[ProsodyFeatures] = None
+        self, text: str, prosody_features: Optional[ProsodyFeatures] = None,
+        previous_turn: str = "",
     ) -> AffectReading:
-        """Read affect from structure. Returns AffectReading, not a dict."""
-        return self.analyzer.analyze(text, prosody=prosody_features)
+        """Read affect from structure. Returns AffectReading, not a dict.
+        `previous_turn` anchors a subjectless fragment (ruling X)."""
+        return self.analyzer.analyze(text, prosody=prosody_features,
+                                     previous_turn=previous_turn)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +167,8 @@ class Silicon:
 
     #: Distress intensity that calls for grounding. A threshold, not a
     #: measurement — named so it can be argued with.
+    #: Chosen starting value, held until client data replaces it. Reason:
+    #: just above the middle of the 0..1 scale.
     GROUNDING_INTENSITY = 0.55
 
     def retrieve(
@@ -212,6 +223,15 @@ class Silicon:
         # Domain scoring runs on surviving affect terms — terms structure
         # cancelled (negated, volitional, impersonal) must not steer the domain
         # either. The old version scored the raw word vector.
+        #
+        # Everett, 2026-10-29 (ruling N): the handoff added a fixed list of
+        # plain words ("remind", "breathe", "read" and the rest, at half a
+        # feeling word's weight) that steered the domain. Taken out: "It ain't
+        # up to Replit how the being behaves. The being has to get to know the
+        # client first before it can even put words in that category. It's
+        # the learned everyday words that the being learns by being with the
+        # client." Everyday words steer only from what is learned for that
+        # client; until that exists, this is main's (e35fe46) scoring.
         live_terms = {
             h.term: abs(h.final_weight)
             for h in affect.hits
@@ -232,6 +252,10 @@ class Silicon:
         distressed = (
             affect.is_self_distress
             and affect.intensity is not None
+            # HELD FOR EVERETT (2026-10-29): the handoff rounded the intensity
+            # to 4 places before this comparison, so a reading of 0.54999…
+            # would meet the bar. That moves where the client's own distress
+            # is routed, so the comparison is main's (e35fe46), unrounded.
             and affect.intensity >= self.GROUNDING_INTENSITY
         )
 
@@ -276,13 +300,14 @@ class SafetyResult:
     """
     Outcome of a safety check.
 
-    `sanitized_text` is the person's OWN text. It is never edited. Flagged
-    terms are reported alongside it, not substituted into it.
+    `said` is the person's OWN words, exactly as said, every letter. Aegis
+    sets it from the input on every result. Nothing is cleaned, softened,
+    replaced or withheld. Flagged terms are reported alongside it.
     """
 
     status: str  # "clear" | "soft_redirect" | "hard_block"
     reason: str = ""
-    sanitized_text: str = ""
+    said: str = ""
     flags: List[str] = field(default_factory=list)
     flagged_terms: List[str] = field(default_factory=list)
     hold_marker: str = ""
@@ -293,6 +318,27 @@ class SafetyResult:
     #: 'clear'} with nothing on it saying the real gate never ran.
     degraded: bool = False
     degraded_reason: str = ""
+    #: What the being should ask next, as a mark (hearing.ASK_*), or "".
+    #: Everett, 2026-10-29: when something is recorded and flagged instead
+    #: of paged, the being follows up by ASKING. It never tells, and never
+    #: says "you're not okay" or "calm down". Ruling AA: the package does
+    #: not word the question ("I hate canned messages"); the being does.
+    #: The client's answer is read on the next turn against this mark.
+    follow_up: str = ""
+    #: The words the question is about ("scared", "your leg", "since
+    #: monday"), or "".
+    follow_up_about: str = ""
+    #: THE SILENT ALARM (Everett, 2026-10-29, rulings I and K). A danger
+    #: signal or a danger sentence goes to a human silently: it is not voiced
+    #: and nothing announces that help is coming. Saying it out loud can get
+    #: the client hurt worse and the device taken. The words are not changed
+    #: or lost: `said` holds them, and the human gets them.
+    silent_alarm: bool = False
+    #: Ruling K: a danger sentence the client typed or said IS voiced when the
+    #: client asked for it to be said aloud, or when the being's own
+    #: perception reports a public setting (live_state["public_setting"] is
+    #: True). Absent or unknown: silent. It pages either way.
+    voice_aloud: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -357,6 +403,10 @@ class Aegis:
                 result.degraded = True
                 result.degraded_reason = degraded_reason
 
+        # The words are the words. Whatever a callback put here, what reaches
+        # the human and everything after the gate is exactly what was said.
+        result.said = original
+
         if result.status == "hard_block":
             return self._deliver_crisis(result, context)
         return result
@@ -369,7 +419,7 @@ class Aegis:
                 return SafetyResult(
                     status="hard_block",
                     reason="crisis_language",
-                    sanitized_text="",           # nothing to speak
+                    said=original,
                     flags=[f"hard:{phrase}"],
                     flagged_terms=[phrase],
                     hold_marker="[SAFETY HOLD — crisis language detected]",
@@ -386,12 +436,12 @@ class Aegis:
             return SafetyResult(
                 status="soft_redirect",
                 reason="elevated_language",
-                sanitized_text=original,   # UNCHANGED — see class docstring
+                said=original,
                 flags=flags,
                 flagged_terms=terms,
             )
 
-        return SafetyResult(status="clear", sanitized_text=original)
+        return SafetyResult(status="clear", said=original)
 
     def _deliver_crisis(
         self, result: SafetyResult, context: Dict[str, Any]
@@ -419,13 +469,17 @@ class Aegis:
         return SafetyResult(
             status=result.status,
             reason=result.reason,
-            sanitized_text=result.sanitized_text,
+            said=result.said,
             flags=list(result.flags),
             flagged_terms=list(result.flagged_terms),
             hold_marker=result.hold_marker,
             delivered_to_human=True,
             degraded=result.degraded,
             degraded_reason=result.degraded_reason,
+            follow_up=result.follow_up,
+            follow_up_about=result.follow_up_about,
+            silent_alarm=result.silent_alarm,
+            voice_aloud=result.voice_aloud,
         )
 
 
@@ -451,8 +505,8 @@ class Decision:
     reconciliation: Optional[Reconciliation]
     coherence: Optional[float]
     delivery: Dict[str, Any]
+    #: The client's words, exactly as said. Never edited, never withheld.
     input_text: str
-    sanitized_text: str
 
     @property
     def carbon(self) -> Dict[str, Any]:
@@ -468,8 +522,28 @@ class Decision:
 
     @property
     def speakable(self) -> bool:
-        """False on a safety hold. The single gate before speaking."""
-        return self.mode != MODE_SAFETY_HOLD and bool(self.sanitized_text)
+        """
+        True whenever there are words, except under the silent alarm.
+
+        A safety hold pages a human; it never withholds what the client said.
+        2026-10-29: this was False on every safety hold, so a client who typed
+        "I want to kill myself" on an AAC board was silenced at the moment
+        they asked for help.
+
+        The one exception is Everett's own (rulings I and K, 2026-10-29): a
+        danger sentence ("I'm scared for my safety", "he is hurting me") is
+        not voiced, so the client is not put in more danger, unless the client
+        asked for it aloud or the setting is public. Its words are unchanged
+        in `input_text` and `safety.said`, and they reach the human.
+        """
+        if self.safety.silent_alarm and not self.safety.voice_aloud:
+            return False
+        return bool(self.input_text)
+
+    @property
+    def reply_held(self) -> bool:
+        """The being's OWN reply waits for the human. The client's words do not."""
+        return self.mode == MODE_SAFETY_HOLD
 
     @property
     def knows(self) -> bool:
@@ -500,9 +574,9 @@ class Decision:
             "coherence_known": self.coherence is not None,
             "delivery": dict(self.delivery),
             "input_text": self.input_text,
-            "sanitized_text": self.sanitized_text,
             "carbon": self.carbon,
             "speakable": self.speakable,
+            "reply_held": self.reply_held,
             "knows": self.knows,
         }
 
@@ -557,9 +631,17 @@ class FusionEngine:
         """
         live_state = live_state or {}
 
-        affect = self.carbon_layer.encode(user_input)
-        constraints = self.silicon.retrieve(affect, live_state)
+        # Ruling X: a fragment ("it hurts") is read against the turn before.
+        affect = self.carbon_layer.encode(
+            user_input, previous_turn=str(live_state.get("previous_turn") or ""))
 
+        # THE PAGE FIRES FIRST (Everett, 2026-10-29, ruling M). "That slowing
+        # down and confirming is enough time for a veteran to shoot
+        # themselves in the head, or for an assailant to stab a victim."
+        # Aegis hands a hard block to a human here, before the domain is
+        # retrieved, before the mode, the delivery or any reply exists, and
+        # nothing after this line can delay it or take it back. Nothing in
+        # the crisis path waits on a confirmation, a reply, or a pace.
         safety = self.aegis.check(
             user_input,
             context={
@@ -569,6 +651,8 @@ class FusionEngine:
                 **live_state,
             },
         )
+
+        constraints = self.silicon.retrieve(affect, live_state)
 
         rec = reconcile(affect.valence, affect.is_self_distress, prosody)
         mode, unknown_reason = self._resolve_mode(
@@ -602,7 +686,6 @@ class FusionEngine:
             coherence=coherence,
             delivery=delivery,
             input_text=user_input or "",
-            sanitized_text=safety.sanitized_text,
         )
 
     def _resolve_mode(
@@ -639,12 +722,52 @@ class FusionEngine:
         # Not knowing is its own answer, and it outranks acting on a guess.
         if rec.defer_to_human:
             return MODE_UNKNOWN, rec.reason
+        # Ruling R (Everett, 2026-10-29): "I can't be happy" is an inability,
+        # a signal. Nothing is concluded; the being asks why.
+        if safety.reason == "inability_signal":
+            return MODE_UNKNOWN, ("an inability over a good feeling, a signal; "
+                                  f"the being asks: {safety.follow_up!r}")
+        # Ruling AA: "my teacher is sad" — whether that is a person is not
+        # known from the words. Nothing is concluded; the being asks.
+        if safety.reason == "person_unclear":
+            return MODE_UNKNOWN, ("whether the subject is a person is not known; "
+                                  f"the being asks: {safety.follow_up!r} about "
+                                  f"{safety.follow_up_about!r}")
+        # Ruling X: "it hurts" with no turn before it to anchor it.
+        if safety.reason == "fragment_unclear":
+            return MODE_UNKNOWN, ("a fragment with nothing before it to anchor it; "
+                                  f"the being asks: {safety.follow_up!r}")
+        # Ruling W: "thank you, I'm scared" stays unclear; the being asks.
+        if safety.reason == "thanks_unclear":
+            return MODE_UNKNOWN, ("thanks and a feeling, unclear together; "
+                                  f"the being asks: {safety.follow_up!r}")
         if affect.certainty is AffectCertainty.AMBIGUOUS:
             return MODE_UNKNOWN, (
                 "; ".join(affect.notes)
                 or "Affect could not be resolved from sentence structure."
             )
+        # Ruling O (Everett, 2026-10-29): "You got to have full context." A
+        # fear with nothing in the turn to say what it is about concludes
+        # nothing; the being asks (safety.follow_up).
+        if safety.reason == "fear_without_context":
+            return MODE_UNKNOWN, ("not enough context to tell what the fear is "
+                                  f"about; the being asks: {safety.follow_up!r}")
+        # Ruling P: whose feeling it is cannot be told from the words.
+        if safety.reason == "whose_feeling_unclear":
+            return MODE_UNKNOWN, ("whose feeling it is cannot be told from the "
+                                  f"words; the being asks: {safety.follow_up!r}")
 
+        # HELD FOR EVERETT (2026-10-29). Two lines were added here in the
+        # Replit handoff and are taken back out, so the mode is what main
+        # (e35fe46) decided:
+        #   - a soft_redirect (the client's own history of harm, or someone
+        #     else at risk while two beings talk) turned the turn to
+        #     hold-space;
+        #   - the client's own distress under the grounding bar turned the
+        #     turn to hold-space.
+        # Both change how the client's own distress is routed. Everett ruled
+        # that text alone cannot tell "I'm okay" from "I'm okay"; only the
+        # voice carries the difference. The questions are written for him.
         mode = constraints.get("response_mode") or MODE_STANDARD
         if constraints.get("needs_grounding") and mode == MODE_STANDARD:
             mode = MODE_GENTLE_LIFT
@@ -695,7 +818,17 @@ class FusionEngine:
                 **provenance,
             }
 
-        return {
+        # HELD FOR EVERETT (2026-10-29). The Replit handoff made pace, warmth
+        # and silence follow the mode (a safety hold and a gentle lift
+        # "slower") and added a `safety_flag` field. That changes how the
+        # client's own distress is delivered, so this is main's (e35fe46)
+        # delivery, and the question is written for Everett.
+        #
+        # Ruling M (Everett, 2026-10-29): a safety hold carries no "confirm
+        # before acting" at all. The page has already gone (see fuse); this
+        # is only how the being speaks afterward, and it never sits in front
+        # of the page.
+        delivery = {
             "pace": constraints.get("pace", "normal"),
             "warmth": constraints.get("warmth", "balanced"),
             "allow_silence": constraints.get("allow_silence", True),
@@ -705,6 +838,10 @@ class FusionEngine:
             "assert_nothing": False,
             **provenance,
         }
+        if mode == MODE_SAFETY_HOLD:
+            del delivery["confirm_before_acting"]
+            delivery["page_sent_first"] = bool(safety is not None and safety.delivered_to_human)
+        return delivery
 
     def _update_shared_state(self, update: Dict[str, Any]) -> None:
         self.shared_state.update(update)

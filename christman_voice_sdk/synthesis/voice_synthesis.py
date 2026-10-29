@@ -74,6 +74,7 @@ import time
 import threading
 import wave
 
+from .reply_guard import check_being_reply
 from ..engines.synthesis_result import (
     SOVEREIGN_NOT_WIRED,  # noqa: F401  (re-exported; the other cut paths still give it)
     DegradedSynthesisError,  # noqa: F401  (re-exported for callers that caught it here)
@@ -458,13 +459,28 @@ class SpeechSynthesisEngine:
         play_audio: bool = True,
         output_path: Optional[str] = None,
         voice=None,
+        being_reply: bool = False,
+        silent_alarm: bool = False,
         **controls,
     ) -> Optional[str]:
         """
         Text -> WAV path (and playback when asked). Raises `NothingVoiced`
         with the real reason when no audio can be made. Returns None only
         for empty text.
+
+        being_reply: True when the text is the being's OWN reply. Then the
+        reply guard runs first (Everett, 2026-10-29): a being never says
+        "you're not okay" or "calm down" to a client, and such a reply
+        raises ForbiddenReply with nothing spoken. False (the default) is
+        the client's own words, which are spoken exactly as given and never
+        go through the guard.
+
+        silent_alarm: True while a danger signal has gone to a human silently
+        (ruling I). With being_reply, a reply that announces help is then
+        refused too.
         """
+        if being_reply:
+            check_being_reply(text, silent_alarm=silent_alarm)
         if not text or not text.strip():
             logger.warning("No text provided for speech generation.")
             return None
