@@ -30,13 +30,21 @@ import logging
 from typing import Optional
 
 from ..engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
+from .reply_guard import check_being_reply
 
 logger = logging.getLogger(__name__)
 
 
 def speak(text: str, tone_profile: Optional[dict] = None) -> None:
-    """Raises `SynthesisUnavailable` with the reason. Nothing is voiced."""
+    """
+    Raises `SynthesisUnavailable` with the reason. Nothing is voiced.
+
+    This is the being's own reply, so the reply guard runs first (Everett,
+    2026-10-29): a reply that says "you're not okay" or "calm down" to a
+    client raises ForbiddenReply, plainly, before anything else.
+    """
     del tone_profile
+    check_being_reply(text)
     err = SynthesisUnavailable(SOVEREIGN_NOT_WIRED, where="speech_response.speak")
     logger.error("Did not speak %r: %s", (text or "")[:40], err)
     raise err

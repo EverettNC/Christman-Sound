@@ -84,6 +84,7 @@ Do not wire the card source as a `SoundDetectorBackend`.
 - `tts_service.py` — Local Flask service (127.0.0.1) in front of the mouth
 - `phoneme_labeler.py` — Phoneme and viseme timing
 - `speech_response.py` — `speak()`; raises `SynthesisUnavailable`. It does not reach the mouth; use `voice_synthesis`
+- `reply_guard.py` — Lines a being never says to a client ("you're not okay", "calm down"); runs on the being's own reply only, never on the client's words
 - `shorty_voice_engine_v3.py` — Emotion quantification; its `synthesize()` raises `SynthesisUnavailable`
 - `voice_synthesis_orchestrator.py` — Voicepack, timbre and emotion pipeline; its `synthesize()` raises `SynthesisUnavailable`
 
