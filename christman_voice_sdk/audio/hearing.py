@@ -440,6 +440,13 @@ def _silent_alarm(words: SafetyResult, original: str, context: Dict[str, Any]) -
         return words
     danger = (
         words.reason in ("harm_now_to_client", "client_danger", "answered_not_safe")
+        # Self-harm (Everett, on the 2026-10-29 review: yes). "I want to
+        # kill myself", "I'm going to hurt myself", "I'm cutting myself" and
+        # every self-harm sentence page and are NOT voiced, unless the
+        # client asks for them aloud or the setting is public (ruling K).
+        # That is every harm frame with the speaker as patient, and the
+        # client's own history of it ("I used to want to kill myself").
+        or words.reason in ("harm_frame_speaker_at_risk", "harm_frame_history_self")
         # Someone else doing harm to the client: a verb frame whose patient
         # is the speaker and whose subject is not ("he is choking me"; the
         # frame reads "he's" as an unknown subject, so not-the-speaker is
