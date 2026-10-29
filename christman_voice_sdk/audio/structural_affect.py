@@ -80,7 +80,7 @@ reconciled against that spec before it is wired.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -97,7 +97,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 LEXICON: Dict[str, float] = {
     # --- positive: connection, relief, joy, satisfaction
     "love": 0.95, "adore": 0.9, "grateful": 0.85, "thankful": 0.85,
-    "happy": 0.85, "glad": 0.8, "joy": 0.9,
+    "thank": 0.6, "thanks": 0.6, "happy": 0.85, "glad": 0.8, "joy": 0.9,
     "joyful": 0.9, "delighted": 0.9, "excited": 0.8, "thrilled": 0.9,
     "proud": 0.75, "relieved": 0.8, "calm": 0.6, "safe": 0.75, "peaceful": 0.7,
     "comfortable": 0.6, "content": 0.65, "beautiful": 0.7, "wonderful": 0.85,
@@ -115,6 +115,14 @@ LEXICON: Dict[str, float] = {
     "sad": -0.7, "miserable": -0.85, "hopeless": -0.95, "despair": -0.95,
     "alone": -0.55, "lonely": -0.8, "isolated": -0.75, "abandoned": -0.85,
     "angry": -0.7, "furious": -0.85, "frustrated": -0.6, "upset": -0.65,
+    # Added 2026-10-29 for Everett's ruling U sentences ("I'm not mad, she's
+    # mad"): measured before, "mad" read nothing at all. Weight: the same as
+    # "angry", the word it stands for; a chosen starting value.
+    "mad": -0.7,
+    # Added 2026-10-29 for Everett's ruling X example ("Yeah, this is
+    # scary"): measured before, "scary" read nothing at all. Weight: the same
+    # as "scared", the feeling it names; a chosen starting value.
+    "scary": -0.8,
     "trapped": -0.8, "stuck": -0.5, "helpless": -0.85, "worthless": -0.95,
     "ashamed": -0.8, "guilty": -0.6, "confused": -0.4, "lost": -0.6,
     "tired": -0.4, "sick": -0.6, "dying": -0.9,
@@ -132,8 +140,9 @@ REQUEST_WORDS = frozenset({"help", "need", "please", "urgent", "emergency"})
 #: The weights are chosen starting values, not measurements, held until
 #: client data replaces them. Reasons, for the entries added 2026-10-29:
 #: "not safe" -0.7 and "not okay" -0.6 sit below "scared"/"afraid" (-0.8),
-#: "not okay" near "upset" (-0.65); "couldn't be happier" 0.9 and "couldn't
-#: be better" 0.85 sit with "happy" (0.85) and "never better" (0.85). The
+#: "not okay" near "upset" (-0.65); "couldn't be better" 0.85 sits with
+#: "happy" (0.85) and "never better" (0.85); for "couldn't be happier",
+#: "couldn't be worse" and "doing great" see ruling S below. The
 #: older entries were here before with no reason written; their reasons are
 #: Everett's to give.
 IDIOMS: Dict[str, float] = {
@@ -169,12 +178,24 @@ IDIOMS: Dict[str, float] = {
     "no one loves me": -0.85,
     "no one cares": -0.8,
     "have no one": -0.75,
-    # Inability over a good state reads as the lack of it (ABILITY_NEGATORS),
-    # so the idiom that means the opposite is listed.
-    "couldn't be happier": 0.9,
-    "couldnt be happier": 0.9,
+    # Everett, 2026-10-29 (ruling S): "I couldn't be happier" is happiness at
+    # its fullest: an emotion, the speaker's, at the top of the scale (1.0,
+    # the ceiling every reading is held to). "I couldn't be better" is NOT an
+    # emotion: "better is a state of being, happier is an emotion." It and
+    # "doing great" are read as a state of being (see STATE_IDIOMS), kept a
+    # separate reading type from the emotion. "I couldn't be worse" is the
+    # same state of being, low. Each is listed whole so "couldn't" is not
+    # read as an inability over it (ruling R). State weights: chosen
+    # starting values, held until client data replaces them; better/worse
+    # sit at the strength main gave "couldn't be better" (0.85), mirrored,
+    # and "doing great" at main's weight for "great" (0.6).
+    "couldn't be happier": 1.0,
+    "couldnt be happier": 1.0,
     "couldn't be better": 0.85,
     "couldnt be better": 0.85,
+    "couldn't be worse": -0.85,
+    "couldnt be worse": -0.85,
+    "doing great": 0.6,
     # "Not okay" / "not safe". Plain negation cancels ("not happy" is not
     # "sad"); these two do not: they are reports of distress and danger.
     # Everett, 2026-10-29: the client's OWN "I'm not okay", "I don't feel
@@ -196,6 +217,23 @@ SUBJECT_IDIOMS = frozenset({"not okay", "not safe"})
 #: Idioms that are always the speaker's own state (the speaker is the one
 #: no one loves). See the isolation entries above.
 SELF_IDIOMS = frozenset({"no one loves me", "no one cares", "have no one"})
+
+#: Idioms that are a state of being, not an emotion (ruling S). Their hits
+#: carry kind "state"; every other feeling word carries kind "emotion".
+STATE_IDIOMS = frozenset({
+    "couldn't be better", "couldnt be better",
+    "couldn't be worse", "couldnt be worse",
+    "doing great",
+})
+
+#: Idioms that say an emotion is at its fullest (ruling S): read at top
+#: intensity, not discounted for being one phrase.
+FULLEST_IDIOMS = frozenset({"couldn't be happier", "couldnt be happier"})
+
+#: The kinds of reading a hit can be (rulings R and S, 2026-10-29).
+KIND_EMOTION = "emotion"        # a feeling: "I'm scared", "I couldn't be happier"
+KIND_STATE = "state"            # a state of being: "I couldn't be better"
+KIND_INABILITY = "inability"    # "I can't be happy": a signal, its own reading
 
 #: Idiom match patterns that need more than word boundaries. "had enough TO
 #: EAT" is a meal, not distress (measured 2026-10-11: self_distress=True).
@@ -247,21 +285,35 @@ NEGATORS = frozenset({
     "arent", "wasn't", "wasnt", "won't", "wont", "ain't", "aint",
 })
 
-#: Negators of ability. Plain negation cancels ("not happy" is not "sad"),
-#: but inability over a good state is the lack of it: "I can't be happy",
-#: "I can't feel safe". Measured 2026-10-29: "I can't be happy" read +0.85,
-#: because "can't" was not a negator at all. Affect only: harm_frame keeps
+#: Negators of ability. Plain negation cancels ("not happy" is not "sad").
+#: Inability over a good feeling is neither the feeling nor its absence
+#: (ruling R, see `_inability`). Measured 2026-10-29: main read "I can't be
+#: happy" as +0.85 ("can't" was not a negator at all); the handoff read it
+#: as the lack of happiness at half strength. Affect only: harm_frame keeps
 #: its own NEGATORS, pinned to Everett's crisis table.
 ABILITY_NEGATORS = frozenset({
     "can't", "cant", "cannot", "couldn't", "couldnt", "unable",
 })
 
-#: Every negator the affect reader honours.
-AFFECT_NEGATORS = NEGATORS | ABILITY_NEGATORS | frozenset({
-    "shouldn't", "shouldnt", "wouldn't", "wouldnt", "haven't", "havent",
-    "hasn't", "hasnt", "hadn't", "hadnt", "weren't", "werent",
-    "mustn't", "mustnt",
+#: Negators that deny a feeling for the stretch of time the clause names
+#: (Everett, 2026-10-29, ruling T): "I haven't been scared since Monday" is
+#: no fear since Monday. A statement; nothing is concluded, and the being
+#: may ask a plain question ("What happened on Monday?").
+TIME_BOUNDED_NEGATORS = frozenset({
+    "haven't", "havent", "hasn't", "hasnt", "hadn't", "hadnt",
+    "weren't", "werent",
 })
+
+#: Modals that judge a feeling and do NOT deny it (ruling T): "I shouldn't
+#: be this angry" means the anger IS there; "shouldn't" is about whether it
+#: is right, not whether it is there. The handoff had added these as
+#: negators, which cancelled the anger. See `_judged`.
+JUDGING_MODALS = frozenset({
+    "shouldn't", "shouldnt", "wouldn't", "wouldnt", "mustn't", "mustnt",
+})
+
+#: Every negator the affect reader honours.
+AFFECT_NEGATORS = NEGATORS | ABILITY_NEGATORS | TIME_BOUNDED_NEGATORS
 
 #: Ends a negation's reach. Without these, "I am not scared but I am alone"
 #: would have the negation leak forward and cancel "alone" too.
@@ -269,6 +321,55 @@ SCOPE_BREAKERS = frozenset({
     "but", "however", "although", "though", "yet", "because", "since",
     "while", "whereas", "and", "or", "so", "then",
 })
+
+
+@dataclass(frozen=True)
+class ReadingWords:
+    """
+    The negation and scope words the package's readers share (Everett,
+    2026-10-29, ruling AE): the tone readers and the presence reader use
+    these, with every correction ruled today, instead of private copies.
+
+    The shared set is only the starting point: "the being still needs to be
+    able to evolve to the client's standards." `for_client` is the per-client
+    layer: words the being has learned for one client extend or override the
+    shared set. Learning them is the being's (the same per-client repertoire
+    as rulings J, N and AA); nothing here learns, stores or invents a word.
+    """
+
+    negators: frozenset
+    scope_breakers: frozenset
+
+    _FIELDS = ("negators", "scope_breakers")
+
+    def for_client(self, learned: Optional[Dict[str, Dict[str, Any]]] = None) -> "ReadingWords":
+        """
+        This set, extended or overridden by one client's learned words:
+        {"negators": {"add": [...], "remove": [...]}, "scope_breakers": {...}}.
+        None or {} returns the shared set unchanged. An unknown key raises:
+        a misspelled layer must not be silently ignored.
+        """
+        if not learned:
+            return self
+        unknown = sorted(set(learned) - set(self._FIELDS))
+        if unknown:
+            raise ValueError(f"unknown reading-word set(s) {unknown}; expected {list(self._FIELDS)}")
+        out: Dict[str, frozenset] = {}
+        for name in self._FIELDS:
+            layer = learned.get(name) or {}
+            bad = sorted(set(layer) - {"add", "remove"})
+            if bad:
+                raise ValueError(f"{name}: unknown change(s) {bad}; expected 'add' / 'remove'")
+            add = {str(w).lower() for w in layer.get("add", ())}
+            remove = {str(w).lower() for w in layer.get("remove", ())}
+            out[name] = (getattr(self, name) | add) - remove
+        return ReadingWords(**out)
+
+
+#: The shared set: the affect reader's own negators (ability and
+#: time-bounded included, judging modals not: rulings R and T) and scope
+#: breakers.
+SHARED_READING_WORDS = ReadingWords(negators=AFFECT_NEGATORS, scope_breakers=SCOPE_BREAKERS)
 
 #: Contrast markers. The clause AFTER one of these is the resolution — the
 #: thing the speaker actually landed on. "I'm overwhelmed BUT I'm glad."
@@ -301,27 +402,23 @@ THIRD_PERSON = frozenset({
     "story", "topic", "subject",
 })
 
-#: People. A possessive in front of one points at that person ("my mom's in
-#: pain"), and one as the subject makes the experience theirs.
-PERSON_NOUNS = frozenset({
-    "mom", "mommy", "mum", "mama", "mother", "dad", "daddy", "papa", "father",
-    "sister", "brother", "son", "daughter", "wife", "husband", "partner",
-    "boyfriend", "girlfriend", "friend", "friends", "baby", "kid", "kids",
-    "child", "children", "grandma", "grandpa", "grandmother", "grandfather",
-    "nana", "granny", "aunt", "uncle", "cousin", "niece", "nephew",
-    "neighbor", "teacher", "doctor", "nurse", "caregiver", "boss", "man",
-    "woman", "boy", "girl", "guy", "lady", "family", "parents", "anyone",
-    "anybody",
-})
+#: Who else can be the experiencer, for affect: main's THIRD_PERSON, less
+#: "it" (ruling X: "it hurts" is read against the turn before it).
+#:
+#: Everett, 2026-10-29 (ruling AA): the handoff's fixed list of person words
+#: (mom, dad, friend, teacher, nurse, caregiver, boss, ...) is removed. "What
+#: better way than the being adapting and molding to the family versus
+#: standardized lists. I hate standardized lists." Who counts as a person in
+#: a client's life is learned per client by the being (the same per-client
+#: repertoire as rulings J and N; not built). Grammar alone ("my ___" plus a
+#: feeling) does not decide it: when the words cannot tell whether the
+#: subject is a person, nothing is concluded and the being asks (see
+#: `_attribute` and hearing.ASK_WHO).
+OTHER_EXPERIENCER = THIRD_PERSON - {"it", "its"}
 
-#: Who else can be the experiencer, for affect. "it" is NOT here: "it hurts"
-#: names no one, and on an AAC board it is the speaker's own hurt (Everett's
-#: subjectless ruling, 2026-10-11). Measured 2026-10-29: "It hurts" came back
-#: attribution=other, distress=False. harm_frame keeps THIRD_PERSON as is.
-OTHER_EXPERIENCER = (THIRD_PERSON - {"it", "its"}) | PERSON_NOUNS
-
-#: Someone else is not okay / not safe. Everett, 2026-10-29: "My mom is not
-#: okay: a carbon is saying another person is not okay." Measured before:
+#: Someone else is not okay / not safe (Everett's ruling, 2026-10-29, in the
+#: coordinator's words: "my mom is not okay" is a carbon saying another
+#: person is not okay). Measured before:
 #: "my mom is not okay" read "okay" negated, 0.0 — nobody was flagged. The
 #: person stays OUTSIDE the match (lookbehind) so the subject still decides
 #: whose state it is.
@@ -355,18 +452,70 @@ EXPLETIVE_SUBJECTS = frozenset({
 #: Possessives. "my MOM", "her BROTHER".
 POSSESSIVES = frozenset({"my", "our", "your", "his", "her", "their"})
 
-#: Courtesy. "thank you" is manners, not a feeling. Measured 2026-10-29:
-#: "thank you I'm scared" came back AMBIGUOUS ("thank" +0.6 against "scared"
-#: -0.8, no contrast marker) and the fear was withheld.
-COURTESY = frozenset({"thank", "thanks", "thankyou"})
+#: Body parts. "he hurt my ARM" is the client's body, not someone else
+#: (hearing.py), and "Is there something wrong with your LEG?" / "Yeah, it
+#: hurts" is the client's own leg (ruling X).
+BODY_PARTS = frozenset({
+    "arm", "arms", "neck", "head", "face", "back", "leg", "legs", "hand",
+    "hands", "wrist", "wrists", "finger", "fingers", "rib", "ribs", "chest",
+    "stomach", "belly", "eye", "eyes", "nose", "mouth", "jaw", "throat",
+    "shoulder", "shoulders", "knee", "knees", "foot", "feet", "ankle",
+    "ankles", "hip", "hips", "side", "ear", "ears", "lip", "lips", "tooth",
+    "teeth", "body", "skin", "hair", "cheek", "chin", "spine", "elbow",
+    "elbows", "thumb", "toes",
+})
+
+#: Words that may open a fragment before its subject: "YEAH, it hurts".
+_FRAGMENT_OPENERS = frozenset({
+    "yeah", "yes", "yep", "yup", "no", "nope", "nah", "well", "oh", "um",
+    "uh", "mm", "hmm",
+})
+
+
+def anchor_from(previous_turn: str) -> Optional[Tuple[str, str]]:
+    """
+    What a subjectless fragment ("it hurts", "this is scary") answers, read
+    from the turn before it (Everett, 2026-10-29, ruling X). Returns
+    ("self", "your leg") when the previous turn asked about the client's own
+    body; ("thing", "that haunted house") when it named a thing; None when
+    there is nothing to anchor to. Reads only; the words are not changed.
+    """
+    lowered = normalize_apostrophes(previous_turn or "").lower()
+    if not lowered.strip():
+        return None
+    m = re.search(r"\byour\s+([a-z]+)", lowered)
+    if m and m.group(1) in BODY_PARTS:
+        return ("self", f"your {m.group(1)}")
+    m = re.search(r"\b(that|this|the|those|these|your)\s+([a-z]+(?:\s+[a-z]+){0,2})", lowered)
+    if m:
+        words = m.group(2).split()
+        # Stop at a word that starts a new clause ("that you liked").
+        kept: List[str] = []
+        for w in words:
+            if w in FIRST_PERSON or w in {"you", "he", "she", "they", "we", "is",
+                                          "was", "are", "were", "did", "do"}:
+                break
+            kept.append(w)
+        if kept:
+            return ("thing", f"{m.group(1)} {' '.join(kept)}")
+    return None
+
+
+#: Thanks. Everett, 2026-10-29 (ruling W): "thank you, I'm scared" stays
+#: UNCLEAR, main's reading ("thank" +0.6 against "scared" -0.8, no contrast
+#: marker). The handoff dropped "thank you" so the fear was read alone; that
+#: is reverted. Unclear concludes nothing; the being answers the thanks and
+#: asks (hearing.py). These words are scored from LEXICON, as main did.
+THANKS = frozenset({"thank", "thanks"})
 
 #: Past-tense / resolved markers.
 PAST_MARKERS = frozenset({"was", "were", "had", "used", "before", "earlier",
                           "yesterday", "ago", "then", "back"})
 
-#: Time words that put a clause in the past. Everett, 2026-10-29:
-#: "Yesterday means the past. Read the time word in the clause and do not
-#: report it as happening now." Measured before: "yesterday i was scared"
+#: Time words that put a clause in the past (Everett's ruling, 2026-10-29,
+#: in the coordinator's words: yesterday means the past; read time words in
+#: the clause and do not report past distress as happening now). Measured
+#: before: "yesterday i was scared"
 #: came back self distress -0.8, the same as "i am scared".
 PAST_TIME_WORDS = frozenset({"yesterday", "ago", "earlier", "previously",
                              "formerly"})
@@ -529,8 +678,8 @@ def _tokenize_with_start(text: str) -> List[Tuple[str, int]]:
             if _opens_predicate(nxt):
                 out.append(("is", at))
             continue
-        if (tok.endswith("s") and tok not in PERSON_NOUNS
-                and tok[:-1] in PERSON_NOUNS and _opens_predicate(nxt)):
+        if (tok.endswith("s") and tok not in OTHER_EXPERIENCER
+                and tok[:-1] in OTHER_EXPERIENCER and _opens_predicate(nxt)):
             # The ear drops apostrophes: "my moms in pain" is "my mom's in
             # pain". Only before a predicate, so "my moms car" stays a
             # possessive.
@@ -602,9 +751,11 @@ def place_said(text: str, clauses: List["Clause"],
 
 
 def is_person(tok: str) -> bool:
-    """A word that names someone other than the speaker, plurals included."""
+    """A word known to name someone other than the speaker, plurals and the
+    ear's possessive ("my moms in pain") included. Not knowing a word is not
+    knowing it is no one (ruling AA)."""
     return tok in OTHER_EXPERIENCER or (
-        tok.endswith("s") and tok[:-1] in PERSON_NOUNS
+        tok.endswith("s") and tok[:-1] in OTHER_EXPERIENCER
     )
 
 
@@ -651,16 +802,22 @@ def _idiom_subject(before: str, names: frozenset = frozenset()) -> str:
               ruling, 2026-10-11)
       "other" another person: he, she, they, a person word ("my mom", the
               ear's "my moms"), or a name typed with a capital ("Mary")
+      "unclear" "my ___" where the word is not known to be a person
+              ("my teacher is not okay"): ruling AA, the being asks.
       ""      no one's state: "you" (ruling E), "it", "this", "that", a
               thing. The words are then left to ordinary scoring.
     """
-    for tok in reversed(tokenize(before)):
+    toks = tokenize(before)
+    for k in range(len(toks) - 1, -1, -1):
+        tok = toks[k]
         if tok in _SUBJECT_WALK_PAST:
             continue
         if tok in FIRST_PERSON:
             return "self"
         if tok in _OTHER_PRONOUNS or is_person(tok) or tok in names:
             return "other"
+        if k > 0 and toks[k - 1] in POSSESSIVES and tok not in BODY_PARTS:
+            return "unclear"
         return ""
     return "self"
 
@@ -759,10 +916,47 @@ class AffectHit:
     when: str = "now"
     #: The time word that did it ("yesterday", "last night"), or "".
     time_word: str = ""
+    #: What kind of reading this is: KIND_EMOTION, KIND_STATE (a state of
+    #: being, ruling S) or KIND_INABILITY (ruling R).
+    kind: str = KIND_EMOTION
+    #: The modal that judges the feeling ("shouldn't"), or "" (ruling T).
+    #: The feeling is there; the modal does not cancel it.
+    judged_by: str = ""
+    #: Negated only for the time the clause names ("haven't ... since
+    #: Monday"), ruling T; `for_time` is the words that name it, or "".
+    time_bounded: bool = False
+    for_time: str = ""
+    #: Ruling U: a feeling inside a belief ("I don't think she's mad") is a
+    #: belief held by `belief_held_by` ("speaker", or the pronoun) about
+    #: `belief_about` ("self" or the word naming the other), through
+    #: `belief_verb` ("don't think"); `belief_negated` is what the holder
+    #: believes: not the feeling. "" when the feeling is not in a belief.
+    belief_held_by: str = ""
+    belief_about: str = ""
+    belief_verb: str = ""
+    belief_negated: bool = False
+    #: Ruling X: the feeling is in a subjectless fragment ("it hurts"),
+    #: read against the turn before it. `anchored_to` is what that turn
+    #: named ("your leg", "that haunted house"), "" when nothing anchors it;
+    #: `anchor_kind` is "self" (the client's own body) or "thing".
+    fragment: bool = False
+    anchored_to: str = ""
+    anchor_kind: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "term": self.term,
+            "kind": self.kind,
+            "fragment": self.fragment,
+            "anchored_to": self.anchored_to,
+            "anchor_kind": self.anchor_kind,
+            "belief_held_by": self.belief_held_by,
+            "belief_about": self.belief_about,
+            "belief_verb": self.belief_verb,
+            "belief_negated": self.belief_negated,
+            "judged_by": self.judged_by,
+            "time_bounded": self.time_bounded,
+            "for_time": self.for_time,
             "when": self.when,
             "time_word": self.time_word,
             "base_weight": round(self.base_weight, 3),
@@ -784,8 +978,8 @@ class Clause:
     case, contractions opened). They are NOT the person's words and are never
     passed on as them. `said` is the person's words for this clause, cut from
     what they said with every letter kept: the clauses' `said` joined back
-    together is exactly the input. Everett, 2026-10-29: "We never change the
-    truth, ever."
+    together is exactly the input. Everett's ruling, 2026-10-29: never change
+    the truth.
     """
 
     index: int
@@ -836,6 +1030,66 @@ class AffectReading:
             and self.valence < 0.0
         )
 
+    @property
+    def inability(self) -> List[str]:
+        """
+        The speaker's own inability over a good feeling, now ("I can't be
+        happy", "I'll never be happy again"): ruling R. A signal, its own
+        reading: not the feeling, not its absence, and not concluded.
+        """
+        return [h.term for h in self.hits
+                if h.kind == KIND_INABILITY and h.when == "now"
+                and h.attribution is not Attribution.OTHER]
+
+    @property
+    def judged(self) -> List[str]:
+        """
+        The speaker's own feelings, present now, under a judging modal ("I
+        shouldn't be this angry"): ruling T. The feeling is there.
+        """
+        return [h.term for h in self.hits
+                if h.judged_by and h.when == "now" and h.final_weight != 0.0
+                and h.attribution is not Attribution.OTHER]
+
+    @property
+    def negated_for_a_time(self) -> List[Tuple[str, str]]:
+        """(feeling, the words naming the time) for feelings denied for a
+        stretch of time ("I haven't been scared since Monday"): ruling T."""
+        return [(h.term, h.for_time) for h in self.hits if h.time_bounded]
+
+    @property
+    def unanchored_fragments(self) -> List[str]:
+        """Feelings in a subjectless fragment with no turn before it to
+        anchor them ("it hurts", alone): unclear, nothing concluded (X)."""
+        return [h.term for h in self.hits
+                if h.fragment and not h.anchored_to and h.when == "now"
+                and h.final_weight != 0.0]
+
+    @property
+    def beliefs(self) -> List[Dict[str, Any]]:
+        """
+        Beliefs, kept apart from observed fact (ruling U). "I don't think
+        she's mad" is {"held_by": "speaker", "about": "she", "state": "mad",
+        "negated": True}: the speaker thinks she is not mad. Nothing is
+        concluded about her.
+        """
+        out: List[Dict[str, Any]] = []
+        for h in self.hits:
+            if not h.belief_held_by:
+                continue
+            about = "the speaker" if h.belief_about == "self" else h.belief_about
+            out.append({
+                "held_by": h.belief_held_by,
+                "verb": h.belief_verb,
+                "about": h.belief_about,
+                "state": h.term,
+                "negated": h.belief_negated,
+                "reads_as": (f"{'the speaker' if h.belief_held_by == 'speaker' else h.belief_held_by}"
+                             f" thinks {about} is "
+                             f"{'not ' if h.belief_negated else ''}{h.term}"),
+            })
+        return out
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "valence": None if self.valence is None else round(self.valence, 4),
@@ -844,6 +1098,10 @@ class AffectReading:
             "certainty": self.certainty.value,
             "attribution": self.attribution.value,
             "is_self_distress": self.is_self_distress,
+            "inability": self.inability,
+            "judged": self.judged,
+            "negated_for_a_time": [list(p) for p in self.negated_for_a_time],
+            "beliefs": self.beliefs,
             "hits": [h.to_dict() for h in self.hits],
             "idioms_matched": list(self.idioms_matched),
             "requests": list(self.requests),
@@ -886,13 +1144,14 @@ class StructuralAffectAnalyzer:
     #: Someone else at risk is paged by the gate, not by this weight.
     OTHER_ATTRIBUTION_WEIGHT = 0.25
 
-    #: "can't" over a good state keeps this share, as the lack of it.
-    #: Chosen starting value, held until client data replaces it. Reason:
-    #: "I can't be happy" is a lack, weaker than saying "I am sad"; half.
-    INABILITY_WEIGHT = 0.5
+    #: "not so scared" keeps this share of "scared" (ruling Q: a little bit
+    #: scared). Chosen starting value, held until client data replaces it.
+    #: Reason: "a little", the same downtoner, is 0.6 in DOWNTONERS.
+    NOT_SO_WEIGHT = 0.6
 
     def analyze(
-        self, text: str, prosody: Optional[ProsodyFeatures] = None
+        self, text: str, prosody: Optional[ProsodyFeatures] = None,
+        previous_turn: str = "",
     ) -> AffectReading:
         """
         Read affect from `text`.
@@ -901,6 +1160,9 @@ class StructuralAffectAnalyzer:
             text: What the person said.
             prosody: Optional acoustic features. When None, every
                 prosody-derived value stays None.
+            previous_turn: what was said just before, including the being's
+                own question (ruling X). A subjectless fragment ("it hurts")
+                is read against it; with none, the fragment is unclear.
         """
         raw = normalize_apostrophes(text or "").strip()
         if not raw:
@@ -948,11 +1210,27 @@ class StructuralAffectAnalyzer:
         clauses = self._mark_resolution(clauses, masked)
 
         # PASS 6 (per clause) — who is experiencing this.
+        names = proper_names(raw)
         clauses = [
             Clause(c.index, c.text, c.tokens, c.is_resolution,
-                   self._attribute(c.tokens))
+                   self._attribute(c.tokens, names))
             for c in clauses
         ]
+        # Ruling X: a subjectless fragment is read against the turn before
+        # it. "Is there something wrong with your leg?" / "Yeah, it hurts"
+        # is the client's own leg. "Did you like that haunted house?" /
+        # "Yeah, this is scary" is the client's reaction to the haunted
+        # house. With nothing to anchor it, it stays UNKNOWN.
+        anchor = anchor_from(previous_turn) if previous_turn else None
+        fragments = {c.index for c in clauses
+                     if c.attribution is Attribution.UNKNOWN and self._is_fragment(c.tokens)}
+        if anchor is not None and fragments:
+            clauses = [
+                Clause(c.index, c.text, c.tokens, c.is_resolution, Attribution.SELF)
+                if c.index in fragments else c
+                for c in clauses
+            ]
+            notes.append(f"fragment read against the turn before: {anchor[1]!r}")
 
         # The person's own words for each clause, every letter kept.
         clauses = place_said(text or "", clauses, surface)
@@ -964,6 +1242,11 @@ class StructuralAffectAnalyzer:
         for clause in clauses:
             c_hits, c_requests, c_prof = self._score_clause(
                 clause, clauses, idiom_map, idiom_subjects)
+            if clause.index in fragments:
+                c_hits = [replace(h, fragment=True,
+                                  anchored_to=anchor[1] if anchor else "",
+                                  anchor_kind=anchor[0] if anchor else "")
+                          for h in c_hits]
             hits.extend(c_hits)
             requests.extend(c_requests)
             profanity += c_prof
@@ -1131,7 +1414,7 @@ class StructuralAffectAnalyzer:
             return True
         if tok in POSSESSIVES and nxt in OTHER_EXPERIENCER and nxt2 in cls._CLAUSE_VERBS:
             return True
-        if (tok in PERSON_NOUNS and nxt in cls._CLAUSE_VERBS
+        if (tok in OTHER_EXPERIENCER and nxt in cls._CLAUSE_VERBS
                 and prev not in POSSESSIVES and prev not in {"the", "a", "an"}):
             return True
         return False
@@ -1144,6 +1427,12 @@ class StructuralAffectAnalyzer:
             return True
         # "glad I'm alone" and "feel like I'm alone" are each one thought.
         # Whether "like" chooses anything is decided in _volitional, not here.
+        # Everett, 2026-10-29 (ruling V): "I'm not happy, I'm alone" is the
+        # speaker not happy, together with being alone: two statements, the
+        # same with or without the comma the ear never sends. A negated
+        # "happy" / "glad" does not take the next clause into it.
+        if prev in VOLITION_MARKERS and cls._negated(tokens, i - 1):
+            return False
         return prev in VOLITION_MARKERS
 
     @staticmethod
@@ -1151,8 +1440,9 @@ class StructuralAffectAnalyzer:
         """
         Split a run of words where a new subject starts.
 
-        Everett, 2026-10-29: "A word means nothing without what comes before
-        it and what comes after it. Read the clause: who did what to whom."
+        Everett, 2026-10-29: "A singular word means nothing without the
+        proper context, the before and the after." (He also accepts "who did
+        what to whom" as part of it.)
         The ear sends "i want to go home i'm scared" with no punctuation.
         Read as one clause, "want" governed "scared" five words later and
         cancelled it as chosen — measured valence 0.0. A new subject is a new
@@ -1245,7 +1535,27 @@ class StructuralAffectAnalyzer:
     # -- Pass 6 ---------------------------------------------------------------
 
     @staticmethod
-    def _attribute(tokens: List[str]) -> Attribution:
+    def _is_fragment(tokens: List[str]) -> bool:
+        """
+        A clause whose subject names no one: "it hurts", "yeah, this is
+        scary", "everything hurts" (ruling X). Read against the turn before
+        it; alone, it is unclear whose it is.
+        """
+        toks = list(tokens)
+        while toks and toks[0] in _FRAGMENT_OPENERS:
+            toks = toks[1:]
+        if not toks or toks[0] not in EXPLETIVE_SUBJECTS:
+            return False
+        if {"me", "us", "myself"} & set(toks):
+            return False                      # "it scared ME" names the speaker
+        nxt = toks[1] if len(toks) > 1 else ""
+        if nxt in LEXICON or (nxt.endswith("s") and nxt[:-1] in LEXICON):
+            return True                       # "everything hurts", "it hurts"
+        subject = StructuralAffectAnalyzer._subject_region(toks)
+        return bool(subject) and set(subject) <= (EXPLETIVE_SUBJECTS | {"the", "of", "about"})
+
+    @staticmethod
+    def _attribute(tokens: List[str], names: frozenset = frozenset()) -> Attribution:
         """
         Decide whose experience this clause describes, from the SUBJECT.
 
@@ -1283,6 +1593,14 @@ class StructuralAffectAnalyzer:
                 nxt = subject[i + 1] if i + 1 < len(subject) else ""
                 if is_person(nxt):
                     return Attribution.OTHER
+                # Ruling AA: "my teacher is sad" — whether the word names a
+                # person is learned per client, not read off a list. The
+                # client's own body ("my leg hurts") is the client's; any
+                # other "my ___" cannot be told: UNKNOWN, and the being asks.
+                if ((not elliptical or i == 0) and tok in {"my", "our"} and nxt
+                        and nxt not in BODY_PARTS
+                        and nxt not in LEXICON and not nxt.startswith("__")):
+                    return Attribution.UNKNOWN
 
         # A bare first-person subject is the speaker.
         bare_first = subj & (FIRST_PERSON - {"my", "our", "mine"})
@@ -1292,17 +1610,27 @@ class StructuralAffectAnalyzer:
         if any(is_person(t) for t in subj):
             return Attribution.OTHER
 
+        # A name typed with a capital ("Mary is scared") is that person's
+        # (Everett, 2026-10-29, ruling P: "you can't take possession of your
+        # mother's pain"). In lower case, from the ear, a name cannot be told
+        # from a thing; the clause stays impersonal and the gate asks whose.
+        if subj & names:
+            return Attribution.OTHER
+
         if subj & FIRST_PERSON:
             return Attribution.SELF
 
-        # A subject that names no one — "it is scary", "this is too much",
-        # "everything hurts". Whose experience it is comes from the rest of
-        # the clause: "it is hard for HER" is hers; otherwise it is the
-        # speaker's, by the same ruling as a subjectless utterance.
-        if not elliptical and subj <= (EXPLETIVE_SUBJECTS | {"the", "of", "about"}):
+        # A subject that names no one — "it hurts", "this is scary",
+        # "everything hurts". "it is hard for HER" is hers. Otherwise:
+        # Everett, 2026-10-29 (ruling X): these fragments are usually
+        # RESPONSES to something said to the client, so they are read against
+        # the turn before them, never alone (see `anchor_from`). Alone, whose
+        # it is cannot be told: UNKNOWN. The handoff's blanket "subjectless
+        # is the speaker's own" is removed.
+        if StructuralAffectAnalyzer._is_fragment(tokens):
             if any(is_person(t) for t in tokens[len(subject):]):
                 return Attribution.OTHER
-            return Attribution.SELF
+            return Attribution.UNKNOWN
 
         if elliptical:
             # EVERETT'S RULING, 2026-10-11: "A lone feeling word with no
@@ -1383,12 +1711,14 @@ class StructuralAffectAnalyzer:
             if tok in REQUEST_WORDS:
                 requests.append(tok)
                 continue
-            if tok in COURTESY:
-                continue
             note_parts: List[str] = []
+            kind = KIND_EMOTION
             if tok in idiom_map:
                 term, base = idiom_map[tok]
                 note_parts.append("multiword expression — not scored compositionally")
+                if term in STATE_IDIOMS:
+                    kind = KIND_STATE
+                    note_parts.append("a state of being, not an emotion")
             elif tok in LEXICON:
                 term, base = tok, LEXICON[tok]
             elif tok.endswith("s") and tok[:-1] in LEXICON:
@@ -1422,25 +1752,84 @@ class StructuralAffectAnalyzer:
             weight *= modifier
 
             # -- PASS 4: negation scope, backward, stopped by a scope breaker
-            negator = self._negator(tokens, i)
+            # Ruling T: "shouldn't / wouldn't / mustn't" (and "should not")
+            # judge the feeling; they do not deny it. The feeling is there.
+            judged_by = self._judged(tokens, i)
+            negator = None if judged_by else self._negator(tokens, i)
             negated = negator is not None
-            if negated and negator in ABILITY_NEGATORS and base > 0:
-                # "I can't be happy": not neutral. The good state is out of
-                # reach, read at half its strength as the lack of it.
-                weight = -abs(weight) * self.INABILITY_WEIGHT
+            time_bounded = negator in TIME_BOUNDED_NEGATORS
+            for_time = self._for_time(tokens, i) if time_bounded else ""
+            if judged_by:
                 note_parts.append(
-                    f"'{negator}' over a good state — read as the lack of it"
+                    f"'{judged_by}' judges the feeling; the feeling is there"
+                )
+            # Ruling U: read the whole sentence. A feeling after "think /
+            # believe / guess / feel" + a new subject is a belief, held by
+            # whoever thinks it, about whoever it names.
+            belief = self._belief(tokens, i)
+            belief_held_by = belief_about = belief_verb = ""
+            belief_negated = own_belief = False
+            if belief is not None:
+                holder, about, belief_verb, verb_neg = belief
+                belief_held_by = "speaker" if holder in {"", "i", "we"} else holder
+                belief_about = "self" if about in {"i", "we"} else about
+                belief_negated = bool(verb_neg) != negated
+                own_belief = belief_held_by == "speaker" and belief_about == "self"
+                if own_belief:
+                    # The speaker's belief about their own state is read at
+                    # what they believe: "I don't think I'm mad" is not mad.
+                    negated = belief_negated
+                    negator = negator or (verb_neg if negated else None)
+                    time_bounded = negator in TIME_BOUNDED_NEGATORS
+            lowered_by = self._not_so(tokens, i) if negated else None
+            if lowered_by is not None:
+                # Everett, 2026-10-29 (ruling Q): "I'm not so scared" is NOT
+                # "I'm not scared". "Not scared" is no fear at all; "not so
+                # scared" is a little bit scared: the feeling is present, at
+                # a lower degree, and it is the speaker's own. So "not so /
+                # not that / not too / not as" + a feeling keeps the feeling
+                # at NOT_SO_WEIGHT of its plain strength. (Main read it as
+                # full fear; the handoff read it as no fear. Both wrong.)
+                negated = False
+                modifier = self.NOT_SO_WEIGHT
+                weight = base * modifier
+                # "so" here lowers; it did not intensify.
+                note_parts[:] = [n for n in note_parts if not n.startswith("intensified by")]
+                note_parts.append(
+                    f"'{negator} {lowered_by}' — the feeling is there, at a lower degree"
+                )
+                time_bounded, for_time = False, ""
+            elif negated and base > 0 and self._inability(tokens, i) is not None:
+                # Everett, 2026-10-29 (ruling R): "I can't be happy" is
+                # neither happy (main) nor the lack of happiness at half
+                # strength (the handoff). A lack is "I'm not happy right
+                # now". "Can't be / cannot be / will never be / could never
+                # be" + a good feeling is an inability, and a signal: its own
+                # reading, the speaker's, carrying no valence of its own.
+                # Nothing is concluded; the being asks why (hearing.py).
+                kind = KIND_INABILITY
+                negated = False
+                time_bounded, for_time = False, ""
+                weight = 0.0
+                note_parts.append(
+                    f"'{self._inability(tokens, i)}' over a good feeling — an "
+                    "inability, a signal; not the feeling, not its absence"
                 )
             elif negated:
                 # Cancel, do not invert. "not scared" is not "happy".
                 weight = 0.0
                 note_parts.append("negated — cancelled, not inverted")
+                if time_bounded:
+                    note_parts.append(
+                        f"'{negator}' — for the time the clause names"
+                        + (f" ({for_time!r})" if for_time else "")
+                    )
 
             # -- PASS 5: volition. "want to be alone", "glad to be alone"
             volitional = (not negated) and self._volitional(tokens, i)
             if volitional and base < 0:
                 weight = 0.0
-                note_parts.append("volitional frame — state is chosen, not suffered")
+                note_parts.append("a stated wish or choice — the speaker's own, respected")
 
             # -- PASS 7: past tense with a later resolution
             past = has_past and base < 0
@@ -1466,6 +1855,7 @@ class StructuralAffectAnalyzer:
             # that; every other word carries its clause's.
             attribution = {
                 "self": Attribution.SELF, "other": Attribution.OTHER,
+                "unclear": Attribution.UNKNOWN,     # ruling AA: the being asks
             }.get(idiom_subjects.get(tok, ""), clause.attribution)
             if attribution is Attribution.OTHER and weight != 0.0:
                 weight *= self.OTHER_ATTRIBUTION_WEIGHT
@@ -1473,6 +1863,19 @@ class StructuralAffectAnalyzer:
             elif attribution is Attribution.IMPERSONAL and weight != 0.0:
                 weight = 0.0
                 note_parts.append("impersonal — describes nobody's experience")
+
+            if belief is not None and not own_belief:
+                # Ruling U: "I don't think she's mad" is the speaker's belief
+                # about her, not a fact about her. Everett: "That doesn't
+                # mean everybody else don't think she's mad." Kept apart
+                # from what was observed; nothing is concluded about her.
+                attribution = Attribution.SELF if belief_about == "self" else Attribution.OTHER
+                weight = 0.0
+                negated = False
+                note_parts.append(
+                    f"a belief held by {belief_held_by} about {belief_about}"
+                    " — kept apart from fact; nothing concluded"
+                )
 
             hits.append(
                 AffectHit(
@@ -1489,10 +1892,168 @@ class StructuralAffectAnalyzer:
                     note="; ".join(note_parts),
                     when="past" if time_word else "now",
                     time_word=time_word or "",
+                    kind=kind,
+                    judged_by=judged_by or "",
+                    time_bounded=time_bounded and negated,
+                    for_time=for_time if (time_bounded and negated) else "",
+                    belief_held_by=belief_held_by,
+                    belief_about=belief_about,
+                    belief_verb=belief_verb,
+                    belief_negated=belief_negated,
                 )
             )
 
         return hits, requests, profanity
+
+    #: Verbs that open a belief about someone (ruling U): "I think she's
+    #: mad", "I don't believe he is sad", "I feel like she's mad".
+    _BELIEF_VERBS = frozenset({
+        "think", "thinks", "thought", "believe", "believes", "believed",
+        "guess", "guessed", "suppose", "supposed", "reckon", "expect",
+        "feel", "feels", "felt",
+    })
+    #: Words that may sit between the belief verb and its subject.
+    _COMPLEMENT_OPENERS = frozenset({
+        "like", "that", "my", "his", "her", "our", "their", "the",
+    })
+    _POSSESSIVES = frozenset({"my", "his", "her", "our", "their"})
+
+    @staticmethod
+    def _belief(tokens: List[str], index: int) -> Optional[Tuple[str, str, str, str]]:
+        """
+        The belief the feeling at `index` sits in, or None (ruling U).
+
+        Returns (holder, about, the belief words, the negator over the
+        belief or ""). "i dont think she is mad" -> ("i", "she", "dont
+        think", "dont"). A belief verb with no new subject after it ("I feel
+        scared") is not a belief: it is the feeling.
+        """
+        cls = StructuralAffectAnalyzer
+        about_idx: Optional[int] = None
+        for j in range(index - 1, -1, -1):
+            tok = tokens[j]
+            if tok in SCOPE_BREAKERS and not (tok == "so" and cls._so_intensifies(tokens, j)):
+                return None
+            if tok in cls._BELIEF_VERBS:
+                if about_idx is None:
+                    return None
+                k = j + 1
+                while k < about_idx and tokens[k] in cls._COMPLEMENT_OPENERS:
+                    k += 1
+                if k != about_idx:
+                    return None
+                neg_idx = next((n for n in range(j - 1, max(-1, j - 4), -1)
+                                if tokens[n] in AFFECT_NEGATORS), None)
+                verb_neg = tokens[neg_idx] if neg_idx is not None else ""
+                verb_words = " ".join(tokens[neg_idx:j + 1]) if neg_idx is not None else tok
+                holder = next((t for t in reversed(tokens[:j])
+                               if t in cls._SUBJECT_STARTS or t == "you"), "")
+                about = tokens[about_idx]
+                if about_idx > 0 and tokens[about_idx - 1] in cls._POSSESSIVES:
+                    about = f"{tokens[about_idx - 1]} {about}"
+                return holder, about, verb_words, verb_neg
+            if about_idx is None and (tok in cls._SUBJECT_STARTS or is_person(tok)):
+                about_idx = j
+        return None
+
+    #: Words that may sit between a judging modal and the feeling: "I
+    #: shouldn't BE THIS angry", "I mustn't FEEL SO scared".
+    _JUDGED_BETWEEN = frozenset({
+        "be", "been", "feel", "feeling", "get", "this", "that", "so", "very",
+        "really", "as", "too",
+    })
+
+    @staticmethod
+    def _judged(tokens: List[str], index: int) -> Optional[str]:
+        """
+        The judging modal over the feeling at `index` ("shouldn't", "should
+        not"), or None. Ruling T: the feeling is present; the modal is about
+        whether it is right, not whether it is there.
+        """
+        for back in range(1, 5):
+            j = index - back
+            if j < 0:
+                return None
+            tok = tokens[j]
+            if tok in JUDGING_MODALS:
+                return tok
+            if tok == "not" and j > 0 and tokens[j - 1] in {"should", "must", "would"}:
+                return f"{tokens[j - 1]} not"
+            if tok not in StructuralAffectAnalyzer._JUDGED_BETWEEN and tok not in INTENSIFIERS:
+                return None
+        return None
+
+    @staticmethod
+    def _for_time(tokens: List[str], index: int) -> str:
+        """The words after the feeling that name the time ("since monday"),
+        or "". Up to three words after "since" / "until" / "for"."""
+        for j in range(index + 1, len(tokens)):
+            if tokens[j] in {"since", "until", "till", "for"}:
+                tail: List[str] = []
+                for t in tokens[j + 1:j + 4]:
+                    if t in SCOPE_BREAKERS or t in StructuralAffectAnalyzer._SUBJECT_STARTS:
+                        break
+                    tail.append(t)
+                return " ".join([tokens[j]] + tail) if tail else ""
+        return ""
+
+    #: Modals that make "never" an inability: "I'll / I will / could / can
+    #: never be happy" (ruling R). "ill" is how the ear sends "I'll".
+    _NEVER_MODALS = frozenset({"will", "ill", "could", "can"})
+
+    @staticmethod
+    def _inability(tokens: List[str], index: int) -> Optional[str]:
+        """
+        The words of an inability over the feeling at `index` ("can't",
+        "will never"), or None. Ruling R: "can't be / cannot be / will never
+        be / could never be" + a feeling. "be" or "feel" sits right before
+        the feeling ("I can't feel happy" is read the same way), with
+        "ever" or "really" allowed between.
+        """
+        k = index - 1
+        if k < 0 or tokens[k] not in {"be", "feel"}:
+            return None
+        k -= 1
+        while k >= 0 and tokens[k] in {"ever", "really"}:
+            k -= 1
+        if k < 0:
+            return None
+        if tokens[k] in ABILITY_NEGATORS:
+            return tokens[k]
+        if tokens[k] == "never" and k > 0 and \
+                tokens[k - 1] in StructuralAffectAnalyzer._NEVER_MODALS:
+            return f"{tokens[k - 1]} never"
+        return None
+
+    #: Words that, between a negation and a feeling, lower the feeling
+    #: instead of cancelling it (ruling Q): not SO scared, not THAT scared,
+    #: not TOO scared, not AS scared, not ALL THAT scared, not VERY scared.
+    _NOT_SO_WORDS = frozenset({"so", "that", "too", "as", "very", "all"})
+
+    @staticmethod
+    def _not_so(tokens: List[str], index: int) -> Optional[str]:
+        """
+        The degree word in "not so scared" / "don't feel too scared", or None.
+
+        The degree word sits right before the feeling, and the negation
+        within three words before it ("not all that scared").
+        """
+        if index < 2:
+            return None
+        degree = tokens[index - 1]
+        if degree not in StructuralAffectAnalyzer._NOT_SO_WORDS:
+            return None
+        for back in range(2, 5):
+            j = index - back
+            if j < 0:
+                return None
+            tok = tokens[j]
+            if tok in AFFECT_NEGATORS:
+                return degree
+            if tok not in StructuralAffectAnalyzer._NOT_SO_WORDS and tok not in {
+                    "feel", "feeling", "be", "being", "really", "even"}:
+                return None
+        return None
 
     @staticmethod
     def _so_intensifies(tokens: List[str], j: int) -> bool:
@@ -1532,11 +2093,11 @@ class StructuralAffectAnalyzer:
             if tok in StructuralAffectAnalyzer._SUBJECT_STARTS:
                 # A subject between the negator and the word means the
                 # negator belongs to the clause above: "I'm NOT happy | I'm
-                # alone". Except after a neg-raising verb: "I DON'T think
-                # I'm scared" means not scared.
-                before = tokens[j - 1] if j > 0 else ""
-                if before not in StructuralAffectAnalyzer._NEG_RAISING:
-                    return None
+                # alone". Everett, 2026-10-29 (ruling U): there is no
+                # exception after "think / believe / guess / feel" any more.
+                # "I don't think she's mad" is read whole, as the speaker's
+                # belief about her (see `_belief`), not as "she is not mad".
+                return None
         return None
 
     @staticmethod
@@ -1550,9 +2111,15 @@ class StructuralAffectAnalyzer:
         Is this affect word inside a chosen or evaluated frame?
 
         "I WANT to be alone" / "I'm GLAD to be alone" / "I LIKE being alone".
-        Looks back up to 5 tokens, stopping at a scope breaker. A frame that is
-        itself negated chooses nothing: "I'm NOT happy I'm alone" is suffered.
-        "feel like" is not volition: "like" after a seeming verb means "as if".
+        Looks back up to 5 tokens, stopping at a scope breaker.
+
+        Everett, 2026-10-29 (ruling V): "I feel like being alone" is a stated
+        wish, the client's own choice, and it is respected. The handoff's two
+        rules ("a negated frame is suffered", "feel like is never a choice")
+        are removed; this is main's reading again, with one structural
+        exception: "like" followed by a new subject ("I feel like I'm alone",
+        "I feel like she's mad") opens a clause, not a wish (ruling U reads
+        that clause as a belief).
         """
         for back in range(1, 6):
             j = index - back
@@ -1560,9 +2127,10 @@ class StructuralAffectAnalyzer:
                 return False
             tok = tokens[j]
             if tok in VOLITION_MARKERS:
-                if tok == "like" and j > 0 and tokens[j - 1] in StructuralAffectAnalyzer._SEEM_VERBS:
-                    continue
-                return not StructuralAffectAnalyzer._negated(tokens, j)
+                nxt = tokens[j + 1] if j + 1 < len(tokens) else ""
+                if tok == "like" and nxt in StructuralAffectAnalyzer._SUBJECT_STARTS:
+                    return False
+                return True
             if tok in SCOPE_BREAKERS or tok in AFFECT_NEGATORS:
                 return False
         return False
@@ -1628,6 +2196,24 @@ class StructuralAffectAnalyzer:
 
         live = [h for h in hits if h.final_weight != 0.0]
 
+        if not live and any(h.kind == KIND_INABILITY for h in hits):
+            # Ruling R: an inability ("I can't be happy") is not a valence,
+            # and not neutral either. Nothing is concluded; the being asks.
+            return AffectReading(
+                valence=None,
+                intensity=None,
+                certainty=AffectCertainty.AMBIGUOUS,
+                attribution=attribution,
+                hits=hits,
+                clauses=clauses,
+                idioms_matched=idioms,
+                requests=requests,
+                profanity_count=profanity,
+                prosody=prosody,
+                notes=notes + ["an inability over a good feeling — a signal, "
+                               "not a valence; nothing concluded"],
+            )
+
         if not live:
             # Affect words were present but structure cancelled all of them —
             # negation, volition, impersonal. That is a real reading of
@@ -1653,6 +2239,11 @@ class StructuralAffectAnalyzer:
         magnitude = sum(abs(w) for w in weights) / len(weights)
         breadth = min(1.0, len(live) / 3.0)   # 3+ affect terms saturates breadth
         intensity = max(0.0, min(1.0, magnitude * (0.6 + 0.4 * breadth)))
+        # Ruling S: "I couldn't be happier" is the feeling at its fullest. Its
+        # intensity is its own strength, not discounted for being one phrase.
+        for h in live:
+            if h.term in FULLEST_IDIOMS:
+                intensity = max(intensity, min(1.0, abs(h.final_weight)))
 
         # Mixed sign with no contrast marker to resolve it: the analyzer does
         # not know which one the speaker meant.
@@ -1707,6 +2298,10 @@ class StructuralAffectAnalyzer:
             return Attribution.SELF
         if Attribution.OTHER in attrs:
             return Attribution.OTHER
+        if Attribution.UNKNOWN in attrs:
+            # Rulings X and AA: whose it is cannot be told ("it hurts" with
+            # nothing before it, "my teacher is sad"). Unknown, not nobody's.
+            return Attribution.UNKNOWN
         if attrs == {Attribution.IMPERSONAL}:
             return Attribution.IMPERSONAL
         clause_attrs = {c.attribution for c in clauses}
@@ -1729,8 +2324,7 @@ __all__ = [
     "IDIOM_PATTERNS",
     "PROFANITY",
     "REQUEST_WORDS",
-    "COURTESY",
-    "PERSON_NOUNS",
+    "THANKS",
     "OTHER_EXPERIENCER",
     "AFFECT_NEGATORS",
     "ABILITY_NEGATORS",
@@ -1740,6 +2334,13 @@ __all__ = [
     "proper_names",
     "SUBJECT_IDIOMS",
     "SELF_IDIOMS",
+    "STATE_IDIOMS",
+    "KIND_EMOTION",
+    "KIND_STATE",
+    "KIND_INABILITY",
+    "FULLEST_IDIOMS",
+    "TIME_BOUNDED_NEGATORS",
+    "JUDGING_MODALS",
 ]
 
 # ==============================================================================
