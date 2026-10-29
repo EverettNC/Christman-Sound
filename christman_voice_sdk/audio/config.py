@@ -65,7 +65,10 @@ class TierFeatures:
     # Advanced features
     custom_emotion_model: bool = True
     realtime_synthesis: bool = True
-    avatar_integration: bool = True
+    # Ruling AC (2026-10-29 review): the leftover avatar_integration = True
+    # flag is removed. No avatar work is done in this package (see
+    # face_vector.py and face_reading.py), so a flag saying it was on was
+    # not true.
     batch_processing: bool = True
 
     # Performance
