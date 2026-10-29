@@ -55,6 +55,7 @@ from ..nonverbal.engine_temporal import TemporalNonverbalEngine
 from ..nonverbal.nonverbal_engine import (
     DISTRESS_INTENTS,
     Interpretation,
+    Modality,
     NonverbalEngine,
     distress_readings,
 )
@@ -522,10 +523,11 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
                      someone", "help her", "I need help with this"). The
                      request is named in the flags ("asked_for_help:...").
       soft_redirect  two beings talking to each other
-                     (context["between_beings"] is exactly True): nothing on
-                     this list but a harm frame against the speaker pages
-                     (ruling F; the speaker-at-risk frame pages as it always
-                     has).
+                     (context["between_beings"] is exactly True): NOTHING
+                     pages (ruling F, Everett on the 2026-10-29 review),
+                     self-harm words and "he is hurting me" included. What
+                     would have paged keeps its reason and is flagged
+                     "between_beings" and "would_page:<reason>".
       clear          grief and history about others ("my brother died by
                      suicide"), negated harm ("I would never hurt myself"),
                      a past time word ("yesterday my mom was not okay"), or
@@ -545,14 +547,34 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
                         str(context.get("answering_follow_up") or ""),
                         str(context.get("previous_turn") or ""))
     words = _silent_alarm(words, original, context)
+    result = _with_nonverbal(words, original, context)
+    if context.get("between_beings") is True and result.status == "hard_block":
+        # Ruling F (Everett, on the 2026-10-29 review): two beings talking to
+        # each other page nothing, for anything, self-harm words and "he is
+        # hurting me" included. It is recorded and flagged, not paged.
+        return replace(
+            result, status="soft_redirect",
+            flags=list(result.flags) + ["between_beings", f"would_page:{result.reason}"],
+            hold_marker="", follow_up="", follow_up_about="", voice_aloud=False,
+        )
+    return result
+
+
+def _with_nonverbal(words: SafetyResult, original: str,
+                    context: Dict[str, Any]) -> SafetyResult:
+    """Add the nonverbal distress signals to the words' reading."""
     nonverbal = [d for d in (context.get("nonverbal_distress") or [])
                  if isinstance(d, dict)]
     if not nonverbal:
         return words
     # A danger signal from any nonverbal channel is the silent alarm (ruling
-    # I): never spoken, never announced, and never voiced aloud by this
-    # package, whatever the setting.
+    # I): never spoken and never announced. Rulings K and L (Everett, on the
+    # 2026-10-29 review): it is voiced, the same as typed danger, when the
+    # client asks for it aloud or the being's perception reports a public
+    # setting (exactly True). Otherwise it stays silent.
     nv_silent = any(d.get("silent_alarm") for d in nonverbal)
+    nv_aloud = nv_silent and (bool(asked_aloud(original))
+                              or context.get("public_setting") is True)
     # Everett, 2026-10-29: the acoustic key (and every nonverbal signal) must
     # never disrupt the interpretation of what is spoken. The words were read
     # above, alone. A nonverbal distress signal may only ADD a page: when
@@ -569,6 +591,7 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
             words, flags=list(words.flags) + nonverbal_flags + silent_flags,
             silent_alarm=words.silent_alarm or nv_silent,
             hold_marker="" if nv_silent else words.hold_marker,
+            voice_aloud=(words.voice_aloud or nv_aloud) if nv_silent else words.voice_aloud,
         )
     inputs = [str(d.get("input")) for d in nonverbal]
     return replace(
@@ -581,7 +604,7 @@ def harm_frame_safety(text: str, context: Optional[Dict[str, Any]] = None) -> Sa
         hold_marker="" if nv_silent else
         f"[SAFETY HOLD — nonverbal distress: {', '.join(inputs)}]",
         silent_alarm=nv_silent,
-        voice_aloud=False,
+        voice_aloud=nv_aloud,
     )
 
 
@@ -676,8 +699,10 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             hold_marker="[SAFETY HOLD — harm happening now to the client]",
         )
 
+    # Between two beings these still read as what they are; harm_frame_safety
+    # then turns every page into a flagged record (ruling F).
     danger = danger_sentences(original)
-    if danger and not between_beings:
+    if danger:
         return SafetyResult(
             status="hard_block",
             reason="client_danger",
@@ -688,7 +713,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
         )
 
     answer = answered_follow_up(original, answering) if answering else None
-    if answer is not None and not between_beings:
+    if answer is not None:
         return SafetyResult(
             status="hard_block",
             reason=answer,
@@ -701,14 +726,6 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
     if own_state or history_self:
         terms = [h.term for h in own_state] + [f.predicate for f in history_self]
         flags = own_flags + _flags("history", history_self) + other_flags
-        if between_beings:
-            return SafetyResult(
-                status="soft_redirect",
-                reason="between_beings",
-                said=original,
-                flags=flags,
-                flagged_terms=terms,
-            )
         return SafetyResult(
             status="hard_block",
             reason="client_distress" if own_state else "harm_frame_history_self",
@@ -1070,6 +1087,11 @@ class HearingTurn:
     #: The client's earlier danger sentence, exactly as said, released to be
     #: voiced because the client now asked for it out loud (ruling K).
     voice_held: Optional[str] = None
+    #: The client's own words for a nonverbal danger signal (a pressed help
+    #: symbol, a meaning learned for that client), voiced because the client
+    #: asked for it aloud or the setting is public (rulings K and L). None
+    #: otherwise: under the silent alarm nothing is said.
+    signal_voiced: Optional[str] = None
 
     @property
     def person_message(self) -> Optional[str]:
@@ -1080,6 +1102,8 @@ class HearingTurn:
         Under the silent alarm (ruling I) it is None: a danger meaning from
         any channel is paged and never spoken.
         """
+        if self.signal_voiced:
+            return self.signal_voiced
         if self.decision is not None and self.decision.safety.silent_alarm \
                 and self.nonverbal_distress and any(d.get("silent_alarm") for d in self.nonverbal_distress):
             return None
@@ -1108,6 +1132,7 @@ class HearingTurn:
             "nonverbal_distress": list(self.nonverbal_distress),
             "person_message": self.person_message,
             "voice_held": self.voice_held,
+            "signal_voiced": self.signal_voiced,
             "notes": list(self.notes),
         }
 
@@ -1304,6 +1329,17 @@ class Hearing:
                 # gate runs on the signal alone.
                 decision = self.fusion.fuse("", live_state=live_state, prosody=reading)
 
+        # Rulings K and L: a nonverbal danger signal is voiced, in the
+        # client's own words for it, when asked aloud or in public; held for
+        # one turn otherwise, the same as a typed danger sentence.
+        signal_voiced: Optional[str] = None
+        if decision is not None and decision.safety.silent_alarm and distress:
+            signal_words = self._signal_words(distress)
+            if signal_words and decision.safety.voice_aloud:
+                signal_voiced = signal_words
+            elif signal_words and not text:
+                self.held_words = signal_words
+
         face = build_face_reading(affect=affect, prosody=reading)
         # No emotion classifier runs on this path, so joy/sadness/anger stay
         # unmeasured and say so; the vector carries valence, arousal, whose
@@ -1324,7 +1360,36 @@ class Hearing:
             nonverbal_distress=distress,
             face_vector=face_vector,
             voice_held=voice_held,
+            signal_voiced=signal_voiced,
         )
+
+    def _signal_words(self, distress: List[Dict[str, Any]]) -> Optional[str]:
+        """
+        The client's own words for the danger signals in `distress`: a pressed
+        symbol's words, or a meaning learned for that client. A built-in
+        camera, eye or sound reading has no words (ruling J), so nothing.
+        """
+        words: List[str] = []
+        for d in distress:
+            if not d.get("silent_alarm"):
+                continue
+            modality, key = str(d.get("modality") or ""), d.get("input")
+            if modality.startswith("temporal:"):
+                if getattr(self.temporal, "language_map_source", "built_in") != "client":
+                    continue
+                entry = self.temporal.language_map.get(key) or {}
+            else:
+                try:
+                    m = Modality(modality)
+                except ValueError:
+                    continue
+                if m is not Modality.SYMBOL and self.nonverbal.map_source.get(m) != "client":
+                    continue
+                entry = self.nonverbal.maps.get(m, {}).get(key) or {}
+            message = entry.get("message")
+            if isinstance(message, str) and message.strip() and message not in words:
+                words.append(message)
+        return " ".join(words) or None
 
 
 __all__ = ["Hearing", "HearingTurn", "harm_frame_safety", "CrisisNotDelivered",
