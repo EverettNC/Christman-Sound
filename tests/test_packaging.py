@@ -13,11 +13,10 @@ the real files:
 - numba and llvmlite are either not declared, or pinned below the first
   versions with no Intel Mac wheel.
 - Every third-party module imported at module top (not inside a try) in the
-  package and the two root modules is a declared base dependency.
+  package is a declared base dependency.
 - pyproject.toml is the one dependency list; setup.py calls setup() bare.
 - py.typed exists where package-data says it does.
-- cryptography is the "crypto" extra, and the two root modules import when
-  their dependencies are installed.
+- cryptography is the "crypto" extra.
 
 christman_sound/core.py is outside the scan: Everett's standing ruling is that
 it is never touched and never wired.
@@ -26,9 +25,7 @@ it is never touched and never wired.
 from __future__ import annotations
 
 import ast
-import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -47,7 +44,7 @@ DIST_FOR_IMPORT = {
 }
 #: First-party names, including the bare fallback names some modules try
 #: after their package-relative import fails.
-FIRST_PARTY = {"christman_voice_sdk", "christman_sound", "christman_crypto"}
+FIRST_PARTY = {"christman_voice_sdk", "christman_sound"}
 
 
 def _pyproject() -> dict:
@@ -73,7 +70,7 @@ def _base() -> dict[str, list[str]]:
 
 
 def _scanned_files() -> list[Path]:
-    files = [ROOT / "christman_ocr_shared.py", ROOT / "crypto_bridge.py"]
+    files = []
     for pkg in ("christman_voice_sdk", "christman_sound"):
         files.extend(sorted((ROOT / pkg).rglob("*.py")))
     core = ROOT / "christman_sound" / "core.py"  # never touched, never wired
@@ -161,31 +158,3 @@ def test_cryptography_is_the_crypto_extra_and_optional_in_voicepack():
     assert "cryptography" not in _base(), "cryptography is optional; it belongs in the extra"
     voicepack = ROOT / "christman_voice_sdk" / "timbre" / "voicepack.py"
     assert "cryptography" not in {m for m, _ in _unguarded_imports(voicepack)}
-
-
-def _import_in_child(module: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
-    env = dict(os.environ)
-    env.update(extra_env or {})
-    return subprocess.run(
-        [sys.executable, "-c", f"import sys; sys.path.insert(0, {str(ROOT)!r}); import {module}"],
-        capture_output=True, text=True, env=env, timeout=120, cwd=str(ROOT),
-    )
-
-
-def test_christman_ocr_shared_imports_with_the_base_dependencies(tmp_path):
-    proc = _import_in_child("christman_ocr_shared", {"CHRISTMAN_AI_HOME": str(tmp_path)})
-    assert proc.returncode == 0, proc.stderr[-2000:]
-
-
-def test_crypto_bridge_imports_when_the_crypto_extra_is_installed():
-    try:
-        import cryptography  # noqa: F401
-    except ModuleNotFoundError:
-        pytest.skip("not run: the crypto extra is not installed here "
-                    "(pip install -e '.[crypto]')")
-    roots = [Path.home() / "Harvest-Now-Decrypt-Later"]
-    if not any((r / "christman_crypto" / "__init__.py").is_file() for r in roots):
-        pytest.skip("not run: crypto_bridge also needs a clone of "
-                    "Harvest-Now-Decrypt-Later at ~/Harvest-Now-Decrypt-Later")
-    proc = _import_in_child("crypto_bridge")
-    assert proc.returncode == 0, proc.stderr[-2000:]

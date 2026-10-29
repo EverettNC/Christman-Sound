@@ -13,8 +13,8 @@ says so with a typed failure (`SynthesisUnavailable`, available False, with
 the reason).
 
 The scan reads the real source tree with the `ast` module. It does not
-import anything it scans. quarantine/ is outside the scan on purpose: that is
-where the cut engines are kept for the record.
+import anything it scans. The cut engines are gone from the tree; git history
+keeps them.
 
 christman_sound/core.py is outside the scan on purpose too. Everett's
 standing ruling: core.py is the symbolic header of the SDK's innovations, is
@@ -26,9 +26,7 @@ so nothing it names can run.
 from __future__ import annotations
 
 import ast
-import asyncio
 import os
-import socket
 import sys
 from pathlib import Path
 
@@ -46,7 +44,7 @@ LAUNCHERS = {"run", "call", "check_call", "check_output", "Popen", "system", "po
 
 
 def _scanned_files():
-    files = [ROOT / "christman_ocr_shared.py", ROOT / "crypto_bridge.py", ROOT / "_paths.py"]
+    files = []
     for pkg in ("christman_voice_sdk", "christman_sound", "scripts"):
         files.extend(sorted((ROOT / pkg).rglob("*.py")))
     core = ROOT / "christman_sound" / "core.py"  # never touched, never wired (ruling above)
@@ -101,24 +99,6 @@ def test_the_cut_engine_files_are_gone_from_the_package():
     engines = ROOT / "christman_voice_sdk" / "engines"
     for name in ("xtts_engine.py", "gpt_sovits_engine.py", "base_synthesizer.py"):
         assert not (engines / name).exists(), f"{name} is back in the package"
-        assert (ROOT / "quarantine" / "2026-10_outside_voices" / "christman_voice_sdk"
-                / "engines" / name).is_file(), f"{name} is missing from quarantine"
-
-
-def test_paths_marker_points_at_a_file_that_stays():
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("_cs_paths_under_test", ROOT / "_paths.py")
-    mod = importlib.util.module_from_spec(spec)
-    saved = list(sys.path)
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        sys.path[:] = saved
-    source = (ROOT / "_paths.py").read_text(encoding="utf-8")
-    assert "xtts_engine" not in source.split('"""', 2)[-1], "the marker still names xtts_engine.py"
-    marker = ROOT / "christman_voice_sdk" / "__init__.py"
-    assert marker.is_file()
 
 
 def test_local_speak_fallback_raises_the_typed_failure():
@@ -130,25 +110,3 @@ def test_local_speak_fallback_raises_the_typed_failure():
         vcc.local_speak_fallback("hello")
     assert excinfo.value.available is False
     assert excinfo.value.reason == SOVEREIGN_NOT_WIRED
-
-
-def _closed_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def test_ocr_read_aloud_raises_when_derek_is_not_there():
-    """A real connection attempt to a loopback port nobody is listening on."""
-    pytest.importorskip("websockets", reason="not run: websockets not installed (christman_ocr_shared imports it at module top)")
-    import christman_ocr_shared as ocr
-    from christman_voice_sdk.engines.synthesis_result import SOVEREIGN_NOT_WIRED, SynthesisUnavailable
-
-    relay = ocr.DerekAudioRelay(f"ws://127.0.0.1:{_closed_loopback_port()}/ws/derek")
-    with pytest.raises(SynthesisUnavailable) as excinfo:
-        asyncio.run(relay.speak("hello", being="AlphaVox"))
-    reason = excinfo.value.reason
-    assert "Derek relay failed" in reason
-    assert SOVEREIGN_NOT_WIRED in reason
-    assert not hasattr(ocr.DerekAudioRelay, "_local_speak")
-    assert asyncio.run(relay.speak("   ")) is False, "empty text is not a read-aloud request"

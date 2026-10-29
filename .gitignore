@@ -6,9 +6,6 @@
 *.env
 
 # Virtual environments - CRITICAL: Keep these out of GitHub!
-Alpha/
-alphavox/
-alphavox_env/
 venv/
 env/
 .venv/
@@ -28,7 +25,6 @@ __pycache__/
 *.seed
 *.pid.lock
 audio_cache/
-derek_memory/
 data/behavior_patterns/
 *.sqlite
 *.db
@@ -91,7 +87,6 @@ venv/
 env/
 *.env
 .venv/
-.alphavox-env/
 ENV/
 env.bak/
 .venv.bak/
@@ -192,10 +187,9 @@ Icon?
 .pre-commit-config.yaml
 pre-commit.log
 
-# --- AlphaVox-Specific ---
+# --- Local runtime folders ---
 profiles/
 data/color_schemes.json
-alphavox.db
 snapshots/
 uploads/
 models/__snapshots__/
