@@ -134,6 +134,254 @@ def test_backend_crash_is_counted_not_silent():
 # checks build the library they measure with.
 
 
+# -- 2026-10-29 review: capture through sounddevice; failures that speak ------
+
+class _FakeStream:
+    """A sounddevice.InputStream stand-in that plays a prepared int16 signal."""
+
+    def __init__(self, signal, engine, overflow_at=None, **kwargs):
+        import numpy as np
+
+        self.kwargs = kwargs
+        self.signal = np.asarray(signal, dtype=np.int16)
+        self.pos = 0
+        self.engine = engine
+        self.overflow_at = overflow_at
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, frames):
+        import numpy as np
+
+        chunk = self.signal[self.pos:self.pos + frames]
+        overflow = self.overflow_at is not None and self.pos <= self.overflow_at < self.pos + frames
+        self.pos += frames
+        if self.pos >= len(self.signal):
+            self.engine.is_listening = False
+        if len(chunk) < frames:
+            chunk = np.concatenate([chunk, np.zeros(frames - len(chunk), dtype=np.int16)])
+        return chunk.reshape(-1, 1), overflow
+
+
+def _with_fake_sounddevice(module, fn):
+    saved = sys.modules.get("sounddevice")
+    sys.modules["sounddevice"] = module
+    try:
+        return fn()
+    finally:
+        if saved is None:
+            sys.modules.pop("sounddevice", None)
+        else:
+            sys.modules["sounddevice"] = saved
+
+
+def test_microphone_capture_goes_through_sounddevice_and_hears_one_phrase():
+    import types
+
+    import numpy as np
+
+    from christman_voice_sdk.audio import speech_recognition_engine as sre
+
+    heard = []
+
+    class Backend:
+        name = "test_backend"
+
+        def transcribe(self, pcm, rate):
+            heard.append((len(pcm), rate))
+            return sre.TranscriptionOutput("hello", None)
+
+    rate = sre.VOSK_SAMPLE_RATE
+    rng = np.random.default_rng(1)
+    room = rng.normal(0, 20, int(0.6 * rate))                  # quiet room
+    t = np.arange(int(0.5 * rate)) / rate
+    speech = 3000 * np.sin(2 * np.pi * 220 * t)                # half a second of voice
+    after = rng.normal(0, 20, int(1.2 * rate))                 # quiet again
+    signal = np.concatenate([room, speech, after]).astype(np.int16)
+
+    engine = sre.SpeechRecognitionEngine(backend=Backend(), device_index=3)
+    results = []
+    engine.callbacks.append(results.append)
+    made = []
+
+    def input_stream(**kwargs):
+        made.append(kwargs)
+        return _FakeStream(signal, engine, **kwargs)
+
+    fake = types.SimpleNamespace(InputStream=input_stream)
+    engine.is_listening = True
+    _with_fake_sounddevice(fake, engine._microphone_loop)
+
+    assert made and made[0]["samplerate"] == rate and made[0]["device"] == 3
+    assert made[0]["dtype"] == "int16" and made[0]["channels"] == 1
+    assert len(heard) == 1, heard                               # one phrase, endpointed
+    seconds = heard[0][0] / (2 * rate)
+    assert 0.5 <= seconds <= 0.5 + sre.SpeechRecognitionEngine.MIC_END_SILENCE_SECONDS + 0.1
+    assert [r.text for r in results] == ["hello"]
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(sre))
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    assert "speech_recognition" not in imported            # the undeclared library is gone
+
+
+def test_microphone_capture_without_sounddevice_says_so():
+    from christman_voice_sdk.audio import speech_recognition_engine as sre
+
+    class Backend:
+        name = "test_backend"
+
+        def transcribe(self, pcm, rate):
+            raise AssertionError("nothing should be transcribed")
+
+    engine = sre.SpeechRecognitionEngine(backend=Backend())
+    results = []
+    engine.callbacks.append(results.append)
+    engine.is_listening = True
+    # None in sys.modules makes the import fail, as if not installed.
+    _with_fake_sounddevice(None, engine._microphone_loop)
+    assert len(results) == 1 and results[0].status.value == "unavailable"
+    assert "sounddevice" in str(results[0].to_dict())
+
+
+def test_listing_microphones_tells_none_apart_from_an_error():
+    import types
+
+    from christman_voice_sdk.audio import speech_recognition_engine as sre
+
+    devices = [{"name": "Built-in Microphone", "max_input_channels": 1},
+               {"name": "Speakers", "max_input_channels": 0}]
+    ok = types.SimpleNamespace(query_devices=lambda: devices)
+    assert _with_fake_sounddevice(ok, sre.list_microphones) == ["Built-in Microphone"]
+    none = types.SimpleNamespace(query_devices=lambda: [{"name": "Speakers", "max_input_channels": 0}])
+    assert _with_fake_sounddevice(none, sre.list_microphones) == []          # no microphones
+
+    def broken():
+        raise OSError("PortAudio not initialized")
+
+    for module in (types.SimpleNamespace(query_devices=broken), None):        # an error
+        try:
+            _with_fake_sounddevice(module, sre.list_microphones)
+        except sre.MicrophonesUnavailable as exc:
+            assert "cannot list microphones" in str(exc)
+            continue
+        raise AssertionError("an error must not look like 'no microphones'")
+
+
+def test_real_speech_devices_error_is_not_an_empty_list():
+    import types
+
+    from christman_voice_sdk.audio.real_speech_recognition import VoiceActivityDetector
+
+    def broken():
+        raise OSError("PortAudio not initialized")
+
+    try:
+        _with_fake_sounddevice(types.SimpleNamespace(query_devices=broken),
+                               VoiceActivityDetector.get_audio_devices)
+    except RuntimeError as exc:
+        assert "cannot list audio devices" in str(exc)
+    else:
+        raise AssertionError("a failed query must not read as 'no devices'")
+
+
+def test_speech_engine_that_fails_to_start_is_raised_not_false():
+    class Broken:
+        def start_listening(self, callback=None):
+            raise OSError("no input device")
+
+    svc = SoundRecognitionService(speech_engine=Broken(), escalation_callback=lambda c: True)
+    try:
+        svc.start_listening()
+    except RuntimeError as exc:
+        assert "failed to start" in str(exc) and "no input device" in str(exc)
+    else:
+        raise AssertionError("a failed start must not read as 'nothing attached'")
+    assert SoundRecognitionService(escalation_callback=lambda c: True).start_listening() is False
+
+
+def test_unreadable_music_memory_is_raised_and_not_replaced():
+    import tempfile
+
+    from christman_voice_sdk.music.music_engine import ChristmanMusicEngine
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "musical_memory.json")
+        with open(path, "w") as fh:
+            fh.write("{ not json")
+        try:
+            ChristmanMusicEngine(memory_path=d)
+        except RuntimeError as exc:
+            assert "could not be read" in str(exc) and path in str(exc)
+        else:
+            raise AssertionError("a broken memory file must not become a blank memory")
+        with open(path) as fh:
+            assert fh.read() == "{ not json"              # the client's file is left as it was
+
+
+def test_voicepack_that_cannot_load_says_why():
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    from christman_voice_sdk.timbre.voicepack import VoicepackBuilder, VoicepackInvalid
+
+    saved_home = os.environ.get("CHRISTMAN_AI_HOME")
+    with tempfile.TemporaryDirectory() as d:
+        os.environ["CHRISTMAN_AI_HOME"] = d             # the cache lands here, not in ~
+        try:
+            pack = Path(d) / "x.voicepack"
+            with zipfile.ZipFile(pack, "w") as z:
+                z.writestr("metadata.json", "{}")        # no profile, no validation
+            try:
+                VoicepackBuilder().validate(pack)
+            except VoicepackInvalid as exc:
+                assert "could not be loaded" in str(exc) and str(pack) in str(exc)
+            else:
+                raise AssertionError("a pack that cannot load must say why, not just False")
+        finally:
+            if saved_home is None:
+                os.environ.pop("CHRISTMAN_AI_HOME", None)
+            else:
+                os.environ["CHRISTMAN_AI_HOME"] = saved_home
+
+
+def test_noise_reduction_failure_is_raised_not_passed_as_clean():
+    import numpy as np
+
+    from christman_voice_sdk.audio import audio_processor as ap
+
+    class Broken:
+        @staticmethod
+        def reduce_noise(**kwargs):
+            raise ValueError("bad frame")
+
+    class Tier:
+        noise_reduction_quality = "studio"
+
+    saved = ap.nr
+    ap.nr = Broken
+    try:
+        proc = ap.AudioProcessor()
+        proc.tier_features = Tier()
+        try:
+            proc._reduce_noise(np.zeros(1600, dtype=np.float32), 16000)
+        except RuntimeError as exc:
+            assert "noise reduction failed" in str(exc) and "bad frame" in str(exc)
+        else:
+            raise AssertionError("a failed noise reduction must not hand on raw audio as clean")
+        ap.nr = None
+        out = proc._reduce_noise(np.zeros(16, dtype=np.float32), 16000)
+        assert out.shape == (16,)
+        assert proc.noise_reduction == {"applied": False, "reason": "noisereduce is not installed"}
+    finally:
+        ap.nr = saved
+
+
 def test_ws_only_to_loopback():
     assert require_local_or_tls("ws://localhost:8000/ws") == "ws://localhost:8000/ws"
     assert require_local_or_tls("ws://127.0.0.1:8000/ws") == "ws://127.0.0.1:8000/ws"

@@ -515,11 +515,14 @@ class SoundRecognitionService:
             )
             return False
 
+        # Rule 6 (2026-10-29 review): an engine that failed to start was
+        # logged and reported as False, the same answer as "no engine
+        # attached". Now the failure is raised, with the reason.
         try:
             self.speech_engine.start_listening(callback=self._on_speech)
         except Exception as exc:
-            logger.error("Failed to start speech engine: %s", exc, exc_info=True)
-            return False
+            raise RuntimeError(
+                f"the speech engine failed to start ({type(exc).__name__}: {exc})") from exc
 
         self._is_listening = True
         logger.info("Speech recognition started.")

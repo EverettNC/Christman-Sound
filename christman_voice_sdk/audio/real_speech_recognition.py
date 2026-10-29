@@ -556,23 +556,34 @@ class VoiceActivityDetector:
 
     @staticmethod
     def get_audio_devices() -> List[Dict[str, Any]]:
-        """Input-capable devices. Empty list when sounddevice is unavailable."""
+        """
+        Input-capable devices. An empty list means the machine has none.
+
+        Rule 6 (2026-10-29 review): when sounddevice was missing or the query
+        failed, this returned [], the same answer as "no microphones". Now
+        either is raised, with the reason.
+        """
         try:
             import sounddevice as sd
-
-            return [
-                {
-                    "id": i,
-                    "name": d["name"],
-                    "channels": d["max_input_channels"],
-                    "default_samplerate": d.get("default_samplerate"),
-                }
-                for i, d in enumerate(sd.query_devices())
-                if d["max_input_channels"] > 0
-            ]
+        except ImportError as exc:
+            raise RuntimeError(
+                "cannot list audio devices: sounddevice is not installed "
+                "(the 'capture' extra)") from exc
+        try:
+            devices = sd.query_devices()
         except Exception as exc:
-            logger.error("Cannot query audio devices: %s", exc)
-            return []
+            raise RuntimeError(
+                f"cannot list audio devices ({type(exc).__name__}: {exc})") from exc
+        return [
+            {
+                "id": i,
+                "name": d["name"],
+                "channels": d["max_input_channels"],
+                "default_samplerate": d.get("default_samplerate"),
+            }
+            for i, d in enumerate(devices)
+            if d["max_input_channels"] > 0
+        ]
 
     def set_input_device(self, device_id: Optional[int]) -> bool:
         """

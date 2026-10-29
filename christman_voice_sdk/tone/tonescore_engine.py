@@ -358,21 +358,21 @@ class ToneScoreEngine:
         as "hnr" until 2026-10-28. It is kept, under its own name, only because
         valence reads it, and changing valence's input is Everett's ruling.
         Praat's HNR is physiological["hnr_db"].
+
+        Returns None only for no samples (nothing to measure). Rule 6
+        (2026-10-29 review): any other failure was logged and returned as
+        None, which reads the same as "nothing to measure". Now it raises.
         """
-        try:
-            S = np.abs(np.fft.rfft(y))
-            if S.size == 0:
-                return None
-            peaks = S[S > np.median(S) * 2]
-            harmonic = float(np.sum(peaks ** 2)) + 1e-9
-            total = float(np.sum(S ** 2)) + 1e-9
-            rest = total - harmonic
-            if rest <= 0:
-                return 30.0  # every bin is a peak: the ratio is past the clamp
-            return float(max(0.0, min(30.0, 10.0 * np.log10(harmonic / rest))))
-        except Exception as exc:
-            logger.error("spectral peak ratio failed: %s", exc)
+        S = np.abs(np.fft.rfft(y))
+        if S.size == 0:
             return None
+        peaks = S[S > np.median(S) * 2]
+        harmonic = float(np.sum(peaks ** 2)) + 1e-9
+        total = float(np.sum(S ** 2)) + 1e-9
+        rest = total - harmonic
+        if rest <= 0:
+            return 30.0  # every bin is a peak: the ratio is past the clamp
+        return float(max(0.0, min(30.0, 10.0 * np.log10(harmonic / rest))))
 
     # -- Layer 2 --------------------------------------------------------------
 

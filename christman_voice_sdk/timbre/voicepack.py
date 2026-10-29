@@ -64,6 +64,10 @@ class UnsafeVoicepack(ValueError):
     """A voicepack archive names a file outside the folder it unpacks into."""
 
 
+class VoicepackInvalid(ValueError):
+    """A voicepack could not be loaded. The message carries the real reason."""
+
+
 _DRIVE = re.compile(r"^[A-Za-z]:")
 
 
@@ -292,9 +296,19 @@ class VoicepackBuilder:
         }
 
     def validate(self, voicepack_path: Path) -> bool:
+        """
+        True when the pack loads and holds metadata, a voice profile and its
+        validation; False when it loads but one of those is empty.
+
+        Rule 6 (2026-10-29 review): a pack that could not be LOADED (a
+        missing file inside it, a profile in the wrong format) was logged
+        and reported as False, so "Invalid voicepack" was all a caller ever
+        saw. Now VoicepackInvalid is raised with the real reason.
+        """
         try:
             data = self.load(voicepack_path)
-            return bool(data.get("metadata") and data.get("voice_profile") and data.get("validation"))
         except Exception as e:
-            logger.error("Validation failed: %s", e)
-            return False
+            raise VoicepackInvalid(
+                f"voicepack {voicepack_path} could not be loaded "
+                f"({type(e).__name__}: {e})") from e
+        return bool(data.get("metadata") and data.get("voice_profile") and data.get("validation"))
