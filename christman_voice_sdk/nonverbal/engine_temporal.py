@@ -9,7 +9,7 @@ emotion sequences.
 WHAT CHANGED AND WHY
 --------------------
 
-1. IT SPOKE FOR THE USER AT RANDOM. Three sites: :369, :419, :469.
+1. IT SPOKE FOR THE CLIENT AT RANDOM. Three sites: :369, :419, :469.
 
        gesture_idx = random.randint(0, len(self.labels["gesture"]) - 1)
        confidence  = random.uniform(0.6, 0.95)
@@ -127,6 +127,20 @@ DEFAULT_LANGUAGE_MAP: Dict[str, Dict[str, Any]] = {
     "Surprise": {"intent": "Shocked", "message": "I'm surprised.", "speaks": False},
 }
 
+#: Intents that page a human whatever the language map says. Everett,
+#: 2026-10-29: Hand Up ("Request attention") pages a human. Before this, the
+#: page hung on a `"pages": true` field in the map, so a language map read
+#: from disk (made before that field existed, or edited by hand) let a Hand
+#: Up through with no human reached. The intent is what Everett named, so
+#: the intent pages.
+PAGING_INTENTS = frozenset({"Request attention"})
+
+
+def _pages(entry: Dict[str, Any]) -> bool:
+    """This map entry goes to the crisis gate and a human."""
+    return entry.get("pages") is True or entry.get("intent") in PAGING_INTENTS
+
+
 #: The system's own words about what it saw. Never joined to the person's.
 SYSTEM_NOTES: Dict[str, str] = {
     "gesture": "I see your gesture.",
@@ -200,6 +214,9 @@ class TemporalNonverbalEngine:
         self,
         lstm_model_dir: Optional[str] = None,
         language_map_path: Optional[str] = None,
+        # 10 frames: carried from main, where no reason was written beside
+        # it. It must match the length the trained models were fit on; the
+        # reason for 10 is Everett's to give.
         sequence_length: int = 10,
         model_digests: Optional[Dict[str, str]] = None,
         # 0.6: a chosen starting value, not a measurement. Held until client
@@ -398,7 +415,7 @@ class TemporalNonverbalEngine:
             raise ModelLoadError(
                 f"{path}: loaded object of type {type(model).__name__} has no "
                 "predict(). The previous code substituted random.randint here "
-                "and spoke a randomly chosen phrase for the user."
+                "and spoke a randomly chosen phrase for the client."
             )
         return model
 
@@ -520,7 +537,7 @@ class TemporalNonverbalEngine:
                 reason=(f"confidence {confidence:.3f} is below the "
                         f"{self.confidence_threshold} threshold — please confirm"),
                 # Below the speaking bar is not below the paging bar.
-                pages=entry.get("pages") is True,
+                pages=_pages(entry),
             )
 
         # .get, not [] — a hand-edited map missing a key took the engine down.
@@ -537,7 +554,7 @@ class TemporalNonverbalEngine:
                 f"{expression!r} is observed, not said — the system does not "
                 "speak a feeling for the person"
             ),
-            pages=entry.get("pages") is True,
+            pages=_pages(entry),
         )
 
     def classify_gesture_sequence(self) -> Dict[str, Any]:
@@ -644,7 +661,7 @@ def get_temporal_engine(**kwargs: Any) -> TemporalNonverbalEngine:
 __all__ = [
     "TemporalNonverbalEngine", "ClassificationResult", "ModelLoadError",
     "get_temporal_engine", "DEFAULT_LANGUAGE_MAP", "DEFAULT_LABELS",
-    "ALLOW_PICKLE_ENV", "SYSTEM_NOTES",
+    "ALLOW_PICKLE_ENV", "SYSTEM_NOTES", "PAGING_INTENTS",
 ]
 
 # ==============================================================================
