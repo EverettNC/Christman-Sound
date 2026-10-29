@@ -66,8 +66,8 @@ WHAT CHANGED IN THIS REWRITE
    in `flags` and `flagged_terms`; `said` is the person's own words,
    unmodified.
 
-   2026-10-29, Everett: "We never change the truth, ever. We never sanitize
-   anything." The field was named `sanitized_text`, and a hard block set it
+   Everett's ruling, 2026-10-29 (in the coordinator's words, not his): never
+   change the truth; nothing sanitizes what a person said. The field was named `sanitized_text`, and a hard block set it
    to "" — the words were withheld from everything after the gate. The field
    is now `said`, Aegis sets it to the exact words on every result (a
    callback cannot change it), and a safety hold never withholds them.
@@ -136,10 +136,13 @@ class Carbon:
         self.analyzer = analyzer or StructuralAffectAnalyzer()
 
     def encode(
-        self, text: str, prosody_features: Optional[ProsodyFeatures] = None
+        self, text: str, prosody_features: Optional[ProsodyFeatures] = None,
+        previous_turn: str = "",
     ) -> AffectReading:
-        """Read affect from structure. Returns AffectReading, not a dict."""
-        return self.analyzer.analyze(text, prosody=prosody_features)
+        """Read affect from structure. Returns AffectReading, not a dict.
+        `previous_turn` anchors a subjectless fragment (ruling X)."""
+        return self.analyzer.analyze(text, prosody=prosody_features,
+                                     previous_turn=previous_turn)
 
 
 # ---------------------------------------------------------------------------
@@ -315,12 +318,16 @@ class SafetyResult:
     #: 'clear'} with nothing on it saying the real gate never ran.
     degraded: bool = False
     degraded_reason: str = ""
-    #: The question the being asks next, or "". Everett, 2026-10-29: when
-    #: something is recorded and flagged instead of paged, the being follows
-    #: up by ASKING, in a plain question ("Are you safe?", "Do you need
-    #: help?"). It never tells, and never says "you're not okay" or "calm
-    #: down". The client's answer is read on the next turn.
+    #: What the being should ask next, as a mark (hearing.ASK_*), or "".
+    #: Everett, 2026-10-29: when something is recorded and flagged instead
+    #: of paged, the being follows up by ASKING. It never tells, and never
+    #: says "you're not okay" or "calm down". Ruling AA: the package does
+    #: not word the question ("I hate canned messages"); the being does.
+    #: The client's answer is read on the next turn against this mark.
     follow_up: str = ""
+    #: The words the question is about ("scared", "your leg", "since
+    #: monday"), or "".
+    follow_up_about: str = ""
     #: THE SILENT ALARM (Everett, 2026-10-29, rulings I and K). A danger
     #: signal or a danger sentence goes to a human silently: it is not voiced
     #: and nothing announces that help is coming. Saying it out loud can get
@@ -470,6 +477,7 @@ class Aegis:
             degraded=result.degraded,
             degraded_reason=result.degraded_reason,
             follow_up=result.follow_up,
+            follow_up_about=result.follow_up_about,
             silent_alarm=result.silent_alarm,
             voice_aloud=result.voice_aloud,
         )
@@ -623,7 +631,9 @@ class FusionEngine:
         """
         live_state = live_state or {}
 
-        affect = self.carbon_layer.encode(user_input)
+        # Ruling X: a fragment ("it hurts") is read against the turn before.
+        affect = self.carbon_layer.encode(
+            user_input, previous_turn=str(live_state.get("previous_turn") or ""))
 
         # THE PAGE FIRES FIRST (Everett, 2026-10-29, ruling M). "That slowing
         # down and confirming is enough time for a veteran to shoot
@@ -712,11 +722,40 @@ class FusionEngine:
         # Not knowing is its own answer, and it outranks acting on a guess.
         if rec.defer_to_human:
             return MODE_UNKNOWN, rec.reason
+        # Ruling R (Everett, 2026-10-29): "I can't be happy" is an inability,
+        # a signal. Nothing is concluded; the being asks why.
+        if safety.reason == "inability_signal":
+            return MODE_UNKNOWN, ("an inability over a good feeling, a signal; "
+                                  f"the being asks: {safety.follow_up!r}")
+        # Ruling AA: "my teacher is sad" — whether that is a person is not
+        # known from the words. Nothing is concluded; the being asks.
+        if safety.reason == "person_unclear":
+            return MODE_UNKNOWN, ("whether the subject is a person is not known; "
+                                  f"the being asks: {safety.follow_up!r} about "
+                                  f"{safety.follow_up_about!r}")
+        # Ruling X: "it hurts" with no turn before it to anchor it.
+        if safety.reason == "fragment_unclear":
+            return MODE_UNKNOWN, ("a fragment with nothing before it to anchor it; "
+                                  f"the being asks: {safety.follow_up!r}")
+        # Ruling W: "thank you, I'm scared" stays unclear; the being asks.
+        if safety.reason == "thanks_unclear":
+            return MODE_UNKNOWN, ("thanks and a feeling, unclear together; "
+                                  f"the being asks: {safety.follow_up!r}")
         if affect.certainty is AffectCertainty.AMBIGUOUS:
             return MODE_UNKNOWN, (
                 "; ".join(affect.notes)
                 or "Affect could not be resolved from sentence structure."
             )
+        # Ruling O (Everett, 2026-10-29): "You got to have full context." A
+        # fear with nothing in the turn to say what it is about concludes
+        # nothing; the being asks (safety.follow_up).
+        if safety.reason == "fear_without_context":
+            return MODE_UNKNOWN, ("not enough context to tell what the fear is "
+                                  f"about; the being asks: {safety.follow_up!r}")
+        # Ruling P: whose feeling it is cannot be told from the words.
+        if safety.reason == "whose_feeling_unclear":
+            return MODE_UNKNOWN, ("whose feeling it is cannot be told from the "
+                                  f"words; the being asks: {safety.follow_up!r}")
 
         # HELD FOR EVERETT (2026-10-29). Two lines were added here in the
         # Replit handoff and are taken back out, so the mode is what main
