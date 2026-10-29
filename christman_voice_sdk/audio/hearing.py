@@ -1125,6 +1125,7 @@ class Hearing:
         temporal: Optional[Dict[str, Any]] = None,
         between_beings: bool = False,
         previous_turn: Optional[str] = None,
+        public_setting: Optional[bool] = None,
     ) -> HearingTurn:
         """
         Consume one Corti emit, optional transcript, and optional nonverbal
@@ -1150,6 +1151,13 @@ class Hearing:
                 being's question is passed here in the words the being
                 used; without it, the fragment is unclear and the being
                 asks.
+            public_setting: the being's own perception of where the client
+                is (Everett, ruling K). A danger sentence the client typed
+                or said is the silent alarm: paged, not voiced. It is voiced
+                only when the client asks for it aloud, or when this is
+                exactly True. None (unknown), False, or any other value:
+                silent. Carried into the fusion engine's live_state and so
+                into harm_frame_safety's context.
 
         Every argument may be missing. Missing is reported as missing.
         Raises CrisisNotDelivered when distress was read and no human could
@@ -1218,6 +1226,9 @@ class Hearing:
         live_state: Dict[str, Any] = {}
         if between_beings:
             live_state["between_beings"] = True
+        if public_setting is not None:
+            # Passed as given; harm_frame_safety voices only on exactly True.
+            live_state["public_setting"] = public_setting
         if acoustic is not None or multimodal is not None or sequences is not None:
             live_state["nonverbal_active"] = True
         if distress:

@@ -1034,6 +1034,28 @@ def test_K_a_public_setting_from_the_beings_perception(public, voiced):
     assert d.speakable is voiced
 
 
+@pytest.mark.parametrize("public,voiced", [(True, True), (None, False), ("yes", False), (False, False),
+                                           (1, False)])
+@pytest.mark.parametrize("text", ["I'm scared for my safety", "he is choking me", "help me"])
+def test_K_hearing_carries_public_setting_through_to_the_gate(text, public, voiced):
+    # Ruling K: Hearing.hear takes public_setting and carries it through
+    # live_state into fusion and harm_frame_safety. A danger sentence the
+    # client typed is voiced only when asked aloud or public_setting is True.
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager)
+    kw = {} if public is None else {"public_setting": public}
+    turn = hearing.hear(text=text, **kw)
+    d = turn.decision
+    assert len(pager.calls) == 1                                  # it always pages
+    assert d.safety.silent_alarm is True
+    assert d.safety.voice_aloud is voiced and d.speakable is voiced
+    assert d.safety.said == text and d.input_text == text          # never changed
+    assert ("public_setting" in d.safety.flags) is voiced
+    assert pager.calls[0][1].get("public_setting", None) == (None if public is None else public)
+    # Silent: held for one turn, for the client to ask aloud. Voiced: nothing held.
+    assert (hearing.held_words == text) is (not voiced)
+
+
 @pytest.mark.parametrize("text", ["I'm scared of the needle", "help me pick a font",
                                   "I was scared for my life back then", "I'm not in danger"])
 def test_K_not_a_danger_sentence(text):
