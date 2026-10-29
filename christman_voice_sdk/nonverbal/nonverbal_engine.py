@@ -196,11 +196,16 @@ DANGER_INTENTS = frozenset({
     "attacked", "attack", "threat", "emergency",
 })
 
-#: NEEDS that also reach a human, and ARE spoken as normal (ruling I): pain,
-#: medicine. (Thirst, hunger and the bathroom are spoken and do not page
-#: here. Hand Up's request attention pages through engine_temporal's
-#: PAGING_INTENTS, ruling 5, and is help, so it is the silent alarm there and
-#: never spoken, ruling I.)
+#: Signals that reach a human and ARE spoken as normal (ruling I). Everett,
+#: 2026-10-29: pain is not a need, "It's a feeling", the client's own, and
+#: it pages every time ("someone on hospice or with a chronic illness that
+#: causes pain, then hell yes, that pages the caregiver every time").
+#: Medicine is a need that pages, so the caregiver is reached. The typed
+#: words page the same way (hearing.PAIN_TERMS, ruling C). Thirst, hunger
+#: and the bathroom are spoken and page only when the client asks for help
+#: in the same turn (hearing.NEED_INTENTS). Hand Up's request attention
+#: pages through engine_temporal's PAGING_INTENTS, ruling 5, and is help,
+#: so it is the silent alarm there and never spoken, ruling I.
 NEED_PAGING_INTENTS = frozenset({"pain", "need_medicine"})
 
 DISTRESS_INTENTS = DANGER_INTENTS | NEED_PAGING_INTENTS

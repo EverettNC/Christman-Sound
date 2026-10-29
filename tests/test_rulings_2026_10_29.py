@@ -827,7 +827,9 @@ def test_H3_now_harm_pages_whatever_key_or_symbol_comes_with_it():
         assert turn.decision.safety.reason == "harm_now_to_client"
 
 
-@pytest.mark.parametrize("text", ["I hurt my arm", "my arm hurts", "I hurt my arm playing ball"])
+# "my arm hurts" was here. Everett, 2026-10-29: pain is the client's own
+# feeling and pages every time (tests/test_review_rulings_2026_10_29.py).
+@pytest.mark.parametrize("text", ["I hurt my arm", "I hurt my arm playing ball"])
 def test_H_the_clients_own_accident_is_not_someone_hurting_them(text):
     turn, pager = _hear(text)
     assert pager.calls == []
@@ -1646,9 +1648,13 @@ def test_X_anchored_pain_is_the_clients_own_leg(text, before):
     d = turn.decision
     assert d.safety.reason == "answer_about_own_body"
     assert "about:your leg" in d.safety.flags and "need:hurts" in d.safety.flags
-    # The same as saying it whole.
+    # Not a page: pain read against the being's own question is engaging
+    # (Everett, 2026-10-29: "that's not a page, that's engaging"). Said
+    # whole, unasked, "my leg hurts" pages: pain is the client's feeling.
+    assert pager.calls == []
+    assert "own_pain:hurts" in d.safety.flags
     whole, whole_pager = _hear("my leg hurts")
-    assert bool(pager.calls) == bool(whole_pager.calls)
+    assert len(whole_pager.calls) == 1
 
 
 @pytest.mark.parametrize("text,before", [

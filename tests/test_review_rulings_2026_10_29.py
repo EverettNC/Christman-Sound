@@ -352,3 +352,78 @@ def test_a_no_person_list_in_the_package():
     assert not hasattr(HF, "CRISIS_GATE_THIRD_PARTY_WORDS")
     assert not ({"mom", "dad", "mother", "father", "sister", "brother", "friend", "patient"}
                 & HF._OTHER_PATIENT)
+
+
+# -- pain is the client's own feeling; medicine is a need (Everett, 2026-10-29) -----
+
+def _pages(text=None, **kw):
+    turn, pager = _hear(text, **kw)
+    return len(pager.calls), turn
+
+
+@pytest.mark.parametrize("extra", ["", "can you get someone"])
+def test_pain_symbol_and_typed_pain_page_identically(extra):
+    typed, t1 = _pages(("I'm in pain " + extra).strip())
+    pressed, t2 = _pages(extra or None, nonverbal={"symbol": "pain"})
+    assert typed == pressed == 1
+    assert t1.decision.safety.silent_alarm is False          # spoken, not danger (ruling I)
+    assert t1.decision.speakable is True
+    assert t2.person_message == "I'm in pain."               # the symbol's own words
+
+
+@pytest.mark.parametrize("extra", ["", "can you get someone"])
+def test_medicine_symbol_and_typed_medicine_page_identically(extra):
+    typed, t1 = _pages(("I need my medicine " + extra).strip())
+    pressed, t2 = _pages(extra or None, nonverbal={"symbol": "medicine"})
+    assert typed == pressed == 1
+    assert t1.decision.safety.reason == "client_needs_medicine"
+    assert t1.decision.safety.silent_alarm is False and t1.decision.speakable is True
+    assert t2.person_message == "I need my medicine."
+
+
+@pytest.mark.parametrize("text,part", [("I'm in pain", ""), ("my knee is in pain", "knee"),
+                                       ("my back hurts", "back")])
+def test_pain_is_a_feeling_marked_where_and_pages(text, part):
+    n, turn = _pages(text)
+    s = turn.decision.safety
+    assert n == 1 and s.reason == "client_pain" and "feeling:pain" in s.flags
+    if part:
+        assert f"pain_where:{part}" in s.flags and s.follow_up_about == part
+
+
+def test_pain_pages_every_time_with_no_cap():
+    pager = Pager()
+    hearing = Hearing(crisis_callback=pager)
+    for _ in range(45):
+        hearing.hear(text="I'm in pain")
+    assert len(pager.calls) == 45
+
+
+def test_someone_elses_pain_is_ruling_d():
+    n, turn = _pages("my mom's in pain")
+    assert n == 0 and turn.decision.safety.follow_up == H.ASK_IF_HELP_NEEDED
+    n, _ = _pages("my mom's in pain, can you get someone")
+    assert n == 1
+
+
+def test_pain_against_the_beings_question_is_engaging_not_a_page():
+    n, turn = _pages("yeah it hurts", previous_turn="is there something wrong with your leg?")
+    assert n == 0
+    assert turn.decision.safety.reason == "answer_about_own_body"
+    assert "own_pain:hurts" in turn.decision.safety.flags
+
+
+@pytest.mark.parametrize("text", ["I am not in pain", "my knee hurt yesterday, it's fine now",
+                                  "I don't need my medicine"])
+def test_no_pain_now_and_no_need_do_not_page(text):
+    n, _ = _pages(text)
+    assert n == 0
+
+
+@pytest.mark.parametrize("text,symbol", [("I'm thirsty", "drink"), ("I'm hungry", "food"),
+                                         ("I need to go to the bathroom", "bathroom")])
+def test_other_needs_are_spoken_only_unless_help_is_asked_for(text, symbol):
+    assert _pages(text)[0] == 0
+    assert _pages(None, nonverbal={"symbol": symbol})[0] == 0
+    assert _pages(text + ", can you get someone")[0] == 1
+    assert _pages("can you get someone", nonverbal={"symbol": symbol})[0] == 1

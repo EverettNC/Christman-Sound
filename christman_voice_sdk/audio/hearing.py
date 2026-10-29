@@ -71,6 +71,8 @@ from .fusion_engine import (
     HOLD_NONVERBAL,
     HOLD_OWN_DISTRESS,
     HOLD_SPEAKER_AT_RISK,
+    HOLD_NEED_MEDICINE,
+    HOLD_PAIN,
     HOLD_THREAT,
     CrisisNotDelivered,
     Decision,
@@ -99,6 +101,7 @@ from .structural_affect import (
     StructuralAffectAnalyzer,
     normalize_apostrophes,
     tokenize,
+    SHARED_READING_WORDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -285,11 +288,43 @@ def body_harm(text: str) -> List[BodyHarm]:
     return out
 
 
+#: PAIN IS A FEELING, the client's own (Everett, 2026-10-29: "pain is not a
+#: need. It's a feeling." "if I'm in pain, it's paged 45 times a day ...
+#: someone on hospice or with a chronic illness that causes pain, then hell
+#: yes, that pages the caregiver every time"). The client's own pain now
+#: pages every time, at any count, and is spoken (it is not danger). The
+#: words of pain, as the clause reader scores them:
+PAIN_TERMS = frozenset({"pain", "hurts", "hurt", "hurting", "aching", "ache",
+                        "aches", "sore", "painful"})
+#: MEDICINE IS A NEED that pages (Everett, 2026-10-29): spoken, and a human
+#: is reached, because that is how the client gets their medicine. "I need
+#: my medicine", "I need my pain meds". The pressed medicine symbol does the
+#: same (ruling C).
+_NEEDS_MEDICINE = re.compile(
+    r"\b(?:i|we)\s+(?:really\s+)?(?:need|want|have\s+to\s+have|gotta\s+have)\s+"
+    r"(?:my|our|the|some|a)?\s*(?:[a-z]+\s+)?"
+    r"(?:medicine|medicines|meds|medication|medications|pills?|inhaler|insulin)\b")
+#: Other needs (thirst, hunger, the bathroom) are spoken only; they page when
+#: the client asks for help in the same turn (Everett, 2026-10-29).
+_OTHER_NEED = re.compile(
+    r"\b(?:i'?m|i\s+am)\s+(?:so\s+|really\s+|very\s+)?(?:thirsty|hungry|starving)\b"
+    r"|\b(?:i|we)\s+(?:need|have)\s+to\s+(?:go\s+to\s+|use\s+)?(?:the\s+)?"
+    r"(?:bathroom|toilet|restroom|potty)\b"
+    r"|\b(?:i|we)\s+need\s+(?:the|a)\s+(?:bathroom|toilet|restroom|potty|drink|snack)\b")
+#: Need symbols that page when the client asks for help in the same turn.
+NEED_INTENTS = frozenset({"hungry", "thirsty", "bathroom"})
+
 #: Harm verbs whose subject is the one harmed when nothing follows: "she's
 #: choking", "he is drowning". ("my arm hurts" is pain, not this.)
 _SUBJECT_SUFFERS = frozenset({"choke", "drown", "suffocate"})
 #: Words before a verb that put it in the past: "he WAS hitting her".
 _PAST_BEFORE_VERB = frozenset({"was", "were", "had", "did", "used"})
+
+
+def _negated_need(text: str, start: int) -> bool:
+    """ "I don't need my medicine": a negator in the few words before."""
+    before = tokenize(normalize_apostrophes(text).lower()[:start])[-3:]
+    return bool(set(before) & SHARED_READING_WORDS.negators)
 
 
 def harm_time(text: str, frame: HarmFrame) -> Tuple[str, str]:
@@ -783,13 +818,23 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
     # The clause reader, not a substring. A negated state ("she is not
     # unsafe"), a past one ("yesterday she wasn't okay"), and "you" or a
     # thing as the subject are left out (see structural_affect).
-    hits = (_CLAUSE_READER.analyze(original, previous_turn=previous_turn).hits
-            if original else [])
+    clause_reading = (_CLAUSE_READER.analyze(original, previous_turn=previous_turn)
+                      if original else None)
+    hits = clause_reading.hits if clause_reading is not None else []
     states_now = [h for h in hits if h.when == "now" and h.final_weight < 0]
     own_state = [h for h in states_now
                  if h.term in CLIENT_DISTRESS_TERMS and h.attribution is Attribution.SELF]
     other_not_okay = [h for h in states_now
                       if h.term in ("not okay", "not safe") and h.attribution is Attribution.OTHER]
+    # Someone else's pain is ruling D (Everett, 2026-10-29): "my mom's in
+    # pain" does not page unless the client asks for help in the turn.
+    # "hurt" with an object ("he hurt my feelings", "I hurt my arm") is the
+    # verb, read by the harm frames, not the feeling.
+    pain_as_verb = {f.predicate for f in extract_frames(original)
+                    if f.shape == "verb" and f.patient_text}
+    other_not_okay += [h for h in states_now
+                       if h.term in PAIN_TERMS and h.attribution is Attribution.OTHER
+                       and _stem(h.term) not in pain_as_verb]
     # Ruling U: "I think she's not okay" is the client's belief about her,
     # not a fact about her. Nothing is concluded about her, but the client
     # said it, so the being follows up the same way as an observation
@@ -934,6 +979,56 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             flagged_terms=terms,
             hold_marker=HOLD_OWN_DISTRESS,
         )
+
+    # MEDICINE first: "I need my pain meds" is the need, not the feeling.
+    medicine = _NEEDS_MEDICINE.search(normalize_apostrophes(original).lower())
+    if medicine and not _negated_need(original, medicine.start()):
+        return SafetyResult(
+            status="hard_block",
+            reason="client_needs_medicine",
+            said=original,
+            flags=["need:medicine", f"need_said:{medicine.group(0)}"] + other_flags,
+            flagged_terms=[medicine.group(0)],
+            hold_marker=HOLD_NEED_MEDICINE,
+        )
+
+    # PAIN: the client's own, now, not read against the being's question
+    # ("is something wrong with your leg?" / "yeah, it hurts" is engaging,
+    # Everett: "that's not a page, that's engaging"; see the anchored
+    # branch below). Pages every time; spoken; the body part is marked.
+    own_pain = [h for h in states_now
+                if h.term in PAIN_TERMS and h.attribution is Attribution.SELF
+                and not h.anchored_to and not h.negated
+                and _stem(h.term) not in pain_as_verb]
+    if own_pain:
+        where: List[str] = []
+        for h in own_pain:
+            if clause_reading is not None and h.clause_index < len(clause_reading.clauses):
+                where += [t for t in clause_reading.clauses[h.clause_index].tokens
+                          if t in BODY_PARTS and t not in where]
+        return SafetyResult(
+            status="hard_block",
+            reason="client_pain",
+            said=original,
+            flags=["feeling:pain"] + [f"pain_where:{w}" for w in where]
+            + harm_flags + other_flags,
+            flagged_terms=[h.term for h in own_pain],
+            hold_marker=HOLD_PAIN,
+            follow_up_about=" ".join(where),
+        )
+
+    need = _OTHER_NEED.search(normalize_apostrophes(original).lower())
+    if need and not _negated_need(original, need.start()):
+        request = None if between_beings else asked_for_help(original)
+        if request is not None:
+            return SafetyResult(
+                status="hard_block",
+                reason="client_need_asked_for_help",
+                said=original,
+                flags=[f"need:{need.group(0)}", f"asked_for_help:{request}"] + other_flags,
+                flagged_terms=[need.group(0)],
+                hold_marker=HOLD_ASKED_FOR_HELP,
+            )
 
     if harm_past:
         # Everett, 2026-10-29: a report of past physical harm to the client
@@ -1243,7 +1338,9 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             reason="answer_about_own_body" if own_body else "answer_about_thing",
             said=original,
             flags=[f"about:{h.anchored_to}" for h in anchored]
-            + [f"need:{h.term}" for h in own_body if h.final_weight < 0] + other_flags,
+            + [f"need:{h.term}" for h in own_body if h.final_weight < 0]
+            + [f"own_pain:{h.term}" for h in own_body
+               if h.term in PAIN_TERMS and h.final_weight < 0] + other_flags,
         )
 
     if other_not_person:
@@ -1508,6 +1605,13 @@ class Hearing:
             distress += [r.to_dict() for r in distress_readings([acoustic])]
         if multimodal is not None:
             distress += list(multimodal.get("distress") or [])
+            if text and asked_for_help(text) is not None:
+                # A pressed need (food, drink, bathroom) with a request for
+                # help in the same turn pages, the same as the typed need
+                # (ruling C; Everett, 2026-10-29).
+                distress += [r for r in (multimodal.get("all_results") or [])
+                             if isinstance(r, dict) and r.get("modality") == "symbol"
+                             and r.get("intent") in NEED_INTENTS and r.get("status") == "ok"]
         if sequences is not None:
             for result in (sequences.get("all_results") or {}).values():
                 # Hand Up pages (Everett, 2026-10-29), as do the distress intents.
