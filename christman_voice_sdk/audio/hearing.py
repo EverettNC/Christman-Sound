@@ -63,6 +63,14 @@ from .corti_ingest import CortiIngest, ingest
 from .face_reading import FaceReading, build_face_reading
 from .face_vector import FaceVector, build_face_vector
 from .fusion_engine import (
+    HOLD_ANSWERED,
+    HOLD_ASKED_FOR_HELP,
+    HOLD_ASKED_FOR_HELP_FOR_OTHER,
+    HOLD_DANGER,
+    HOLD_HARM_NOW,
+    HOLD_NONVERBAL,
+    HOLD_OWN_DISTRESS,
+    HOLD_SPEAKER_AT_RISK,
     CrisisNotDelivered,
     Decision,
     FusionEngine,
@@ -152,7 +160,7 @@ ASK_IF_HELP_NEEDED = "ask_if_help_needed"      # a "yes" to it pages
 ASK_WHOSE = "ask_whose"                        # whose feeling it is (P)
 ASK_WHO = "ask_who"                            # whether the subject is a person (AA)
 ASK_WHAT = "ask_what"                          # what a fragment is about (X)
-ASK_WHAT_ABOUT = "ask_what_about"              # thanks + a feeling, unclear (W)
+ASK_WHAT_ABOUT = "ask_what_about"              # thanks + a feeling, unclear; fear with no context (W, Z)
 ASK_WHAT_IS_MAKING = "ask_what_is_making"      # someone reaching out (Y)
 ASK_WHAT_OF = "ask_what_of"                    # fear getting worse (Z)
 ASK_WHY_CANT = "ask_why_cant"                  # an inability (R)
@@ -619,8 +627,7 @@ def _with_nonverbal(words: SafetyResult, original: str,
         flags=nonverbal_flags + list(words.flags)
         + [f"words:{words.status}:{words.reason}"] + silent_flags,
         flagged_terms=inputs + list(words.flagged_terms),
-        hold_marker="" if nv_silent else
-        f"[SAFETY HOLD — nonverbal distress: {', '.join(inputs)}]",
+        hold_marker="" if nv_silent else HOLD_NONVERBAL,
         silent_alarm=nv_silent,
         voice_aloud=nv_aloud,
     )
@@ -720,7 +727,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             said=original,
             flags=_flags("hard", crisis) + own_flags + other_flags,
             flagged_terms=[f.predicate for f in crisis],
-            hold_marker="[SAFETY HOLD — harm with the speaker as patient]",
+            hold_marker=HOLD_SPEAKER_AT_RISK,
         )
 
     if harm_now:
@@ -732,7 +739,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             said=original,
             flags=harm_flags + own_flags + other_flags,
             flagged_terms=[h.verb for h in harm_now],
-            hold_marker="[SAFETY HOLD — harm happening now to the client]",
+            hold_marker=HOLD_HARM_NOW,
         )
 
     # Between two beings these still read as what they are; harm_frame_safety
@@ -745,7 +752,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             said=original,
             flags=[f"danger:{d}" for d in danger] + harm_flags + own_flags + other_flags,
             flagged_terms=danger,
-            hold_marker="[SAFETY HOLD — danger]",
+            hold_marker=HOLD_DANGER,
         )
 
     answer = answered_follow_up(original, answering) if answering else None
@@ -756,7 +763,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             said=original,
             flags=[f"answered:{answering}"] + harm_flags + own_flags + other_flags,
             flagged_terms=[],
-            hold_marker="[SAFETY HOLD — the client answered the being's question]",
+            hold_marker=HOLD_ANSWERED,
         )
 
     if own_state or history_self:
@@ -768,7 +775,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
             said=original,
             flags=flags,
             flagged_terms=terms,
-            hold_marker="[SAFETY HOLD — the client's own distress]",
+            hold_marker=HOLD_OWN_DISTRESS,
         )
 
     if harm_past:
@@ -784,7 +791,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
                 said=original,
                 flags=harm_flags + other_flags + [f"asked_for_help:{request}"],
                 flagged_terms=[h.verb for h in harm_past],
-                hold_marker="[SAFETY HOLD — the client asked for help]",
+                hold_marker=HOLD_ASKED_FOR_HELP,
             )
         return SafetyResult(
             status="soft_redirect",
@@ -809,7 +816,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
                 said=original,
                 flags=other_flags + [f"asked_for_help:{request}"],
                 flagged_terms=terms,
-                hold_marker="[SAFETY HOLD — the client asked for help for someone else]",
+                hold_marker=HOLD_ASKED_FOR_HELP_FOR_OTHER,
             )
         return SafetyResult(
             status="soft_redirect",
@@ -843,7 +850,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
                 flags=[f"whose:{t}" for t in unclear] + other_flags
                 + [f"asked_for_help:{request}"],
                 flagged_terms=unclear,
-                hold_marker="[SAFETY HOLD — the client asked for help]",
+                hold_marker=HOLD_ASKED_FOR_HELP,
             )
         return SafetyResult(
             status="soft_redirect",
@@ -882,7 +889,7 @@ def _words_gate(original: str, between_beings: bool, answering: str = "",
                 flags=[f"unclear_who:{w}" for _, w in unsure] + other_flags
                 + [f"asked_for_help:{request}"],
                 flagged_terms=[t for t, _ in unsure],
-                hold_marker="[SAFETY HOLD — the client asked for help]",
+                hold_marker=HOLD_ASKED_FOR_HELP,
             )
         return SafetyResult(
             status="soft_redirect",

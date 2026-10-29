@@ -235,3 +235,20 @@ def test_7_the_clients_own_body_after_a_question_is_still_the_clients():
     d = turn.decision
     assert d.affect.is_self_distress is True
     assert d.safety.reason == "answer_about_own_body"
+
+
+# -- 10. ruling AA: a hold is a mark, never words ------------------------------------
+
+def test_10_no_hold_carries_words():
+    from christman_voice_sdk.audio import fusion_engine as F
+    src = (ROOT / "christman_voice_sdk" / "audio" / "hearing.py").read_text() + \
+        (ROOT / "christman_voice_sdk" / "audio" / "fusion_engine.py").read_text()
+    assert 'hold_marker="[' not in src and 'f"[SAFETY' not in src
+    for text in ["he will hurt me", "he is choking me", "I'm not okay",
+                 "my mom is not okay please call someone", "he hurt my arm, I need help"]:
+        r = harm_frame_safety(text)
+        assert r.status == "hard_block", text
+        assert r.hold_marker in F.HOLD_MARKS | {""}, r.hold_marker
+    turn, _ = _hear(None, nonverbal={"symbol": "help"}, public_setting=True)
+    assert turn.decision.safety.hold_marker in F.HOLD_MARKS | {""}
+    assert all(m == m.lower() and " " not in m for m in F.HOLD_MARKS)

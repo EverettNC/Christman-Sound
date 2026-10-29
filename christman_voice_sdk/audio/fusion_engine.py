@@ -267,6 +267,27 @@ class Silicon:
 # Aegis
 # ---------------------------------------------------------------------------
 
+#: What a hold is, as a mark (SafetyResult.hold_marker), never as words.
+#: Everett's ruling AA (2026-10-29): no canned messages in the package. The
+#: hold used to carry fixed text ("[SAFETY HOLD — danger]") that a screen
+#: could show; it now carries one of these marks, and whatever shows or says
+#: anything about the hold words it itself. A silent alarm carries "".
+HOLD_CRISIS_LANGUAGE = "hold_crisis_language"          # the substring floor
+HOLD_SPEAKER_AT_RISK = "hold_speaker_at_risk"          # harm with the client as patient
+HOLD_HARM_NOW = "hold_harm_now"                        # harm happening now to the client
+HOLD_DANGER = "hold_danger"                            # danger in the client's words
+HOLD_ANSWERED = "hold_answered"                        # the client's answer to the being's ask
+HOLD_OWN_DISTRESS = "hold_own_distress"                # the client's own distress
+HOLD_ASKED_FOR_HELP = "hold_asked_for_help"            # the client asked for help
+HOLD_ASKED_FOR_HELP_FOR_OTHER = "hold_asked_for_help_for_other"
+HOLD_NONVERBAL = "hold_nonverbal_distress"             # the signal is in flagged_terms
+HOLD_MARKS = frozenset({
+    HOLD_CRISIS_LANGUAGE, HOLD_SPEAKER_AT_RISK, HOLD_HARM_NOW, HOLD_DANGER,
+    HOLD_ANSWERED, HOLD_OWN_DISTRESS, HOLD_ASKED_FOR_HELP,
+    HOLD_ASKED_FOR_HELP_FOR_OTHER, HOLD_NONVERBAL,
+})
+
+
 @dataclass
 class SafetyResult:
     """
@@ -394,7 +415,7 @@ class Aegis:
                     said=original,
                     flags=[f"hard:{phrase}"],
                     flagged_terms=[phrase],
-                    hold_marker="[SAFETY HOLD — crisis language detected]",
+                    hold_marker=HOLD_CRISIS_LANGUAGE,
                 )
 
         flags: List[str] = []
@@ -838,4 +859,7 @@ __all__ = [
     "CrisisNotDelivered", "get_fusion_engine",
     "MODE_SAFETY_HOLD", "MODE_UNKNOWN", "MODE_HOLD_SPACE", "MODE_GENTLE_LIFT",
     "MODE_STANDARD",
+    "HOLD_CRISIS_LANGUAGE", "HOLD_SPEAKER_AT_RISK", "HOLD_HARM_NOW", "HOLD_DANGER",
+    "HOLD_ANSWERED", "HOLD_OWN_DISTRESS", "HOLD_ASKED_FOR_HELP",
+    "HOLD_ASKED_FOR_HELP_FOR_OTHER", "HOLD_NONVERBAL", "HOLD_MARKS",
 ]
