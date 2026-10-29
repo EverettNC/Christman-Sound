@@ -211,7 +211,16 @@ class SpeakerBaseline:
     sample_count: int = 0
 
     #: Events required before a baseline is trusted. A baseline built from
-    #: three utterances is a guess with a schema.
+    #: three utterances is a guess with a schema. Everett, 2026-10-29 (ruling
+    #: AB): keep the speaker's own measured baseline: "That's exactly how the
+    #: carbon mind works: always comparing what's currently happening to
+    #: what's been happening. That's how you get to know people."
+    #: 30 is a CHOSEN STARTING VALUE, held until client data replaces it.
+    #: Reason: the conventional "n of 30" rule of thumb for a sample large
+    #: enough to describe its own middle and spread (the median and quartiles
+    #: used here); it was not measured on any client. With fewer events the
+    #: analyzer says plainly that there is no baseline yet (see
+    #: `ProsodyAnalyzer._no_baseline_note`); it never fills one in.
     MIN_SAMPLES: int = 30
 
     @property
@@ -413,6 +422,16 @@ class ProsodyAnalyzer:
 
     # -- References -----------------------------------------------------------
 
+    def _no_baseline_note(self) -> str:
+        """Ruling AB: with fewer events than the baseline needs, say so
+        plainly, with the count, rather than falling back in silence."""
+        return (
+            f"No speaker baseline yet: {self.baseline.sample_count} of "
+            f"{SpeakerBaseline.MIN_SAMPLES} events measured for this speaker"
+            + (f" ({self.baseline.speaker_id!r})" if self.baseline.speaker_id else "")
+            + ". Nothing here is compared with this person's own normal."
+        )
+
     def _against_ring(self, event: VocalEvent) -> ProsodyReading:
         """Compare against the last N events. A window, not a person."""
         n = len(self._ring)
@@ -426,7 +445,7 @@ class ProsodyAnalyzer:
                 notes=[
                     f"only {n} reference event(s); {MIN_REFERENCE_EVENTS} "
                     "required. No arousal reported.",
-                    "No speaker baseline exists — every utterance arrives cold.",
+                    self._no_baseline_note(),
                 ],
             )
 
@@ -460,6 +479,7 @@ class ProsodyAnalyzer:
             reference="recent_window",
             n_reference=n,
             notes=[
+                self._no_baseline_note(),
                 "Reference is the last few utterances in this session, NOT a "
                 "speaker baseline. Do not read this as speaker-normalized.",
             ],
