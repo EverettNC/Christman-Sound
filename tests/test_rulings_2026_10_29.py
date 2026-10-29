@@ -929,6 +929,22 @@ def test_I_temporal_danger_is_paged_and_never_spoken(tmp_path, expression, entry
     _assert_silent_and_paged(turn, pager)
 
 
+def test_I_the_built_in_fear_reading_still_pages_with_its_words_gone():
+    # The built-in Fear reading was danger by its old wording "I'm scared.".
+    # Ruling J took the wording away; the reading must still page, silently.
+    t = TemporalNonverbalEngine(sequence_length=10)
+    labels = t.labels["emotion"]
+    idx = labels.index("Fear")
+    t.models["emotion"] = CentroidModel([[_seq(60.0 * (i - idx))] for i in range(len(labels))])
+    for frame in _seq(0.0)[:-1]:
+        t.add_emotion_features(frame)
+    pager = Pager()
+    turn = Hearing(crisis_callback=pager, temporal_engine=t).hear(
+        temporal={"emotion_features": np.zeros(4)})
+    assert turn.temporal["primary_result"]["expression"] == "Fear"
+    _assert_silent_and_paged(turn, pager)
+
+
 @pytest.mark.parametrize("kwargs,says,pages", [
     ({"nonverbal": {"symbol": "pain"}}, "I'm in pain.", True),
     ({"nonverbal": {"symbol": "medicine"}}, "I need my medicine.", True),

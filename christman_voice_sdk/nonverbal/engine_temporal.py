@@ -163,10 +163,20 @@ GENERIC_FEELING_INTENTS = frozenset({
 PAGING_INTENTS = frozenset({"Request attention"})
 
 
+#: The face model's "Fear" label ("Worried") was danger by its old built-in
+#: wording, "I'm scared." (nonverbal_engine.DANGER_WORDS), so a Fear reading
+#: paged a human, silently. Ruling J took the wording out of the built-in
+#: map; this keeps the reading danger by its intent, so the page is not lost
+#: with the words (ruling I). Measured on this branch before this line: the
+#: built-in Fear reading no longer paged.
+TEMPORAL_DANGER_INTENTS = frozenset({"Worried"})
+
+
 def _danger(entry: Dict[str, Any]) -> bool:
     """A danger meaning: never spoken, always paged (ruling I, the silent alarm)."""
     from .nonverbal_engine import is_danger
-    return is_danger(entry.get("intent"), entry.get("message"))
+    return (entry.get("intent") in TEMPORAL_DANGER_INTENTS
+            or is_danger(entry.get("intent"), entry.get("message")))
 
 
 def _pages(entry: Dict[str, Any]) -> bool:

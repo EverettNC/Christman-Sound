@@ -1502,6 +1502,11 @@ class StructuralAffectAnalyzer:
         "hasnt", "does", "doesn't", "doesnt",
     })
 
+    #: Modals that open a question ("can you", "will you", "did you").
+    _QUESTION_MODALS = frozenset({
+        "can", "could", "will", "would", "can't", "cant", "did", "didn't", "didnt",
+    })
+
     #: Determiners: a word after one is inside a noun phrase, not its start.
     _DETERMINERS = frozenset({
         "the", "a", "an", "this", "that", "these", "those", "some", "any",
@@ -1548,8 +1553,12 @@ class StructuralAffectAnalyzer:
         # scared | my mom is sad", "i'm scared | my teacher is sad". The
         # client's own body stays in the clause ("i'm scared my leg is
         # broken" is the client's).
+        # Not before a modal that opens a question ("he hurt my feelings
+        # CAN you get someone"): that "my ___" is the object of the verb
+        # before it, not a new subject.
         if (tok in POSSESSIVES and nxt and nxt not in BODY_PARTS
-                and nxt not in cls._NOT_A_SUBJECT and nxt2 in cls._CLAUSE_VERBS):
+                and nxt not in cls._NOT_A_SUBJECT and nxt2 in cls._CLAUSE_VERBS
+                and nxt2 not in cls._QUESTION_MODALS):
             return True
         if (tok in THIRD_PERSON_PRONOUNS and nxt in cls._CLAUSE_VERBS
                 and prev not in POSSESSIVES and prev not in {"the", "a", "an"}):
