@@ -652,7 +652,9 @@ def test_9_the_word_ear_payload_carries_the_text_as_recognized():
 
 def test_9_corti_receiver_route_returns_the_mapped_words_unaltered():
     """The acoustic route speaks the map's words for the client, as the map
-    holds them; nothing on the way edits them."""
+    holds them; nothing on the way edits them. The built-in sound map holds
+    no words (ruling J covers sounds, 2026-10-29), so a built-in grunt
+    speaks nothing; nothing is invented on the way either."""
     import http.client
 
     from christman_voice_sdk.audio import corti_receiver as cr
@@ -666,7 +668,8 @@ def test_9_corti_receiver_route_returns_the_mapped_words_unaltered():
                      headers={"Content-Type": "application/json", "Content-Length": str(len(raw))})
         body = json.loads(conn.getresponse().read())
         conn.close()
-        assert body["person_message"] == DEFAULT_SOUNDS["grunt_acknowledge"]["message"]
+        assert DEFAULT_SOUNDS["grunt_acknowledge"]["message"] is None
+        assert body["person_message"] is None
     finally:
         server.shutdown()
         server.server_close()

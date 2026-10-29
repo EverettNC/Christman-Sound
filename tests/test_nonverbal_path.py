@@ -152,14 +152,31 @@ def test_distress_is_not_outvoted():
     assert r["message"] is None and r["silent_alarm"] is True   # ruling I
 
 
-def test_winning_intent_speaks_from_its_own_strongest_reading():
+def test_winning_intent_speaks_only_from_a_learned_reading(tmp_path):
     r = _nv().process_multimodal_input(gesture="wave", eye_data={"region": "center"},
                                        sound="click")
     assert r["intent"] == "select"
-    # Ruling J: the built-in eye region carries no wording, so the winning
-    # intent speaks from the one reading of it that has words: the click.
-    assert r["speakable"] is True
-    assert r["message"] == "I choose this option."
+    # Ruling J covers sounds too (Everett, 2026-10-29): a built-in click says
+    # nothing. Until this review it said "I choose this option.".
+    assert r["speakable"] is False and r["message"] is None
+    # Learned for this client, in the client's own sound map, the click
+    # speaks the client's words.
+    (tmp_path / "sound_patterns_model.json").write_text(json.dumps({"click": {
+        "intent": "select", "confidence": 0.7, "expression": "neutral",
+        "emotion_tier": "mild", "message": "That one."}}))
+    r = NonverbalEngine(data_dir=str(tmp_path)).process_multimodal_input(
+        gesture="wave", eye_data={"region": "center"}, sound="click")
+    assert r["intent"] == "select"
+    assert r["speakable"] is True and r["message"] == "That one."
+
+
+@pytest.mark.parametrize("key", ["hum", "click", "soft", "loud", "short_vowel", "repeated_sound",
+                                 "grunt_acknowledge", "grunt_frustration", "vocal_stimming"])
+def test_the_microphones_built_in_sounds_are_reported_with_no_wording(key):
+    # Ruling J covers sounds, tics and clicks: the reading is reported, not spoken.
+    r = _nv().process_multimodal_input(sound=key)
+    assert r["status"] == "ok" and r["intent"]
+    assert r["message"] is None and r["speakable"] is False
 
 
 @pytest.mark.parametrize("kwargs", [{"gesture": "wave"}, {"gesture": "nod"},

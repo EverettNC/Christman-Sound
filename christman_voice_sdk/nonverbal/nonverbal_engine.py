@@ -231,11 +231,12 @@ def is_danger(intent: Optional[str], message: Optional[str] = None) -> bool:
 #:     Until 2026-10-29's review, a built-in wave said "Hello there!", a nod
 #:     "Yes, I agree.", a thumbs up "I like this." and a centre gaze "I
 #:     select this option." for the client. Those sentences are removed;
-#:   - a built-in sound reading of a generic feeling is not spoken (ruling
-#:     J): the intents below;
-#:   - every other built-in sound meaning (choose, acknowledge, pay
-#:     attention) is spoken as before. Ruling J names the camera; the
-#:     microphone's built-in sound meanings are left for Everett.
+#:   - RULING J COVERS SOUNDS TOO (Everett, 2026-10-29): a built-in sound,
+#:     tic or click meaning speaks nothing. The built-in sound map carries
+#:     no wording; the reading is reported, and it speaks only once it is
+#:     learned for that client. (Before, only the generic-feeling intents
+#:     below were held back, and a built-in click still said "I choose this
+#:     option.") GENERIC_FEELING_INTENTS is kept for callers that read it.
 #: An older map with no such fields works exactly as before, for every
 #: meaning that is not danger.
 GENERIC_FEELING_INTENTS = frozenset({
@@ -244,7 +245,7 @@ GENERIC_FEELING_INTENTS = frozenset({
 })
 GENERIC_SILENT_REASON = ("a generic reading, not a meaning learned for this client; "
                          "observed, not spoken")
-#: A camera or eye reading with no meaning learned for this client (ruling J).
+#: A camera, eye or sound reading with no meaning learned for this client (ruling J).
 NOT_LEARNED_REASON = ("no meaning learned for this client: the reading is reported, "
                       "not spoken")
 SILENT_ALARM_REASON = ("danger: goes to a human silently; never spoken, never "
@@ -420,18 +421,25 @@ DEFAULT_EYE_REGIONS: Dict[str, Dict[str, Any]] = {
     "rapid_scan":   {"intent": "searching", "confidence": 0.7, "expression": "inquisitive", "emotion_tier": "moderate", "message": None},
 }
 
+# THE MICROPHONE'S BUILT-IN SOUND MAP CARRIES NO WORDING EITHER (Everett,
+# 2026-10-29: ruling J covers sounds too). A hum, a click, a grunt is a
+# reading (intent, confidence, tier) and says nothing; a sound meaning is
+# spoken only once it is learned for that client, in the client's own map.
+# Until this review a built-in click said "I choose this option.", a short
+# vowel "I acknowledge that." and a repeated sound "Please pay attention to
+# this." for the client. Those sentences are removed.
 DEFAULT_SOUNDS: Dict[str, Dict[str, Any]] = {
-    "hum":            {"intent": "thinking",    "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm thinking about it."},
-    "click":          {"intent": "select",      "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": "I choose this option."},
-    "distress":       {"intent": "help",        "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": "I need help right now."},
-    "soft":           {"intent": "unsure",      "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm unsure about this."},
-    "loud":           {"intent": "excited",     "confidence": 0.8, "expression": "positive", "emotion_tier": "strong", "message": "I'm excited about this!"},
-    "short_vowel":    {"intent": "acknowledge", "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": "I acknowledge that."},
-    "repeated_sound":     {"intent": "insistent",     "confidence": 0.8, "expression": "urgent",   "emotion_tier": "strong", "message": "Please pay attention to this."},
-    "grunt_distress":     {"intent": "help",          "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": "I need help right now."},
-    "grunt_acknowledge":  {"intent": "acknowledge",   "confidence": 0.8, "expression": "neutral",  "emotion_tier": "mild",   "message": "I acknowledge that."},
-    "grunt_frustration":  {"intent": "frustrated",    "confidence": 0.8, "expression": "negative", "emotion_tier": "strong", "message": "I'm getting frustrated."},
-    "vocal_stimming":     {"intent": "self_regulate", "confidence": 0.9, "expression": "neutral",  "emotion_tier": "mild",   "message": "I'm regulating."},
+    "hum":            {"intent": "thinking",    "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "click":          {"intent": "select",      "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "distress":       {"intent": "help",        "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": None},
+    "soft":           {"intent": "unsure",      "confidence": 0.6, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "loud":           {"intent": "excited",     "confidence": 0.8, "expression": "positive", "emotion_tier": "strong", "message": None},
+    "short_vowel":    {"intent": "acknowledge", "confidence": 0.7, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "repeated_sound":     {"intent": "insistent",     "confidence": 0.8, "expression": "urgent",   "emotion_tier": "strong", "message": None},
+    "grunt_distress":     {"intent": "help",          "confidence": 0.9, "expression": "negative", "emotion_tier": "urgent", "message": None},
+    "grunt_acknowledge":  {"intent": "acknowledge",   "confidence": 0.8, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
+    "grunt_frustration":  {"intent": "frustrated",    "confidence": 0.8, "expression": "negative", "emotion_tier": "strong", "message": None},
+    "vocal_stimming":     {"intent": "self_regulate", "confidence": 0.9, "expression": "neutral",  "emotion_tier": "mild",   "message": None},
 }
 
 #: Emotional indicators per gesture. KEPT AS WRITTEN — see the header note.
@@ -739,15 +747,13 @@ class NonverbalEngine:
         silent_reason: Optional[str] = None
         if is_danger(entry["intent"], entry["message"]):
             message, silent_reason = None, SILENT_ALARM_REASON
-        elif (modality in (Modality.GESTURE, Modality.EYE)
+        elif (modality in (Modality.GESTURE, Modality.EYE, Modality.SOUND)
               and (self.map_source.get(modality) != "client" or not message)):
-            # Ruling J: the camera speaks only meanings learned for that
-            # client. A built-in gesture or eye reading has no wording.
+            # Ruling J: the camera and the microphone speak only meanings
+            # learned for that client. A built-in gesture, eye or sound
+            # reading has no wording. A pressed symbol is the client's own
+            # word and is not held here (ruling C).
             message, silent_reason = None, NOT_LEARNED_REASON
-        elif (modality is not Modality.SYMBOL
-              and self.map_source.get(modality) == "built_in"
-              and entry["intent"] in GENERIC_FEELING_INTENTS):
-            message, silent_reason = None, GENERIC_SILENT_REASON
         interp = Interpretation(
             modality=modality,
             status=Status.OK,
